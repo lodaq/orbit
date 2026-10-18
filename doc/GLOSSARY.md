@@ -51,10 +51,10 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | Term | Meaning |
 |---|---|
-| **Dock** | The semi-transparent bar at the bottom, styled like the macOS Dock. 48 px icons with names below and a separator after the second item. |
-| **Recent** | Deferred launch history; not populated by the supplied UI update. |
+| **Dock** | The semi-transparent bar at the bottom, styled like the macOS Dock. 48 px icons with names below and a separator between Recent and Pinned. |
+| **Recent** | Successfully opened items, newest first. The two newest unpinned Apps, Websites, Files or Directories appear on the left side of the dock; folders are excluded. |
 | **Pinned** | Items you chose to show in the dock. Pinning is a flag: the item also stays on its page. Displayed in saved pin order; drag reordering is deferred. |
-| **Separator** | The thin vertical line after the second dock item. |
+| **Separator** | The thin vertical line between Recent and Pinned when both are present. |
 
 ## Icons
 

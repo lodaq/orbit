@@ -1,5 +1,5 @@
 use crate::config::{App, Config, Icon, InstalledApp, Item, Launch, SystemAction};
-use crate::{AppTile, InstalledAppTile, Launcher, config, platform};
+use crate::{AppTile, InstalledAppTile, Launcher, config, platform, recent};
 use slint::{ComponentHandle, Rgba8Pixel, SharedPixelBuffer};
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Sender};
@@ -8,7 +8,10 @@ enum Action {
     Page(usize),
     Search(String),
     OpenResult(usize, usize),
+    OpenDock(usize, usize, i32),
     Pin(usize),
+    Unpin(String),
+    RemoveRecent(String),
     Save(i32, String, String, String),
     SaveWebsite(i32, String, String),
     ChoosePath(i32, bool, String),
@@ -35,6 +38,7 @@ struct Apps {
     installed_apps: Vec<InstalledApp>,
     installed_status: String,
     query: String,
+    recent: recent::Recent,
 }
 
 pub fn connect(launcher: &Launcher) {
@@ -43,6 +47,7 @@ pub fn connect(launcher: &Launcher) {
     let weak = launcher.as_weak();
     std::thread::spawn(move || {
         let (config, banner) = config::load();
+        let (recent, recent_banner) = recent::Recent::load();
         let installed_apps = platform::read_installed_apps()
             .ok()
             .flatten()
@@ -56,16 +61,27 @@ pub fn connect(launcher: &Launcher) {
             installed_apps,
             installed_status: String::new(),
             query: String::new(),
+            recent,
         };
         let banner = apps.load_icons().err().unwrap_or(banner);
-        apps.update(&weak);
+        let banner = if banner.is_empty() {
+            recent_banner
+        } else {
+            banner
+        };
+        apps.update(&weak, false);
         finish(&weak, banner, false, false);
         for action in receive {
-            let launching = matches!(action, Action::Open(_) | Action::LaunchFolder(..))
-                || matches!(action, Action::OpenResult(page, index) if apps.config.pages.get(page).and_then(|page| page.items.get(index)).is_some_and(|item| !matches!(item, Item::Folder { .. })));
+            let recent_id = apps.recent_id(&action);
+            let remove_recent_id = match &action {
+                Action::RemoveRecent(id) => Some(id.clone()),
+                _ => None,
+            };
+            let launching = recent_id.is_some();
             let saving = matches!(
                 action,
                 Action::Pin(_)
+                    | Action::Unpin(_)
                     | Action::Save(..)
                     | Action::SaveWebsite(..)
                     | Action::ChoosePath(..)
@@ -78,11 +94,22 @@ pub fn connect(launcher: &Launcher) {
                     | Action::AddPredefined(_)
                     | Action::AddInstalledApp(_)
             );
-            let update = !launching || matches!(action, Action::OpenResult(..));
+            let update =
+                !launching || matches!(action, Action::OpenResult(..) | Action::OpenDock(..));
+            let page_only = matches!(action, Action::Page(_))
+                && !(apps.config.pages.len() > 1 && apps.config.pages[apps.page].items.is_empty());
             let result = apps.apply(action);
             let success = result.is_ok();
-            if success && update {
-                apps.update(&weak);
+            let recent_changed = success && recent_id.is_some_and(|id| apps.recent.record(&id));
+            // RemoveRecent is applied in Apps::apply; save it here without removing twice.
+            let recent_removed = success && remove_recent_id.is_some();
+            if (recent_changed || recent_removed)
+                && let Err(error) = apps.recent.save()
+            {
+                eprintln!("orbit: {error}");
+            }
+            if success && (update || recent_changed || recent_removed) {
+                apps.update(&weak, page_only);
             }
             finish(
                 &weak,
@@ -104,8 +131,20 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>) {
         let _ = sender.send(Action::OpenResult(page as usize, index as usize));
     });
     let sender = send.clone();
+    launcher.on_open_dock_item(move |page, index, folder_app| {
+        let _ = sender.send(Action::OpenDock(page as usize, index as usize, folder_app));
+    });
+    let sender = send.clone();
     launcher.on_pin_item(move |index| {
         let _ = sender.send(Action::Pin(index as usize));
+    });
+    let sender = send.clone();
+    launcher.on_unpin_dock_item(move |id| {
+        let _ = sender.send(Action::Unpin(id.into()));
+    });
+    let sender = send.clone();
+    launcher.on_remove_recent_item(move |id| {
+        let _ = sender.send(Action::RemoveRecent(id.into()));
     });
     let sender = send.clone();
     launcher.on_open_page(move |index| {
@@ -192,6 +231,24 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>) {
 }
 
 impl Apps {
+    fn recent_id(&self, action: &Action) -> Option<String> {
+        let (page, index, folder_app) = match action {
+            Action::Open(index) => (self.page, *index, -1),
+            Action::OpenResult(page, index) => (*page, *index, -1),
+            Action::OpenDock(page, index, folder_app) => (*page, *index, *folder_app),
+            Action::LaunchFolder(folder, index) => (self.page, *folder, *index as i32),
+            _ => return None,
+        };
+        let item = self.config.pages.get(page)?.items.get(index)?;
+        if folder_app >= 0 {
+            let Item::Folder { apps, .. } = item else {
+                return None;
+            };
+            return Some(apps.get(folder_app as usize)?.id.clone());
+        }
+        (!matches!(item, Item::Folder { .. })).then(|| item.id().into())
+    }
+
     fn load_icons(&mut self) -> Result<(), String> {
         let mut error = None;
         let mut icons = Vec::new();
@@ -276,6 +333,21 @@ impl Apps {
                 self.config = config;
                 Ok(())
             }
+            Action::Unpin(id) => {
+                let mut config = self.config.clone();
+                config.pinned.retain(|pinned| pinned != &id);
+                if config.pinned.len() != self.config.pinned.len() {
+                    config
+                        .save()
+                        .map_err(|error| format!("Couldn't save config.json: {error}"))?;
+                    self.config = config;
+                }
+                Ok(())
+            }
+            Action::RemoveRecent(id) => {
+                self.recent.remove(&id);
+                Ok(())
+            }
             Action::OpenResult(page, index) => {
                 let Some(item) = self
                     .config
@@ -297,6 +369,13 @@ impl Apps {
                         self.page = previous;
                     }
                     result
+                }
+            }
+            Action::OpenDock(page, index, folder_app) => {
+                if folder_app < 0 {
+                    self.apply(Action::OpenResult(page, index))
+                } else {
+                    self.launch_folder_app(page, index, folder_app as usize)
                 }
             }
             Action::Page(index) => {
@@ -331,18 +410,7 @@ impl Apps {
                 self.open_folder = None;
                 Ok(())
             }
-            Action::LaunchFolder(folder, index) => {
-                let Some(Item::Folder { apps, .. }) =
-                    self.config.pages[self.page].items.get(folder)
-                else {
-                    return Ok(());
-                };
-                let Some(app) = apps.get(index) else {
-                    return Ok(());
-                };
-                let result = self.launch(app);
-                result.map_err(|error| format!("Couldn't start '{}': {error}", app.name))
-            }
+            Action::LaunchFolder(folder, index) => self.launch_folder_app(self.page, folder, index),
             Action::AddPage => self.add_page(),
             Action::Drop(source, target, origin, page, make_folder) => {
                 self.drop_item(source, target, origin, page, make_folder)
@@ -391,6 +459,30 @@ impl Apps {
             }
             Item::Folder { .. } => Ok(()),
         }
+    }
+
+    fn launch_folder_app(
+        &mut self,
+        page: usize,
+        folder: usize,
+        index: usize,
+    ) -> Result<(), String> {
+        let Some(Item::Folder { apps, .. }) = self
+            .config
+            .pages
+            .get(page)
+            .and_then(|contents| contents.items.get(folder))
+        else {
+            return Ok(());
+        };
+        let Some(app) = apps.get(index) else {
+            return Ok(());
+        };
+        let result = self.launch(app);
+        if result.is_ok() {
+            self.page = page;
+        }
+        result.map_err(|error| format!("Couldn't start '{}': {error}", app.name))
     }
 
     fn launch(&self, app: &App) -> Result<(), Box<dyn std::error::Error>> {
@@ -542,6 +634,11 @@ impl Apps {
             .map_err(|error| format!("Couldn't save config.json: {error}"))?;
         self.config = config;
         self.icons.remove(&item_id);
+        if self.recent.remove(&item_id)
+            && let Err(error) = self.recent.save()
+        {
+            eprintln!("orbit: {error}");
+        }
         if let Some(name) = icon {
             platform::remove_icon(&name);
         }
@@ -847,13 +944,52 @@ impl Apps {
         tile
     }
 
-    fn update(&self, weak: &slint::Weak<Launcher>) {
-        let items: Vec<_> = self.config.pages[self.page]
-            .items
-            .iter()
-            .enumerate()
-            .map(|(index, item)| self.tile(item, self.page, index))
-            .collect();
+    fn dock_tile(&self, id: &str) -> Option<Tile> {
+        for (page, contents) in self.config.pages.iter().enumerate() {
+            for (index, item) in contents.items.iter().enumerate() {
+                if item.id() == id {
+                    return Some(self.tile(item, page, index));
+                }
+                if let Item::Folder { apps, .. } = item
+                    && let Some(folder_app) = apps.iter().position(|app| app.id == id)
+                {
+                    let mut tile = Tile::new(&Item::App(apps[folder_app].clone()), &self.icons);
+                    tile.page = page as i32;
+                    tile.index = index as i32;
+                    tile.folder_app_index = Some(folder_app as i32);
+                    tile.pinned = self.config.pinned.iter().any(|pinned| pinned == id);
+                    return Some(tile);
+                }
+            }
+        }
+        None
+    }
+
+    fn update(&self, weak: &slint::Weak<Launcher>, page_only: bool) {
+        let page_items = |page: usize| {
+            self.config
+                .pages
+                .get(page)
+                .map_or_else(Vec::new, |contents| {
+                    contents
+                        .items
+                        .iter()
+                        .enumerate()
+                        .map(|(index, item)| self.tile(item, page, index))
+                        .collect::<Vec<_>>()
+                })
+        };
+        let items = page_items(self.page);
+        let previous = self.page.checked_sub(1).map(page_items).unwrap_or_default();
+        let next = page_items(self.page + 1);
+        let page = self.page as i32;
+        let count = self.config.pages.len() as i32;
+        if page_only {
+            let _ = weak.upgrade_in_event_loop(move |launcher| {
+                set_page_items(&launcher, items, previous, next, page, count);
+            });
+            return;
+        }
         let all: Vec<_> = self
             .config
             .pages
@@ -871,8 +1007,16 @@ impl Apps {
             .config
             .pinned
             .iter()
-            .filter_map(|id| all.iter().find(|(_, _, item)| item.id() == id))
-            .map(|(page, index, item)| self.tile(item, *page, *index))
+            .filter_map(|id| self.dock_tile(id))
+            .collect();
+        let recent: Vec<_> = self
+            .recent
+            .ids
+            .iter()
+            .filter(|id| !self.config.pinned.contains(id))
+            .filter_map(|id| self.dock_tile(id))
+            .filter(|tile| !tile.folder)
+            .take(2)
             .collect();
         let results: Vec<_> = all
             .iter()
@@ -881,8 +1025,6 @@ impl Apps {
             })
             .map(|(page, index, item)| self.tile(item, *page, *index))
             .collect();
-        let page = self.page as i32;
-        let count = self.config.pages.len() as i32;
         let installed_apps: Vec<_> = self
             .installed_apps
             .iter()
@@ -912,7 +1054,6 @@ impl Apps {
             ))
         });
         let _ = weak.upgrade_in_event_loop(move |launcher| {
-            let items: Vec<_> = items.into_iter().map(Tile::into_slint).collect();
             let installed_apps: Vec<_> = installed_apps
                 .into_iter()
                 .map(|(id, name, icon)| {
@@ -931,10 +1072,16 @@ impl Apps {
                     }
                 })
                 .collect();
-            launcher.set_items(std::rc::Rc::new(slint::VecModel::from(items)).into());
+            set_page_items(&launcher, items, previous, next, page, count);
             launcher.set_dock_items(
                 std::rc::Rc::new(slint::VecModel::from(
                     dock.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
+                ))
+                .into(),
+            );
+            launcher.set_recent_items(
+                std::rc::Rc::new(slint::VecModel::from(
+                    recent.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
                 ))
                 .into(),
             );
@@ -947,8 +1094,6 @@ impl Apps {
                 ))
                 .into(),
             );
-            launcher.set_current_page(page);
-            launcher.set_page_count(count);
             launcher
                 .set_installed_apps(std::rc::Rc::new(slint::VecModel::from(installed_apps)).into());
             launcher.set_installed_status(installed_status.into());
@@ -963,6 +1108,27 @@ impl Apps {
             }
         });
     }
+}
+
+fn set_page_items(
+    launcher: &Launcher,
+    items: Vec<Tile>,
+    previous: Vec<Tile>,
+    next: Vec<Tile>,
+    page: i32,
+    count: i32,
+) {
+    let model = |items: Vec<Tile>| {
+        std::rc::Rc::new(slint::VecModel::from(
+            items.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
+        ))
+        .into()
+    };
+    launcher.set_items(model(items));
+    launcher.set_previous_items(model(previous));
+    launcher.set_next_items(model(next));
+    launcher.set_current_page(page);
+    launcher.set_page_count(count);
 }
 
 fn prepare_app(
@@ -1062,8 +1228,10 @@ fn finish(weak: &slint::Weak<Launcher>, banner: String, saved: bool, launched: b
 // Pixel buffers can cross threads; Slint images stay on the interface thread.
 #[derive(Default)]
 struct Tile {
+    id: String,
     page: i32,
     index: i32,
+    folder_app_index: Option<i32>,
     pinned: bool,
     artwork: String,
     name: String,
@@ -1083,6 +1251,7 @@ struct Tile {
 impl Tile {
     fn new(item: &Item, icons: &HashMap<String, SharedPixelBuffer<Rgba8Pixel>>) -> Self {
         let mut tile = Self {
+            id: item.id().into(),
             name: item.name().into(),
             ..Self::default()
         };
@@ -1156,8 +1325,10 @@ impl Tile {
     fn into_slint(self) -> AppTile {
         let icon_present = self.icon.is_some() || !self.svg.is_empty();
         AppTile {
+            id: self.id.into(),
             page: self.page,
             index: self.index,
+            folder_app_index: self.folder_app_index.unwrap_or(-1),
             pinned: self.pinned,
             artwork: self.artwork.into(),
             letter: self
@@ -1182,5 +1353,49 @@ impl Tile {
             folder: self.folder,
             preview: self.preview.into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folder_apps_can_enter_recent_and_open_from_the_dock() {
+        let mut config = Config::default();
+        config.pages[0].items.push(Item::Folder {
+            id: "folder".into(),
+            name: "Folder".into(),
+            apps: vec![App {
+                id: "nested".into(),
+                name: "Nested".into(),
+                icon: Icon::Letter,
+                launch: Launch::Command("true".into()),
+            }],
+        });
+        config.pinned.push("nested".into());
+        let apps = Apps {
+            config,
+            page: 0,
+            icons: HashMap::new(),
+            open_folder: None,
+            installed_apps: Vec::new(),
+            installed_status: String::new(),
+            query: String::new(),
+            recent: recent::Recent::default(),
+        };
+
+        assert_eq!(apps.recent_id(&Action::Open(0)), None);
+        assert_eq!(
+            apps.recent_id(&Action::LaunchFolder(0, 0)),
+            Some("nested".into())
+        );
+        assert_eq!(
+            apps.recent_id(&Action::OpenDock(0, 0, 0)),
+            Some("nested".into())
+        );
+        let tile = apps.dock_tile("nested").unwrap();
+        assert_eq!(tile.folder_app_index, Some(0));
+        assert!(tile.pinned);
     }
 }

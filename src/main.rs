@@ -2,6 +2,7 @@ mod apps;
 mod config;
 mod daemon;
 mod platform;
+mod recent;
 
 slint::include_modules!();
 

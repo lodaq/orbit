@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# Slint supplies the launcher and the measured software renderer.
-slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit-wayland", "renderer-software", "unstable-winit-030"] }
+# Slint supplies the launcher and GPU-accelerated FemtoVG renderer.
+slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit-wayland", "renderer-femtovg", "unstable-winit-030"] }
 # Read and write saved data and parse Hyprland's monitor information.
 serde_json = "1"
 # Derive the saved data format instead of parsing each field by hand.

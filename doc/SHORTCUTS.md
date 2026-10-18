@@ -40,7 +40,9 @@ The supplied UI update adds Ctrl+K to focus Search anything and Enter to open it
 | Click a System action | Add it as an App |
 | Click an installed app | Add it to the current page |
 | Choose a file or directory in its Add item sheet | Add an item named after the selected path |
-| Right-click an item | Context menu: Edit, Pin or Unpin, Delete |
+| Right-click a page item | Context menu: Edit, Pin or Unpin, Delete |
+| Right-click a pinned dock item | Unpin |
+| Right-click a Recent dock item | Remove from Recent |
 | Drag an item | Move it between pages, into a folder, or reorder it |
 | Wheel up / down | Scroll the page |
 | Shift + wheel up | Next page |

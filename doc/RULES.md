@@ -4,7 +4,7 @@ These rules always apply. If a task seems to need breaking one, stop and ask.
 
 ## 1. Extremely fast and efficient
 
-- Showing the launcher must feel instant. Budgets: visible within 50 ms (measured from the daemon receiving `orbit toggle` to the first frame on screen), and under 50 MB of memory while hidden and idle. (These numbers are a starting point. Change them here.)
+- Showing the launcher must feel instant. Budgets: visible within 50 ms (measured from the daemon receiving `orbit toggle` to the first frame on screen), and under 140 MB of memory while hidden and idle. The faster resident GPU renderer is preferred; do not trade away show time to meet the former 50 MB limit.
 - When two options are possible (renderer, how to hide the window), measure both in step 1 and keep the faster one. Write the result in `SPEC.md`.
 - Do work once and keep the result. Decode each icon once, when it is saved, and keep it ready. Never decode at launch.
 - Never scan, fetch or read many files at startup or when showing the launcher. The Installed apps list is loaded from disk and is changed only by the Refresh installed apps button.

@@ -67,6 +67,39 @@ pub fn write_config(data: &[u8]) -> io::Result<()> {
     result
 }
 
+fn recent_path() -> io::Result<PathBuf> {
+    Ok(config_path()?.with_file_name("recent.json"))
+}
+
+pub fn read_recent() -> io::Result<Option<Vec<u8>>> {
+    match fs::read(recent_path()?) {
+        Ok(data) => Ok(Some(data)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+pub fn backup_recent() -> io::Result<()> {
+    let path = recent_path()?;
+    fs::rename(&path, path.with_extension("json.bad"))
+}
+
+pub fn write_recent(data: &[u8]) -> io::Result<()> {
+    let path = recent_path()?;
+    fs::create_dir_all(path.parent().expect("recent has a directory"))?;
+    let temporary = path.with_extension("json.tmp");
+    let result = (|| {
+        let mut file = File::create(&temporary)?;
+        file.write_all(data)?;
+        file.sync_all()?;
+        fs::rename(&temporary, &path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    result
+}
+
 fn installed_apps_path() -> io::Result<PathBuf> {
     Ok(config_path()?.with_file_name("installed-apps.json"))
 }
@@ -647,7 +680,7 @@ fn cursor_monitor() -> Result<String, Box<dyn std::error::Error>> {
 pub fn init() -> Result<(), Box<dyn std::error::Error>> {
     slint::BackendSelector::new()
         .backend_name("winit".into())
-        .renderer_name("software".into())
+        .renderer_name("femtovg".into())
         .select()?;
     slint::set_xdg_app_id("orbit")?;
     Ok(())
@@ -661,10 +694,13 @@ pub fn show_or_hide(
         return hide(launcher);
     }
     launcher.invoke_reset_launcher();
-    launcher.set_monitor_name(monitor.into());
     if launcher.window().is_visible() {
-        restore(&launcher.get_monitor_name())?;
+        fullscreen(launcher.window(), monitor);
+        restore(monitor)?;
+        launcher.set_monitor_name("".into());
+        focus_after_show(launcher);
     } else {
+        launcher.set_monitor_name(monitor.into());
         launcher.window().show()?;
     }
     launcher.set_launcher_visible(true);
@@ -761,6 +797,18 @@ fn fullscreen(window: &slint::Window, name: &str) {
     });
 }
 
+fn focus_after_show(launcher: &crate::Launcher) {
+    let weak = launcher.as_weak();
+    slint::Timer::single_shot(Duration::from_millis(60), move || {
+        if let Some(launcher) = weak.upgrade()
+            && launcher.get_launcher_visible()
+            && let Err(error) = focus_launcher()
+        {
+            eprintln!("orbit: {error}");
+        }
+    });
+}
+
 pub fn hide_on_input(launcher: &crate::Launcher) {
     let weak = launcher.as_weak();
     let focus_generation = Rc::new(Cell::new(0_u64));
@@ -780,19 +828,12 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
                     fullscreen(window, &monitor);
                     fullscreen_monitor = monitor.clone();
                 }
+                // The redraw path is the single place that restores the resident window.
                 if let Err(error) = restore(&monitor) {
                     eprintln!("orbit: {error}");
                 }
                 launcher.set_monitor_name("".into());
-                let weak = weak.clone();
-                slint::Timer::single_shot(Duration::from_millis(60), move || {
-                    if let Some(launcher) = weak.upgrade()
-                        && launcher.get_launcher_visible()
-                        && let Err(error) = focus_launcher()
-                    {
-                        eprintln!("orbit: {error}");
-                    }
-                });
+                focus_after_show(&launcher);
             }
             match event {
                 WindowEvent::ModifiersChanged(modifiers) => {

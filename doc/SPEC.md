@@ -24,7 +24,7 @@ A fullscreen app launcher for Arch Linux (Hyprland), styled like iOS. You arrang
 
 **Speed test (step 1 is a go/no-go test).** Orbit must be as fast as possible, so step 1 measures before anything else is built.
 - Time is measured from the moment the daemon receives the toggle to the first frame on screen. Budget: 50 ms.
-- Memory is measured twice: hidden and idle (budget: under 50 MB), and visible. The radial background is embedded SVG artwork, cached by the renderer; remeasure after changing the visual assets.
+- Memory is measured twice: hidden and idle (budget: under 140 MB), and visible. The radial background is embedded SVG artwork, cached by the renderer; remeasure after changing the visual assets.
 - Try Slint's `show()` and `hide()` first. On Wayland they may destroy and recreate the window. If that misses the budget, find a faster way (for example keep the window and its contents alive) and write the result here.
 - Compare Slint's software renderer with the GPU renderer for show time and memory. Keep the faster one and write the result here.
 
@@ -37,7 +37,9 @@ A fullscreen app launcher for Arch Linux (Hyprland), styled like iOS. You arrang
 | GPU (FemtoVG) | Destroy with Slint `hide()` | 19.6 ms | 42.9 / 52.9 / 53.7 ms | 110.5 MB | 110.5 MB |
 | GPU (FemtoVG) | Keep window on hidden Hyprland workspace | 26.6 ms | 13.6 / 24.3 / 24.7 ms | 104.7 MB | 104.7 MB |
 
-The software renderer with the window kept alive is used: it meets both budgets and has the fastest software reopen measurements, with 33.6 MB hidden and idle RSS. GPU rendering is faster with the window kept alive, but exceeds the 50 MB hidden-memory budget by more than 54 MB. Both software modes and the GPU mode with the window kept alive stayed within 50 ms for all measured first frames. The GPU mode using Slint `hide()` exceeded the time budget, with a 53.7 ms maximum reopen time.
+The GPU renderer with the window kept alive is used: it has the fastest reopen measurements (13.6 ms median) and stays within the 50 ms show budget. Its measured idle RSS is 122.8 MB in the current launcher, so the memory budget is 140 MB. Do not use Slint `hide()` because destroying the window raised the GPU reopen maximum to 53.7 ms.
+
+After enabling FemtoVG and restarting the current release build on 2026-10-18, RSS was 122.8 MB both hidden and visible. The launcher was opened and hidden through `orbit toggle` and stayed resident on `special:orbit` while hidden.
 
 ## 4. Data model
 
@@ -52,7 +54,7 @@ Directory = { id, name, path, icon }
 Folder = { id, name, apps: [App] }
 Page   = { items: [Item] }
 Dock   = { pinned: [item id] }      ordered
-Recent = [app id]                   deferred
+Recent = [item id]                  most recent first
 ```
 
 - `config.json` has a `version` number, so later changes can read old files.
@@ -71,20 +73,20 @@ Recent = [app id]                   deferred
 From top to bottom: top bar, the open page, page dots, dock.
 
 - **Top bar:** the supplied Orbit logo and wordmark (`ui/assets/orbit.svg`) and name on the left. The Settings and Close icons on the right.
-- **Page:** a grid of items with the Add tile last. It scrolls vertically and has no item limit. Content is capped at about 1317 px wide and centered, so it does not stretch on a large screen.
+- **Page:** a grid of items with the Add tile last. It scrolls vertically and has no item limit. Content is capped at 1152 px wide and centered, so it does not stretch on a large screen.
 - **Page dots:** show which page is open. Clicking a dot opens that page. Add page in Settings adds an empty page.
-- **Dock:** a floating, semi-transparent white rounded bar at the bottom center, with no blur. Pinned items in order, with a thin separator after the second item. Each 48 px icon has an 11 px name below it, matching the reference. Recent is deferred. The dock is always shown, even when it is empty.
+- **Dock:** a floating, semi-transparent white rounded bar at the bottom center, with no blur. Up to two recent items appear on the left and pinned items in saved order on the right, separated by a thin line when both sections have items. Each 48 px icon has an 11 px name below it. The dock is always shown, even when it is empty.
 - **On open:** the launcher opens on its current page with folders, Settings, sheets and alerts closed, and search cleared. Grid focus navigation remains deferred.
 
 ## 6. Behavior
 
 **Opening items.** Click, or `Enter` on the focused item.
-- An app starts directly with no shell: the command is split into arguments and run detached, so the app survives a daemon restart. On success the launcher hides. Recent tracking remains deferred.
+- An app starts directly with no shell: the command is split into arguments and run detached, so the app survives a daemon restart. On success the launcher hides and the item enters Recent.
 - A Website opens its URL in the default browser. A File opens with its default app. A Directory opens in the default file manager. These use `xdg-open` with the URL or path as one argument, without a shell. On success the launcher hides.
 - On failure the launcher stays open and shows a banner such as "Couldn't start 'figma': not found".
 - A folder opens instead of launching. The Add tile opens the Add item sheet.
 
-**Context menu** (right-click an item): Edit, Pin (or Unpin), Delete. It works the same on page items, folder apps and dock icons.
+**Context menu** (right-click an item): Edit, Pin (or Unpin), Delete on page items and folder apps. A pinned dock item offers Unpin; a Recent dock item offers Remove from Recent.
 
 **Sheets.** All open over a dimmed backdrop inside the launcher window.
 - *Add item:* segmented control App, Website, File, Directory or Folder. For an App, a second segmented control: Actions, Installed apps or Custom command. Actions shows Lock screen, Take screenshot, Sleep and Log out; choosing one adds it to the current page and closes the sheet. Custom command has Name, Icon and Command, with Cancel and Save. Installed apps shows the saved Installed apps list and a Refresh installed apps button; clicking an app adds it right away at the end of the current page (before the Add tile) and closes the sheet, with no Save. Adding the same installed app again is allowed. Its name and icon come from the list and can be changed later with Edit. Website has Name and URL. File and Directory each have Icon and a native chooser button. Choosing a path derives the item name and adds it to the current page, then closes the sheet. A Folder has just a Name, with Cancel and Save.
@@ -103,7 +105,7 @@ From top to bottom: top bar, the open page, page dots, dock.
 **Pages.**
 - No names. At least 1, at most 9.
 - A new page is created by dropping an item past the right edge of the last page, or with Add page in Settings.
-- Drag an empty area of the page left or right to move to the previous or next page. The page follows the pointer and settles into place after release.
+- Drag an empty area of the page left or right to move to the previous or next page. The page follows the pointer without delay and settles into place after release. At the first or last page, it moves only a little and returns to the center.
 - An empty page is deleted when you leave it, unless it is the only one.
 - First run: one empty page with the Add tile.
 - Startup page controls are deferred; reopening keeps the current page.
@@ -117,9 +119,10 @@ From top to bottom: top bar, the open page, page dots, dock.
 
 **Dock.**
 - Pin or Unpin in an item's context menu adds or removes it from the dock. The item stays on its page.
-- The dock displays pinned items in saved order, up to eight. It has a visual separator after the second item, as in the supplied design.
-- Clicking a dock item opens it, including a folder on another page.
-- Recent history and dock drag reordering remain a later functional step.
+- Right-click a pinned dock item to Unpin it. Right-click a Recent dock item to remove it from Recent history.
+- Recent tracks successfully opened Apps, Websites, Files and Directories, including Apps inside folders. Folders themselves do not enter Recent. The two newest unpinned items appear on the left; pinned items appear on the right in saved order, up to eight. An item appears only once in the dock.
+- Recent keeps up to sixteen item IDs so older unpinned items can fill the left side when a newer item is pinned or deleted. Opening an item again moves it to the front. A successful launch writes `recent.json` only when the order changes.
+- Clicking a dock item opens it, including a folder or an App inside a folder on another page. Dock drag reordering remains a later functional step.
 
 **Drag and drop** (iOS behavior).
 - A click without movement launches. Dragging makes the other items slide aside to open a gap, and dropping fills it.
@@ -177,8 +180,8 @@ The authoritative visual reference is `doc/orbit-ui/orbit.png` and `orbit.svg` (
 - Use the reference radial background, lavender artwork, logo, search field, Settings and Close controls, circular dotted Add tile, page dots, labeled dock and footer hints.
 - Embed Inter. Page labels are 14 px, dock labels 11 px. Page icons are 80 px; dock icons are 48 px.
 - Top bar: logo at (48,40), 360 × 44 px centered search at y=34, controls 48 px apart at the right.
-- Grid: first icons at y=166, eight columns at reference width, centers about 164.57 px apart. Center and cap the grid at 1316.57 px on wider displays.
-- Page dots are centered 146 px above the bottom. The dock is 94 px tall, 26 px above the bottom, with 26 px corners and 100 px per item.
+- Grid: eight columns at reference width, with 144 px between item centers in both directions. Center and cap the grid at 1152 px on wider displays. The page and its 128 × 128 px item tiles have 1 px borders. Item tiles have a lighter background on hover. The gaps between tiles do not select items.
+- Page dots are centered 146 px above the bottom. The dock is 94 px tall, 26 px above the bottom, with 26 px corners and 100 px per item. Each dock item's hover area is inset 6 px on all sides. The separator divides Recent from Pinned when both are present.
 - Search filters saved page items by name across all pages. Enter opens the first result; clicking any result opens it. Esc clears search before hiding.
 - Left and Right switch pages when a text field, sheet or folder is not active. Ctrl+K focuses search.
 - Preserve native, interactive controls. The exported `main.slint` is only a full-screen PNG and cannot be used as the application implementation.
@@ -186,7 +189,7 @@ The authoritative visual reference is `doc/orbit-ui/orbit.png` and `orbit.svg` (
 
 **Animation.** Short and few, because Orbit must stay fast.
 - Showing and hiding the launcher: none. It is instant.
-- Page switch: horizontal slide, about 150 ms.
+- Page switch: the adjacent page appears beside the open page during a mouse drag, and both pages slide together after release with ease-out motion. A full switch takes about 170 ms; a partly dragged page settles faster according to the distance left.
 - Folder open and close: the panel grows from its tile, about 200 ms.
 - Drag: other items slide into the gap, about 120 ms, and the dropped item settles into place.
 - Sheet and alert: the backdrop and panel fade in, about 120 ms.
@@ -200,7 +203,7 @@ One folder: `~/.config/orbit/` (respecting `XDG_CONFIG_HOME`).
 | File | Holds |
 |---|---|
 | `config.json` | Version, pages, items, folders and pinned order; settings are deferred |
-| `recent.json` | Reserved for the deferred Recent list |
+| `recent.json` | Up to sixteen recent item IDs, newest first |
 | `installed-apps.json` | The Installed apps list |
 | `icons/` | Saved icon images |
 
@@ -229,7 +232,7 @@ Each step ends with an app that runs on Arch.
 
 ## 14. Assumptions to confirm
 
-1. Item size: The supplied reference uses 80 px icons, 14 px labels and approximately 164.57 px column spacing. Size controls remain deferred.
+1. Item size: Use 80 px icons, 14 px labels and 144 px spacing between item centers. Size controls remain deferred.
 2. Editing an installed app changes its name and icon, not what it launches.
 3. If an installed app is gone from the Installed apps list after a refresh, its item stays on its page. Launching it shows a banner such as "Couldn't start 'X': not found".
 

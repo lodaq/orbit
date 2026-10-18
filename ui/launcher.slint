@@ -2,9 +2,11 @@ import "fonts/Inter.ttf";
 import { Button, LineEdit, TextEdit, Palette } from "std-widgets.slint";
 
 export struct AppTile {
+    id: string,
     name: string,
     page: int,
     index: int,
+    folder-app-index: int,
     pinned: bool,
     artwork: string,
     letter: string,
@@ -54,6 +56,57 @@ component ItemIcon inherits Rectangle {
     if item.app && !item.icon-present: Text { text: item.letter; color: #e0e5ff; font-size: parent.width * 0.4; horizontal-alignment: center; vertical-alignment: center; }
 }
 
+component PageTile inherits Rectangle {
+    in property <[AppTile]> items;
+    in property <int> index;
+    in property <bool> hovered;
+    width: 128px;
+    height: 128px;
+    background: hovered ? #ffffff0b : transparent;
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: index < items.length ? #a6b1ed33 : transparent;
+    Rectangle {
+        x: (parent.width - self.width) / 2; y: 12px;
+        width: 80px; height: 80px;
+        border-radius: 20px;
+        if index < items.length: ItemIcon { width: 80px; height: 80px; item: items[index]; }
+        if index == items.length: Image { width: 80px; height: 80px; source: @image-url("assets/add.svg"); }
+    }
+    Text {
+        y: 100px;
+        width: parent.width;
+        height: 24px;
+        text: index == items.length ? "Add" : items[index].name;
+        color: #e0e3f4;
+        font-size: 14px;
+        horizontal-alignment: center;
+        overflow: elide;
+    }
+}
+
+component DockTile inherits Rectangle {
+    in property <AppTile> item;
+    in property <bool> enabled;
+    in property <bool> recent;
+    callback open();
+    callback context-menu(bool, string, length, length);
+    height: 82px;
+    border-radius: 20px;
+    background: dock-touch.has-hover ? #ffffff0b : transparent;
+    ItemIcon { x: (parent.width - 48px) / 2; y: 6px; width: 48px; height: 48px; item: item; dock: true; }
+    Text { y: 65px; width: parent.width; height: 16px; text: item.name; color: #e0e3f4; font-size: 11px; horizontal-alignment: center; overflow: elide; }
+    dock-touch := TouchArea {
+        mouse-cursor: pointer; enabled: root.enabled;
+        clicked => { root.open(); }
+        pointer-event(event) => {
+            if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                root.context-menu(root.recent, root.item.id, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+}
+
 export component Launcher inherits Window {
     in property <string> monitor-name;
     in property <float> cursor-x;
@@ -63,18 +116,24 @@ export component Launcher inherits Window {
     in property <int> page-count: 1;
     in property <int> current-page;
     in property <[AppTile]> items;
+    in property <[AppTile]> previous-items;
+    in property <[AppTile]> next-items;
     in property <[AppTile]> dock-items;
+    in property <[AppTile]> recent-items;
     in property <[AppTile]> search-results;
     in-out property <string> search-text;
     private property <bool> settings;
     callback search(string);
     callback open-result(int, int);
+    callback open-dock-item(int, int, int);
     callback pin-item(int);
+    callback unpin-dock-item(string);
+    callback remove-recent-item(string);
     out property <bool> search-focused: search-input.has-focus;
     callback focus-search();
     callback page-key(int);
-    focus-search => { if !root.sheet && !root.folder-open && root.context-index < 0 { root.settings = false; search-input.focus(); } }
-    page-key(direction) => { if !root.sheet && !root.folder-open && root.search-text == "" && !root.settings && root.context-index < 0 { root.change-page(root.current-page + direction); } }
+    focus-search => { if !root.sheet && !root.folder-open && root.context-index < 0 && root.dock-context == "" { root.settings = false; search-input.focus(); } }
+    page-key(direction) => { if !root.sheet && !root.folder-open && root.search-text == "" && !root.settings && root.context-index < 0 && root.dock-context == "" { root.change-page(root.current-page + direction); } }
 
     in property <[InstalledAppTile]> installed-apps;
     in property <string> installed-status;
@@ -87,6 +146,8 @@ export component Launcher inherits Window {
     private property <bool> alert;
     private property <bool> picker;
     private property <int> context-index: -1;
+    private property <string> dock-context;
+    private property <string> context-id;
     private property <int> editing: -1;
     private property <string> app-name;
     private property <string> command;
@@ -97,10 +158,15 @@ export component Launcher inherits Window {
     private property <length> context-x;
     private property <length> context-y;
     private property <length> page-drag-offset;
-    private property <length> page-drag-start-x;
-    private property <length> page-drag-start-y;
     private property <bool> page-dragging;
-    private property <bool> page-swipe;
+    private property <length> page-span: min(1152px, page.width) + 16px;
+    private property <[AppTile]> transition-items;
+    private property <[AppTile]> transition-incoming-items;
+    private property <bool> transitioning;
+    private property <int> transition-direction;
+    private property <length> transition-start;
+    private property <float> transition-progress;
+    private property <duration> transition-duration: max(90ms, 170ms * (1 - abs(root.transition-start) / root.page-span));
     private property <bool> custom: true;
     private property <string> app-source: "Actions";
     private property <string> installed-filter;
@@ -131,7 +197,19 @@ export component Launcher inherits Window {
     callback reorder-folder-app(int, int, int);
     callback reset-launcher();
     callback close-top-layer();
-    animate page-drag-offset { duration: 150ms; }
+    animate page-drag-offset { duration: root.page-dragging ? 0ms : 100ms; easing: ease-out; }
+    animate transition-progress { duration: root.transition-duration; easing: ease-out-sine; }
+    transition-timer := Timer {
+        running: false;
+        interval: root.transition-duration + 34ms;
+        triggered => {
+            root.transitioning = false;
+            root.transition-progress = 0;
+            root.transition-items = [];
+            root.transition-incoming-items = [];
+            self.running = false;
+        }
+    }
     folder-timer := Timer {
         running: false;
         interval: 500ms;
@@ -146,12 +224,21 @@ export component Launcher inherits Window {
     reset-launcher => {
         if root.folder-open { root.close-folder(); }
         page-focus.focus();
+        root.page-dragging = false;
+        root.page-drag-offset = 0px;
+        root.transitioning = false;
+        root.transition-items = [];
+        root.transition-incoming-items = [];
+        transition-timer.stop();
+        page.content-x = 0px;
         root.search-text = "";
         root.settings = false;
         root.sheet = false;
         root.alert = false;
         root.picker = false;
         root.context-index = -1;
+        root.dock-context = "";
+        root.context-id = "";
         root.folder-open = false;
     }
     close-top-layer => {
@@ -159,7 +246,7 @@ export component Launcher inherits Window {
         if root.picker { root.picker = false; }
         else if root.alert { root.alert = false; }
         else if root.sheet { root.sheet = false; }
-        else if root.context-index >= 0 { root.context-index = -1; }
+        else if root.context-index >= 0 || root.dock-context != "" { root.context-index = -1; root.dock-context = ""; }
         else if root.folder-open { root.folder-open = false; root.close-folder(); }
         else if root.settings { root.settings = false; }
         else if root.search-text != "" { root.search-text = ""; page-focus.focus(); }
@@ -167,6 +254,7 @@ export component Launcher inherits Window {
     }
     function edit-app(index: int) {
         root.context-index = -1;
+        root.dock-context = "";
         root.banner = "";
         root.editing = index;
         root.item-type = "App";
@@ -221,12 +309,38 @@ export component Launcher inherits Window {
     callback open-page(int);
     callback hide-launcher();
     function change-page(index: int) {
-        if !root.busy && index >= 0 && index < root.page-count && index != root.current-page {
+        if !root.busy && !root.transitioning && index >= 0 && index < root.page-count && index != root.current-page {
+            root.transition-items = root.items;
+            root.transition-direction = index > root.current-page ? 1 : -1;
+            root.transition-incoming-items = root.transition-direction > 0 ? root.next-items : root.previous-items;
+            root.transition-start = root.page-drag-offset;
+            root.page-drag-offset = 0px;
+            root.transition-progress = 0;
+            root.transitioning = true;
             root.busy = true;
             root.open-page(index);
-            root.page-drag-offset = 0px;
             page.content-y = 0px;
+            root.transition-progress = 1;
+            transition-timer.start();
+        } else {
+            root.page-drag-offset = 0px;
         }
+    }
+    function empty-page-area(x: length, y: length) -> bool {
+        let grid-x = x - grid.x;
+        let grid-y = y + page.content-y;
+        if grid-x < 0px || grid-x >= grid.width || grid-y < 0px || grid-y >= grid.height {
+            return true;
+        }
+        let column = floor(grid-x / grid.tile-size);
+        let row = floor(grid-y / grid.tile-size);
+        if row * grid.columns + column > root.items.length {
+            return true;
+        }
+        let tile-x = mod(grid-x, grid.tile-size);
+        let tile-y = mod(grid-y, grid.tile-size);
+        let inset = (grid.tile-size - 128px) / 2;
+        return tile-x < inset || tile-x >= inset + 128px || tile-y < inset || tile-y >= inset + 128px;
     }
     function scroll-page(event: PointerScrollEvent) -> EventResult {
         if event.modifiers.shift {
@@ -280,74 +394,87 @@ export component Launcher inherits Window {
         }
         page := Flickable {
             visible: root.search-text == "" && !root.settings;
+            mouse-drag-pan-enabled: false;
             content-width: self.width;
             content-height: max(self.height, grid.height);
-            TouchArea {
+            swipe := SwipeGestureHandler {
                 width: page.width;
                 height: page.height;
-                scroll-event(event) => { return root.scroll-page(event); }
-                pointer-event(event) => {
-                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.left && !root.busy {
+                enabled: !root.busy && !root.transitioning && !root.folder-open && !root.sheet && !root.alert && !root.picker && !root.settings && root.search-text == "";
+                handle-swipe-left: root.empty-page-area(self.pressed-position.x, self.pressed-position.y);
+                handle-swipe-right: root.empty-page-area(self.pressed-position.x, self.pressed-position.y);
+                moved => {
+                    if self.swiping {
                         page-focus.focus();
-                        root.page-drag-start-x = self.mouse-x;
-                        root.page-drag-start-y = self.mouse-y;
                         root.page-dragging = true;
-                        root.page-swipe = false;
+                        let dx = self.current-position.x - self.pressed-position.x;
+                        let limit = (dx > 0px && root.current-page == 0)
+                            || (dx < 0px && root.current-page == root.page-count - 1) ? 64px : root.page-span;
+                        root.page-drag-offset = min(limit, max(-limit, dx));
                     }
-                    if event.kind == PointerEventKind.move && root.page-dragging && root.drag-index < 0 {
-                        let dx = self.mouse-x - root.page-drag-start-x;
-                        let dy = self.mouse-y - root.page-drag-start-y;
-                        if abs(dx) > 12px && abs(dx) > abs(dy) {
-                            root.page-swipe = true;
-                            root.page-drag-offset = min(page.width, max(-page.width, dx));
-                        }
-                    }
-                    if event.kind == PointerEventKind.up && root.page-dragging {
-                        if root.page-swipe && abs(root.page-drag-offset) > page.width * 0.18 {
-                            root.change-page(root.current-page + (root.page-drag-offset < 0px ? 1 : -1));
-                        } else {
-                            root.page-drag-offset = 0px;
-                        }
+                }
+                swiped => {
+                    let dx = self.current-position.x - self.pressed-position.x;
+                    if root.page-dragging && abs(dx) > min(120px, page.width * 0.18) {
                         root.page-dragging = false;
-                        root.page-swipe = false;
+                        root.change-page(root.current-page + (dx < 0px ? 1 : -1));
+                    } else {
+                        root.page-dragging = false;
+                        root.page-drag-offset = 0px;
                     }
+                }
+                cancelled => { root.page-dragging = false; root.page-drag-offset = 0px; }
+                page-touch := TouchArea {
+                    width: page.width;
+                    height: page.height;
+                    clicked => { page-focus.focus(); }
+                    scroll-event(event) => { return root.scroll-page(event); }
+                }
+            preview := Rectangle {
+                visible: root.transitioning
+                    || (root.page-drag-offset < 0px && root.current-page < root.page-count - 1)
+                    || (root.page-drag-offset > 0px && root.current-page > 0);
+                x: (page.width - self.width) / 2 + (root.transitioning
+                    ? root.transition-start + (-root.transition-direction * root.page-span - root.transition-start) * root.transition-progress
+                    : root.page-drag-offset + (root.page-drag-offset < 0px ? root.page-span : -root.page-span));
+                y: 0px;
+                width: min(1152px, page.width);
+                property <[AppTile]> preview-items: root.transitioning ? root.transition-items
+                    : (root.page-drag-offset < 0px ? root.next-items : root.previous-items);
+                property <int> columns: max(1, floor(self.width / 144px));
+                property <length> tile-size: self.width / self.columns;
+                height: ceil((self.preview-items.length + 1) / self.columns) * self.tile-size;
+                border-width: 1px;
+                border-color: #a6b1ed33;
+                border-radius: 24px;
+                for index in preview.preview-items.length + 1: PageTile {
+                    x: mod(index, preview.columns) * preview.tile-size + (preview.tile-size - 128px) / 2;
+                    y: floor(index / preview.columns) * preview.tile-size + (preview.tile-size - 128px) / 2;
+                    items: preview.preview-items;
+                    index: index;
                 }
             }
             grid := Rectangle {
-                x: (page.width - self.width) / 2 + root.page-drag-offset;
+                x: (page.width - self.width) / 2 + (root.transitioning
+                    ? root.transition-start + (-root.transition-direction * root.page-span - root.transition-start) * root.transition-progress + root.transition-direction * root.page-span
+                    : root.page-drag-offset);
                 y: 0px;
-                width: min(1316.572px, page.width);
-                property <int> columns: max(1, floor(self.width / 160px));
+                width: min(1152px, page.width);
+                property <[AppTile]> display-items: root.transitioning ? root.transition-incoming-items : root.items;
+                property <int> columns: max(1, floor(self.width / 144px));
                 property <length> tile-size: self.width / self.columns;
-                property <length> row-pitch: self.tile-size + 12px;
-                height: ceil((root.items.length + 1) / self.columns) * self.row-pitch;
-                for index in root.items.length + 1: Rectangle {
-                    x: mod(index, grid.columns) * (grid.width / grid.columns);
-                    y: floor(index / grid.columns) * grid.row-pitch;
-                    width: grid.width / grid.columns;
-                    height: grid.tile-size;
-                    background: tile.has-hover ? #ffffff0b : transparent;
-                    border-radius: 20px;
-                    Rectangle {
-                        x: (parent.width - self.width) / 2; y: (grid.tile-size - 122px) / 2;
-                        width: 80px; height: 80px;
-                        border-radius: 20px;
-                        if index < root.items.length: ItemIcon { width: 80px; height: 80px; item: root.items[index]; }
-                        if index == root.items.length: Image { width: 80px; height: 80px; source: @image-url("assets/add.svg"); }
-                    }
-                    Text {
-                        y: (grid.tile-size - 122px) / 2 + 98px;
-                        width: parent.width;
-                        height: 24px;
-                        text: index == root.items.length ? "Add" : root.items[index].name;
-                        color: #e0e3f4;
-                        font-size: 14px;
-                        horizontal-alignment: center;
-                        overflow: elide;
-                    }
+                height: ceil((self.display-items.length + 1) / self.columns) * self.tile-size;
+                border-width: 1px;
+                border-color: #a6b1ed33;
+                border-radius: 24px;
+                for index in grid.display-items.length + 1: Rectangle {
+                    x: mod(index, grid.columns) * grid.tile-size + (grid.tile-size - 128px) / 2;
+                    y: floor(index / grid.columns) * grid.tile-size + (grid.tile-size - 128px) / 2;
+                    width: 128px; height: 128px;
+                    PageTile { items: grid.display-items; index: index; hovered: tile.has-hover; }
                     tile := TouchArea {
                         scroll-event(event) => { return root.scroll-page(event); }
-                        enabled: !root.busy && !root.picker && !root.alert;
+                        enabled: !root.busy && !root.transitioning && !root.picker && !root.alert;
                         mouse-cursor: pointer;
                         clicked => {
                             if root.dragged { root.dragged = false; return; }
@@ -393,7 +520,7 @@ export component Launcher inherits Window {
                                     edge-timer.stop();
                                 }
                                 let column = floor((x - grid.absolute-position.x) / (grid.width / grid.columns));
-                                let row = floor((y - grid.absolute-position.y) / grid.row-pitch);
+                                let row = floor((y - grid.absolute-position.y) / grid.tile-size);
                                 let target = max(0, row * grid.columns + column);
                                 if target < root.items.length && target != root.drag-index && root.items[target].app {
                                     if root.hover-index != target {
@@ -414,7 +541,7 @@ export component Launcher inherits Window {
                                     let y = self.absolute-position.y + self.mouse-y;
                                     let destination = root.edge-ready ? root.edge-target : root.current-page;
                                     let column = floor((x - grid.absolute-position.x) / (grid.width / grid.columns));
-                                    let row = floor((y - grid.absolute-position.y) / grid.row-pitch);
+                                    let row = floor((y - grid.absolute-position.y) / grid.tile-size);
                                     let target = min(root.items.length, max(0, row * grid.columns + column));
                                     root.drop-item(root.drag-index, target, root.drag-page, destination, root.folder-ready && root.hover-index == target);
                                 } else if root.dragged && index == root.items.length {
@@ -423,7 +550,7 @@ export component Launcher inherits Window {
                                     let y = self.absolute-position.y + self.mouse-y;
                                     let destination = root.edge-ready ? root.edge-target : root.current-page;
                                     let column = floor((x - grid.absolute-position.x) / (grid.width / grid.columns));
-                                    let row = floor((y - grid.absolute-position.y) / grid.row-pitch);
+                                    let row = floor((y - grid.absolute-position.y) / grid.tile-size);
                                     let target = min(root.items.length, max(0, row * grid.columns + column));
                                     root.drop-item(root.drag-index, target, root.drag-page, destination, root.folder-ready && root.hover-index == target);
                                 }
@@ -433,6 +560,7 @@ export component Launcher inherits Window {
                             }
                             if event.button == PointerEventButton.right && event.kind == PointerEventKind.down
                                 && index < root.items.length {
+                                root.dock-context = "";
                                 root.context-x = self.absolute-position.x + self.mouse-x;
                                 root.context-y = self.absolute-position.y + self.mouse-y;
                                 root.context-index = index;
@@ -441,7 +569,7 @@ export component Launcher inherits Window {
                     }
                 }
             }
-
+            }
         }
     }
     HorizontalLayout {
@@ -455,17 +583,31 @@ export component Launcher inherits Window {
     }
     dock := Rectangle {
         x: (root.width - self.width) / 2; y: root.height - 120px;
-        width: min(root.width - 96px, max(104px, root.dock-items.length * 100px + 4px)); height: 94px;
+        width: min(root.width - 96px, max(104px, (root.recent-items.length + root.dock-items.length) * 100px + 4px)); height: 94px;
+        property <length> slot-width: (self.width - 4px) / max(1, root.recent-items.length + root.dock-items.length);
         Image { x: -1px; y: -1px; width: parent.width + 2px; height: parent.height + 2px; source: @image-url("assets/dock.svg"); image-fit: fill; }
-        for item[index] in root.dock-items: Rectangle {
-            x: 2px + index * ((dock.width - 4px) / max(1, root.dock-items.length)); y: 0px;
-            width: (dock.width - 4px) / max(1, root.dock-items.length); height: 94px;
-            border-radius: 20px; background: dock-touch.has-hover ? #ffffff0b : transparent;
-            ItemIcon { x: (parent.width - 48px) / 2; y: 18px; width: 48px; height: 48px; item: item; dock: true; }
-            Text { y: 77px; width: parent.width; height: 16px; text: item.name; color: #e0e3f4; font-size: 11px; horizontal-alignment: center; overflow: elide; }
-            dock-touch := TouchArea { mouse-cursor: pointer; enabled: !root.busy; clicked => { root.busy = true; root.open-result(item.page, item.index); } }
+        for item[index] in root.recent-items: DockTile {
+            x: 8px + index * dock.slot-width; y: 6px; width: dock.slot-width - 12px;
+            item: item; enabled: !root.busy; recent: true;
+            open => { root.busy = true; root.open-dock-item(item.page, item.index, item.folder-app-index); }
+            context-menu(recent, id, x, y) => {
+                root.context-index = -1; root.dock-context = recent ? "recent" : "pinned";
+                root.context-id = id; root.context-x = x; root.context-y = y;
+            }
         }
-        if root.dock-items.length > 2: Rectangle { x: 2px + 2 * ((dock.width - 4px) / root.dock-items.length); y: 19px; width: 1px; height: 52px; background: #a6b1ed26; }
+        for item[index] in root.dock-items: DockTile {
+            x: 8px + (root.recent-items.length + index) * dock.slot-width; y: 6px; width: dock.slot-width - 12px;
+            item: item; enabled: !root.busy; recent: false;
+            open => { root.busy = true; root.open-dock-item(item.page, item.index, item.folder-app-index); }
+            context-menu(recent, id, x, y) => {
+                root.context-index = -1; root.dock-context = recent ? "recent" : "pinned";
+                root.context-id = id; root.context-x = x; root.context-y = y;
+            }
+        }
+        if root.recent-items.length > 0 && root.dock-items.length > 0: Rectangle {
+            x: 2px + root.recent-items.length * dock.slot-width;
+            y: 19px; width: 1px; height: 52px; background: #a6b1ed26;
+        }
     }
     Image { x: 48px; y: root.height - 22px; width: 105px; height: 15px; source: @image-url("assets/page-hint.svg"); }
     Image { x: root.width - 160px; y: root.height - 21px; width: 112px; height: 13px; source: @image-url("assets/close-hint.svg"); }
@@ -495,28 +637,30 @@ export component Launcher inherits Window {
         }
     }
 
-    if root.context-index >= 0: Rectangle {
+    if root.context-index >= 0 || root.dock-context != "": Rectangle {
         width: root.width; height: root.height;
         background: #00000050;
-        TouchArea { clicked => { root.context-index = -1; } }
+        TouchArea { clicked => { root.context-index = -1; root.dock-context = ""; root.context-id = ""; } }
         Rectangle {
             x: min(root.context-x, parent.width - self.width);
             y: min(root.context-y, parent.height - self.height);
-            width: 200px; height: 154px;
+            width: 200px; height: root.context-index >= 0 ? 154px : 64px;
             background: white; border-radius: 16px;
             VerticalLayout {
                 padding: 12px; spacing: 8px;
-                Button { text: "Edit"; clicked => {
+                if root.context-index >= 0: Button { text: "Edit"; clicked => {
                     root.edit-item(root.context-index);
                 } }
-                Button { text: root.items[root.context-index].pinned ? "Unpin" : "Pin"; clicked => { root.busy = true; root.pin-item(root.context-index); root.context-index = -1; } }
-                Button { text: "Delete"; clicked => {
+                if root.context-index >= 0: Button { text: root.items[root.context-index].pinned ? "Unpin" : "Pin"; clicked => { root.busy = true; root.pin-item(root.context-index); root.context-index = -1; } }
+                if root.context-index >= 0: Button { text: "Delete"; clicked => {
                     root.editing = root.context-index;
                     root.app-name = root.items[root.context-index].name;
                     root.context-index = -1;
                     root.banner = ""; root.alert = true;
                     cancel-delete.focus();
                 } }
+                if root.dock-context == "pinned": Button { text: "Unpin"; clicked => { root.busy = true; root.unpin-dock-item(root.context-id); root.dock-context = ""; } }
+                if root.dock-context == "recent": Button { text: "Remove from Recent"; clicked => { root.busy = true; root.remove-recent-item(root.context-id); root.dock-context = ""; } }
             }
         }
     }
