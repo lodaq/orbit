@@ -112,6 +112,11 @@ pub fn read_installed_apps() -> io::Result<Option<Vec<u8>>> {
     }
 }
 
+pub fn backup_installed_apps() -> io::Result<()> {
+    let path = installed_apps_path()?;
+    fs::rename(&path, path.with_extension("json.bad"))
+}
+
 pub fn write_installed_apps(data: &[u8]) -> io::Result<()> {
     let path = installed_apps_path()?;
     fs::create_dir_all(path.parent().expect("installed apps have a directory"))?;
@@ -241,6 +246,7 @@ fn installed_icon_files() -> std::collections::HashMap<String, PathBuf> {
     let mut roots = vec![
         PathBuf::from("/usr/share/icons"),
         PathBuf::from("/usr/share/pixmaps"),
+        PathBuf::from("/var/lib/flatpak/exports/share/icons"),
     ];
     let home = std::env::var_os("XDG_DATA_HOME")
         .filter(|value| !value.is_empty())
@@ -248,6 +254,7 @@ fn installed_icon_files() -> std::collections::HashMap<String, PathBuf> {
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
     if let Some(home) = home {
         roots.insert(0, home.join("icons"));
+        roots.push(home.join("flatpak/exports/share/icons"));
     }
     let mut icons = std::collections::HashMap::new();
     for root in roots {
@@ -282,6 +289,9 @@ fn resolve_icon(name: &str, icons: &std::collections::HashMap<String, PathBuf>) 
     let path = PathBuf::from(name);
     if path.is_absolute() && supported_icon(&path) && path.is_file() {
         return Some(path);
+    }
+    if let Some(icon) = icons.get(&name.to_lowercase()) {
+        return Some(icon.clone());
     }
     let stem = path.file_stem().and_then(std::ffi::OsStr::to_str)?;
     icons.get(&stem.to_lowercase()).cloned()
@@ -758,6 +768,16 @@ pub fn hide(launcher: &crate::Launcher) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+pub fn restore_after_chooser(launcher: &crate::Launcher) -> Result<(), Box<dyn std::error::Error>> {
+    let monitor = cursor_monitor()?;
+    fullscreen(launcher.window(), &monitor);
+    restore(&monitor)?;
+    launcher.set_launcher_visible(true);
+    launcher.window().request_redraw();
+    focus_after_show(launcher);
+    Ok(())
+}
+
 fn dispatch(command: &str, legacy: &str) -> io::Result<()> {
     let reply = hyprland(&format!("dispatch {command}"))?;
     if reply.trim() == "ok" {
@@ -802,9 +822,11 @@ fn focus_after_show(launcher: &crate::Launcher) {
     slint::Timer::single_shot(Duration::from_millis(60), move || {
         if let Some(launcher) = weak.upgrade()
             && launcher.get_launcher_visible()
-            && let Err(error) = focus_launcher()
         {
-            eprintln!("orbit: {error}");
+            if let Err(error) = focus_launcher() {
+                eprintln!("orbit: {error}");
+            }
+            launcher.invoke_focus_search();
         }
     });
 }
@@ -875,6 +897,8 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
                             if focus_generation.get() == generation
                                 && let Some(launcher) = weak.upgrade()
                                 && launcher.get_launcher_visible()
+                                && !launcher.get_icon_busy()
+                                && launcher.get_sheet_operation() != "choosing"
                                 && let Err(error) = self::hide(&launcher)
                             {
                                 eprintln!("orbit: {error}");
@@ -939,4 +963,33 @@ fn detached(command: &mut Command) -> io::Result<()> {
         let _ = child.wait();
     });
     Ok(())
+}
+
+pub fn choose_icon() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title("Choose icon")
+        .add_filter("Icon", &["png", "jpg", "jpeg", "svg", "ico"])
+        .pick_file()
+}
+
+pub fn read_chosen_icon(value: &str) -> Result<(String, Vec<u8>), String> {
+    use std::hash::{Hash, Hasher};
+    let path = PathBuf::from(value);
+    let data = if path.is_absolute() {
+        fs::read(&path)
+    } else {
+        read_icon(value)
+    }
+    .map_err(|_| "Couldn't read icon")?;
+    let extension = path
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("")
+        .to_lowercase();
+    if !matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "svg" | "ico") {
+        return Err("Choose a PNG, JPEG, SVG or ICO icon.".into());
+    }
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    data.hash(&mut hash);
+    Ok((format!("chosen-{:x}.{extension}", hash.finish()), data))
 }

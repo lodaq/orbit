@@ -20,7 +20,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Item** | An app, website, file, directory or folder. Anything that can sit on a page. |
 | **Item type** | The kind of item: App, Website, File, Directory or Folder. |
 | **App** | A tile that starts something. Has a **name**, an **icon** and a **launch**. It has no color. |
-| **Launch** | How an app starts. Either a **custom command** or an **installed app**. |
+| **Launch** | How an app starts: a **custom command**, an **installed app** or a **System action**. |
 | **App source** | One of the choices for adding an App: Actions, Installed apps or Custom command. |
 | **Actions** | The list of predefined System actions available as Apps. |
 | **Custom command** | An app whose launch is a command you typed (for example `firefox --private-window`). Run directly, without a shell. |
@@ -34,11 +34,11 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Refresh installed apps** | Scans the application entries installed on this computer and updates the Installed apps list. |
 | **Website** | Opens a URL in the default browser. Its icon is fetched once when added and saved in Orbit's icons folder. |
 | **URL** | The web address a Website opens. |
-| **File** | An item made by choosing a file. Its name comes from the file and it opens with the default app. |
-| **Directory** | An item made by choosing a directory. Its name comes from the directory and it opens in the default file manager. |
-| **Choose file** | Opens the native file chooser to select a file for an item. |
-| **Choose directory** | Opens the native file chooser to select a directory for an item. |
-| **Path** | The location of a file or directory on this computer. |
+| **File** | An item made by entering or choosing a file Path, then saving. Its name comes from the file and it opens with the default app. |
+| **Directory** | An item made by entering or choosing a directory Path, then saving. Its name comes from the directory and it opens in the default file manager. |
+| **Choose file** | Opens the native file chooser and fills Path with the selected file. |
+| **Choose directory** | Opens the native file chooser and fills Path with the selected directory. |
+| **Path** | The editable location of a file or directory on this computer. |
 | **Folder** | Holds apps. Opens like an iOS folder. Cannot contain other folders. Its tile shows a small preview of its apps. |
 | **Page** | One screen of items, like a phone home screen page. Pages have no names. Maximum 9. An empty page is deleted when you leave it, unless it is the only one. |
 | **Page swipe** | Dragging an empty area of a page left or right to open the previous or next page. |
@@ -62,7 +62,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 |---|---|
 | **Icon** | The picture on an App, Website, File or Directory tile. |
 | **Icon picker** | The panel where you choose an App, File or Directory icon. The only place the glyph library is loaded. |
-| **Letter icon** | The first letter of the name. The default. Also called a monogram. |
+| **Letter icon** | One or two entered visible characters, including emojis. Existing automatic icons use the first letter of the name. |
 | **Glyph** | An icon chosen from the built-in library (Phosphor). Saved as SVG, so the library is not needed afterwards. |
 | **SVG icon** | SVG text you paste in. |
 | **System icon** | The icon of an installed app, resolved once by Refresh installed apps and saved in Orbit's icons folder. |
@@ -106,7 +106,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | Close (as the name of the action) | Close the top layer |
 | Color (on an app or folder) | Removed |
 | Customize | Removed |
-| Image icon, background image | Not in the MVP (see `PLANNED_FEATURES.md`) |
+| Background image | Not in the MVP (see `PLANNED_FEATURES.md`) |
 
 ## Supplied UI terms
 
@@ -117,3 +117,5 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Add page** | Creates an empty page from Settings. |
 | **Switch pages** | Footer hint for Left and Right. |
 | **Back to desktop** | Footer hint for Esc. |
+
+| **Choose icon** | Opens the native file chooser for a saved icon image. |

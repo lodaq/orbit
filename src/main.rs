@@ -1,6 +1,8 @@
+mod add_item;
 mod apps;
 mod config;
 mod daemon;
+mod icons;
 mod platform;
 mod recent;
 

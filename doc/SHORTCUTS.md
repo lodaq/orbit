@@ -4,7 +4,7 @@ Orbit is made for the mouse. Keys are few and fixed: they are not editable and t
 
 ## Launcher
 
-The supplied UI update adds Ctrl+K to focus Search anything and Enter to open its first result. Esc clears search before hiding the launcher. Grid focus navigation remains deferred.
+The launcher opens with Search anything focused. Ctrl+K focuses it again and Enter opens its first result. Esc clears search before hiding the launcher. Grid focus navigation remains deferred.
 
 | Action | Shortcut |
 |---|---|
@@ -29,7 +29,7 @@ The supplied UI update adds Ctrl+K to focus Search anything and Enter to open it
 **Choose** does one thing, depending on where the focus is:
 - In a picker list or a filter box: it chooses the highlighted item.
 - On a button (Save, Cancel, Delete) or a Settings control: it presses it. In an alert, Cancel is focused first.
-- In a Name, URL or Command field: it moves to the next field.
+- In a Name, URL, Path or Command field: it moves to the next field or saves the item.
 
 ## Mouse (fixed)
 
@@ -39,7 +39,7 @@ The supplied UI update adds Ctrl+K to focus Search anything and Enter to open it
 | Click the Add tile | Open the Add item sheet |
 | Click a System action | Add it as an App |
 | Click an installed app | Add it to the current page |
-| Choose a file or directory in its Add item sheet | Add an item named after the selected path |
+| Choose a file or directory in its Add item sheet | Fill Path; Save adds an item named after the path |
 | Right-click a page item | Context menu: Edit, Pin or Unpin, Delete |
 | Right-click a pinned dock item | Unpin |
 | Right-click a Recent dock item | Remove from Recent |

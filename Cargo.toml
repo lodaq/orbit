@@ -18,6 +18,9 @@ image = { version = "=0.25.10", default-features = false, features = ["ico"] }
 # Open native file and directory choosers through the desktop portal.
 rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal"] }
 
+# Count visible characters, including joined emoji, in Letter icons.
+unicode-segmentation = "1.13"
+
 [build-dependencies]
 # Compile the Slint layout into the binary.
 slint-build = "=1.18.1"

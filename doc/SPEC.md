@@ -47,7 +47,7 @@ After enabling FemtoVG and restarting the current release build on 2026-10-18, R
 Item   = App | Website | File | Directory | Folder
 App    = { id, name, icon, launch }
 Launch = Command(text) | Installed(installed app id) | Action(system action)
-Icon   = Letter | Svg(text) | File(name in icons/)
+Icon   = Letter | Text(1–2 visible characters) | Svg(text) | File(name in icons/)
 Website = { id, name, url, icon }
 File   = { id, name, path, icon }
 Directory = { id, name, path, icon }
@@ -62,11 +62,11 @@ Recent = [item id]                  most recent first
 - A glyph chosen in the Icon picker is saved as `Svg` with dark gray written into the SVG, so nothing needs the glyph library afterwards. A pasted SVG keeps its own colors.
 - `Icon::File` icons are only used for saved images, including system icons of installed apps and Website icons.
 - An installed app stores a reference (its id in the Installed apps list), not a command. The Installed apps list holds the command to start it.
-- Icons are decoded on the worker when an item is loaded or added and cached at no more than 80 × 80 px. The text-only Installed apps list does not decode unused icons. The same installed app can be added more than once. Each copy is its own item with its own id.
+- Icons are decoded on the worker when an item is loaded or added and cached at no more than 80 × 80 px. The Installed apps list decodes cached system icons on the worker when first requested and keeps them ready. Opening the launcher never performs this work. The same installed app can be added more than once. Each copy is its own item with its own id.
 - An Action is a predefined app launch, selected from the Actions list. Custom command is the choice for commands outside that list.
 - A Website opens its URL in the default browser. When it is added or saved again without an icon, Orbit reads the page's declared icon, then tries the host favicon and Google's domain favicon. The downloaded icon is saved in `icons/`. Fetching runs on the worker and never happens at startup or when showing the launcher.
-- A File opens its path with the default app. A Directory opens its path in the default file manager. Both use the native file chooser to select a path; the item name comes from the selected file or directory. The default icon is a file or directory image, and can be changed in the Icon picker.
-- A separate Action item is not needed. Use an App with a Custom command for actions such as locking the screen or taking a screenshot.
+- A File opens its path with the default app. A Directory opens its path in the default file manager. Both accept a typed absolute Path or a path selected with the native file chooser; the item name comes from the saved file or directory path. The default icon is a file or directory image, and can be changed in the Icon picker.
+- A separate Action item is not needed. The predefined System actions are Apps; use Custom command for commands outside the Actions list.
 
 ## 5. The launcher screen
 
@@ -76,7 +76,7 @@ From top to bottom: top bar, the open page, page dots, dock.
 - **Page:** a grid of items with the Add tile last. It scrolls vertically and has no item limit. Content is capped at 1152 px wide and centered, so it does not stretch on a large screen.
 - **Page dots:** show which page is open. Clicking a dot opens that page. Add page in Settings adds an empty page.
 - **Dock:** a floating, semi-transparent white rounded bar at the bottom center, with no blur. Up to two recent items appear on the left and pinned items in saved order on the right, separated by a thin line when both sections have items. Each 48 px icon has an 11 px name below it. The dock is always shown, even when it is empty.
-- **On open:** the launcher opens on its current page with folders, Settings, sheets and alerts closed, and search cleared. Grid focus navigation remains deferred.
+- **On open:** the launcher opens on its current page with folders, Settings, sheets and alerts closed, search cleared, and Search anything focused. Grid focus navigation remains deferred.
 
 ## 6. Behavior
 
@@ -89,10 +89,10 @@ From top to bottom: top bar, the open page, page dots, dock.
 **Context menu** (right-click an item): Edit, Pin (or Unpin), Delete on page items and folder apps. A pinned dock item offers Unpin; a Recent dock item offers Remove from Recent.
 
 **Sheets.** All open over a dimmed backdrop inside the launcher window.
-- *Add item:* segmented control App, Website, File, Directory or Folder. For an App, a second segmented control: Actions, Installed apps or Custom command. Actions shows Lock screen, Take screenshot, Sleep and Log out; choosing one adds it to the current page and closes the sheet. Custom command has Name, Icon and Command, with Cancel and Save. Installed apps shows the saved Installed apps list and a Refresh installed apps button; clicking an app adds it right away at the end of the current page (before the Add tile) and closes the sheet, with no Save. Adding the same installed app again is allowed. Its name and icon come from the list and can be changed later with Edit. Website has Name and URL. File and Directory each have Icon and a native chooser button. Choosing a path derives the item name and adds it to the current page, then closes the sheet. A Folder has just a Name, with Cancel and Save.
+- *Add item:* segmented control App, Website, File, Directory or Folder. For an App, a second segmented control: Custom command (first and selected by default), Actions or Installed apps. Actions shows Lock screen, Take screenshot, Sleep and Log out; choosing one adds it to the current page and closes the sheet. Custom command has Name, Icon and Command, with Cancel and Save. Installed apps shows the saved Installed apps list and a Refresh installed apps button; clicking an app adds it right away at the end of the current page (before the Add tile) and closes the sheet, with no Save. Adding the same installed app again is allowed. Its name and icon come from the list and can be changed later with Edit. Website has Name and URL. File and Directory each have an editable Path, a native chooser button, a default Icon with Change icon beside it, and Cancel and Save. The chooser fills Path. Save checks the path, derives the item name, adds it to the current page and closes the sheet. A Folder has just a Name, with Cancel and Save.
 - *Edit app:* Name, Icon, Command (custom command apps only). Delete and Save.
 - *Edit website:* Name and URL. Its cached icon is refreshed when the URL is changed.
-- *Edit file* and *Edit directory:* Icon and a native chooser button. Choosing another path updates the item name from the selected path.
+- *Edit file* and *Edit directory:* editable Path, native chooser button, Icon and Change icon, with Delete and Save. Choosing another path fills Path; Save updates the item and its name from that path. The Icon preview and Change icon button are vertically centered together in these sheets and Edit app.
 - *Edit folder:* Name. Delete and Save.
 - Keys inside sheets, pickers and alerts are listed in `SHORTCUTS.md`. They are fixed. `Enter` in a Name, URL, Path or Command field moves to the next field or Save. Clicking the backdrop closes the sheet.
 
@@ -149,12 +149,13 @@ Hover shows a slightly lighter tile and the pointer cursor, so it is clear what 
 
 ## 7. Icons
 
-An app shows one of three icons, chosen in the **Icon picker** inside the Add item and Edit app sheets:
-- **Letter** (the default): the first letter of the name.
-- **Glyph**: from the Phosphor library. The library is loaded only while the picker is open.
-- **SVG**: pasted SVG text.
+The Icon picker has four parts, as requested on 2026-10-18:
+- **Letter:** enter one or two visible characters, including emojis. Joined emojis count as one character. Existing automatic first-letter icons remain supported.
+- **SVG:** paste SVG markup in a labeled text field.
+- **URL:** shown disabled; fetching an icon URL is not implemented.
+- **Choose icon:** opens the native file chooser for PNG, JPEG, SVG or ICO. Copy the selected image into Orbit's icons folder so it survives moving the source file.
 
-The Icon picker has a filter box at the top. The glyph list narrows as you type, and clicking a glyph chooses it right away and closes the picker. A field in the picker takes pasted SVG text.
+Save validates and applies the icon draft; Cancel leaves the invoking sheet unchanged. Decoding runs on a worker. The Glyph picker remains deferred. The explicit request permits chosen icon images outside the earlier MVP restriction.
 
 Tiles use the supplied lavender artwork. Letter icons have a lavender gradient and a pale letter. Saved SVG and system icons retain their artwork and fit the full tile. The supplied dock has separately drawn 48 px artwork for its matching built-in icons.
 
@@ -185,7 +186,7 @@ The authoritative visual reference is `doc/orbit-ui/orbit.png` and `orbit.svg` (
 - Search filters saved page items by name across all pages. Enter opens the first result; clicking any result opens it. Esc clears search before hiding.
 - Left and Right switch pages when a text field, sheet or folder is not active. Ctrl+K focuses search.
 - Preserve native, interactive controls. The exported `main.slint` is only a full-screen PNG and cannot be used as the application implementation.
-- Existing sheets retain their working form layouts; the supplied reference contains no sheet designs.
+- Sheets, the Context menu and Delete alerts follow the supplied Add item reference in `doc/add-item` and the shared rules in `DESIGN_SYSTEM.md`. The 2026-10-18 request adds system icons to Installed apps rows.
 
 **Animation.** Short and few, because Orbit must stay fast.
 - Showing and hiding the launcher: none. It is instant.

@@ -56,6 +56,7 @@ pub struct App {
 pub enum Icon {
     #[default]
     Letter,
+    Text(String),
     Svg(String),
     File(String),
 }

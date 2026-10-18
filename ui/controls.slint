@@ -1,0 +1,124 @@
+import { Theme } from "theme.slint";
+export component AddOption inherits Rectangle {
+    in property <string> label;
+    in property <string> trailing;
+    in property <bool> selected;
+    in property <bool> primary;
+    in property <bool> destructive;
+    in property <image> icon;
+    in property <bool> icon-present;
+    in property <bool> enabled: true;
+    in property <bool> full-width;
+    in property <length> available-width: 460px;
+    in property <length> option-width: 96px;
+    callback clicked;
+    private property <bool> hovered: hit-area.has-hover;
+    private property <bool> focused: keyboard-focus.has-focus;
+    width: full-width ? available-width : option-width;
+    height: full-width ? 52px : 40px;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-enabled: enabled;
+    accessible-checked: selected;
+    forward-focus: keyboard-focus;
+    border-radius: 8px;
+    border-width: focused ? 2px : 1px;
+    border-color: focused ? Theme.focus : (selected ? Theme.primary : Theme.border);
+    opacity: enabled ? 1 : 0.45;
+    background: destructive ? Theme.error-background : primary ? Theme.primary : (selected ? Theme.selection : (hovered ? Theme.raised : Theme.field));
+    if icon-present: Image { x: 12px; y: (parent.height - 32px) / 2; width: 32px; height: 32px; source: root.icon; image-fit: contain; }
+    option-label := Text {
+        x: root.icon-present ? 56px : 12px;
+        width: parent.width - self.x - (root.trailing == "" ? 12px : 72px);
+        height: parent.height;
+        text: root.label;
+        color: root.destructive ? Theme.error : root.primary ? #FFFFFF : Theme.text;
+        font-size: 13px;
+        font-weight: root.selected || root.primary ? 600 : 500;
+        horizontal-alignment: root.full-width || root.trailing != "" ? left : center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    if trailing != "": Text {
+        x: parent.width - self.width - 12px;
+        width: 72px;
+        height: parent.height;
+        text: root.trailing;
+        color: root.primary ? #FFFFFF : Theme.secondary;
+        font-size: 12px;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+    hit-area := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    keyboard-focus := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(event) => {
+            if root.enabled && (event.text == "\n" || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            reject;
+        }
+    }
+}
+
+export component AddField inherits VerticalLayout {
+    in property <string> label;
+    in property <string> placeholder;
+    in property <string> error;
+    in-out property <string> text;
+    in property <bool> enabled: true;
+    in property <bool> multiline;
+    callback accepted;
+    callback edited;
+    spacing: 6px;
+    alignment: start;
+    horizontal-stretch: 1;
+    forward-focus: input-field;
+
+    Text {
+        text: root.label;
+        color: Theme.text;
+        font-size: 13px;
+        font-weight: 500;
+    }
+    Rectangle {
+        height: root.multiline ? 88px : 40px;
+        horizontal-stretch: 1;
+        border-radius: 8px;
+        background: Theme.field;
+        border-width: input-field.has-focus ? 2px : 1px;
+        border-color: root.error != "" ? Theme.error : input-field.has-focus ? Theme.focus : Theme.border;
+        Text { x: 12px; y: 10px; width: parent.width - 24px; visible: root.text == ""; text: root.placeholder; color: Theme.secondary; font-size: 14px; }
+        input-field := TextInput {
+            x: 12px; y: 10px; width: parent.width - 24px; height: parent.height - 20px;
+            text <=> root.text;
+            enabled: root.enabled;
+            single-line: !root.multiline;
+            color: Theme.text;
+            font-size: 14px;
+            selection-background-color: Theme.selection;
+            selection-foreground-color: Theme.text;
+            edited => { root.edited(); }
+            key-pressed(event) => {
+                if root.multiline && event.text == "\n" {
+                    root.accepted();
+                    return accept;
+                }
+                reject;
+            }
+            accepted => { root.accepted(); }
+        }
+    }
+    if error != "": Text {
+        text: "! " + root.error;
+        color: Theme.error;
+        font-size: 12px;
+    }
+}
+

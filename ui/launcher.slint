@@ -1,7 +1,10 @@
+import { Theme } from "theme.slint";
+import { AddOption, AddField } from "controls.slint";
 import "fonts/Inter.ttf";
-import { Button, LineEdit, TextEdit, Palette } from "std-widgets.slint";
+import { Button, LineEdit, Palette } from "std-widgets.slint";
 
 export struct AppTile {
+    text-icon: bool,
     id: string,
     name: string,
     page: int,
@@ -14,7 +17,7 @@ export struct AppTile {
     command: string,
     url: string,
     path: string,
-    svg: string,
+    icon-value: string,
     custom: bool,
     icon-present: bool,
     app: bool,
@@ -40,7 +43,7 @@ component ItemIcon inherits Rectangle {
     border-radius: self.width * 0.25;
     Image {
         width: parent.width; height: parent.height;
-        source: dock && item.artwork == "website" ? @image-url("assets/dock-website.svg")
+        source: item.text-icon ? @image-url("assets/letter.svg") : dock && item.artwork == "website" ? @image-url("assets/dock-website.svg")
             : dock && item.artwork == "file" ? @image-url("assets/dock-file.svg")
             : dock && item.artwork == "command" ? @image-url("assets/dock-command.svg")
             : dock && item.artwork == "directory" ? @image-url("assets/dock-directory.svg")
@@ -53,7 +56,7 @@ component ItemIcon inherits Rectangle {
             : @image-url("assets/letter.svg");
         image-fit: contain;
     }
-    if item.app && !item.icon-present: Text { text: item.letter; color: #e0e5ff; font-size: parent.width * 0.4; horizontal-alignment: center; vertical-alignment: center; }
+    if (item.app || item.text-icon) && !item.icon-present: Text { text: item.letter; color: #e0e5ff; font-size: parent.width * (item.text-icon ? 0.32 : 0.4); horizontal-alignment: center; vertical-alignment: center; }
 }
 
 component PageTile inherits Rectangle {
@@ -108,6 +111,10 @@ component DockTile inherits Rectangle {
 }
 
 export component Launcher inherits Window {
+    pure callback first-letter(string) -> string;
+    pure callback valid-name(string) -> bool;
+    pure callback valid-command(string) -> bool;
+    pure callback valid-url(string) -> bool;
     in property <string> monitor-name;
     in property <float> cursor-x;
     in property <float> cursor-y;
@@ -137,6 +144,8 @@ export component Launcher inherits Window {
 
     in property <[InstalledAppTile]> installed-apps;
     in property <string> installed-status;
+    in property <bool> installed-apps-loaded;
+    in property <bool> installed-apps-match;
     in property <[AppTile]> folder-items;
     in property <string> folder-name;
     in-out property <int> folder-index: -1;
@@ -144,7 +153,7 @@ export component Launcher inherits Window {
     in-out property <bool> busy;
     private property <bool> sheet;
     private property <bool> alert;
-    private property <bool> picker;
+    in-out property <bool> picker;
     private property <int> context-index: -1;
     private property <string> dock-context;
     private property <string> context-id;
@@ -153,8 +162,20 @@ export component Launcher inherits Window {
     private property <string> command;
     private property <string> url-or-path;
     private property <string> item-type: "App";
-    private property <string> svg;
-    private property <string> svg-draft;
+    in-out property <string> icon-value;
+    in-out property <string> svg-draft;
+    in-out property <string> letter-draft;
+    in-out property <string> icon-file-draft;
+    in-out property <string> icon-mode: "Letter";
+    in-out property <image> icon-preview;
+    in-out property <bool> icon-preview-present;
+    in-out property <string> icon-letter;
+    in-out property <bool> icon-busy;
+    in-out property <int> icon-session;
+    callback open-icon(string, string);
+    callback save-icon(string, string, int);
+    callback choose-icon(int);
+
     private property <length> context-x;
     private property <length> context-y;
     private property <length> page-drag-offset;
@@ -168,8 +189,21 @@ export component Launcher inherits Window {
     private property <float> transition-progress;
     private property <duration> transition-duration: max(90ms, 170ms * (1 - abs(root.transition-start) / root.page-span));
     private property <bool> custom: true;
-    private property <string> app-source: "Actions";
+    private property <string> app-source: "Custom command";
+    private property <length> sheet-content-width: min(520px, max(220px, root.width - 68px));
     private property <string> installed-filter;
+    in-out property <string> sheet-status;
+    in-out property <string> sheet-operation;
+    private property <string> name-error;
+    private property <string> command-error;
+    private property <string> url-error;
+    private property <string> path-error;
+    in-out property <string> icon-error;
+    private property <string> custom-name-draft;
+    private property <string> custom-command-draft;
+    private property <string> website-name-draft;
+    private property <string> website-url-draft;
+    private property <string> folder-name-draft;
     private property <bool> dragged;
     private property <int> drag-index: -1;
     private property <int> hover-index: -1;
@@ -183,9 +217,14 @@ export component Launcher inherits Window {
     callback add-system-action(string);
     callback add-installed-app(string);
     callback refresh-installed-apps();
+    callback filter-installed-apps(string);
     callback save-website(int, string, string);
-    callback choose-path(int, bool, string);
+    callback choose-path(bool);
+    callback path-chosen(string);
+    path-chosen(path) => { root.url-or-path = path; root.path-error = ""; }
+    callback save-path(int, string, bool, string);
     callback save-folder(int, string);
+    callback cancel-add();
     callback delete-item(int);
     callback open-item(int);
     callback launch-folder-app(int, int);
@@ -223,7 +262,6 @@ export component Launcher inherits Window {
     page-focus := FocusScope { width: 0px; height: 0px; }
     reset-launcher => {
         if root.folder-open { root.close-folder(); }
-        page-focus.focus();
         root.page-dragging = false;
         root.page-drag-offset = 0px;
         root.transitioning = false;
@@ -236,16 +274,30 @@ export component Launcher inherits Window {
         root.sheet = false;
         root.alert = false;
         root.picker = false;
+        root.sheet-status = "";
+        root.sheet-operation = "";
+        root.name-error = "";
+        root.command-error = "";
+        root.url-error = "";
+        root.path-error = "";
+        root.icon-error = "";
         root.context-index = -1;
         root.dock-context = "";
         root.context-id = "";
         root.folder-open = false;
+        search-input.focus();
     }
     close-top-layer => {
-        if root.busy { return; }
-        if root.picker { root.picker = false; }
+        if root.picker { root.icon-session += 1; root.icon-busy = false; root.picker = false;  }
         else if root.alert { root.alert = false; }
-        else if root.sheet { root.sheet = false; }
+        else if root.sheet {
+            root.cancel-add();
+            root.sheet = false;
+            root.busy = false;
+            root.sheet-operation = "";
+            root.sheet-status = "";
+            page-focus.focus();
+        }
         else if root.context-index >= 0 || root.dock-context != "" { root.context-index = -1; root.dock-context = ""; }
         else if root.folder-open { root.folder-open = false; root.close-folder(); }
         else if root.settings { root.settings = false; }
@@ -256,40 +308,124 @@ export component Launcher inherits Window {
         root.context-index = -1;
         root.dock-context = "";
         root.banner = "";
+        root.sheet-status = "";
         root.editing = index;
         root.item-type = "App";
         root.app-name = index < 0 ? "" : root.items[index].name;
         root.url-or-path = "";
         root.command = index < 0 ? "" : root.items[index].command;
-        root.svg = index < 0 ? "" : root.items[index].svg;
+        root.icon-value = index < 0 ? "" : root.items[index].icon-value;
+        root.icon-preview = root.items[index].icon;
+        root.icon-preview-present = index >= 0 && root.items[index].icon-present;
+        root.icon-letter = index < 0 ? "" : root.items[index].letter;
         root.custom = index < 0 || root.items[index].custom;
         root.app-source = root.custom ? "Custom command" : "Actions";
         root.installed-filter = "";
         root.sheet = true;
-        name-field.focus();
+
     }
     function edit-folder(index: int) {
         root.context-index = -1;
         root.banner = "";
+        root.sheet-status = "";
         root.editing = index;
         root.item-type = "Folder";
         root.app-name = index < 0 ? "" : root.items[index].name;
         root.sheet = true;
-        name-field.focus();
+
     }
     function add-item(kind: string) {
+        sheet-scroll.content-x = 0px; sheet-scroll.content-y = 0px;
+        root.icon-preview-present = false; root.icon-letter = "";
+        if root.sheet {
+            root.remember-add-draft();
+        } else {
+            root.custom-name-draft = "";
+            root.custom-command-draft = "";
+            root.website-name-draft = "";
+            root.website-url-draft = "";
+            root.folder-name-draft = "";
+            root.installed-filter = "";
+        }
         root.editing = -1;
         root.item-type = kind;
         root.custom = true;
-        root.app-source = "Actions";
-        root.installed-filter = "";
-        root.app-name = "";
-        root.command = "";
-        root.url-or-path = "";
-        root.svg = kind == "Directory" ? "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><path fill=\"#777\" d=\"M5 15a5 5 0 0 1 5-5h17l6 7h21a5 5 0 0 1 5 5v26a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5z\"/></svg>" : (kind == "File" ? "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><path fill=\"#777\" d=\"M14 5h24l13 13v41H14z\"/><path fill=\"white\" d=\"M38 5v14h13z\"/><path stroke=\"white\" stroke-width=\"3\" d=\"M21 34h23M21 41h23M21 48h17\"/></svg>" : "");
+        if kind == "App" {
+            root.app-source = "Custom command";
+            root.app-name = root.custom-name-draft;
+            root.command = root.custom-command-draft;
+        } else if kind == "Website" {
+            root.app-name = root.website-name-draft;
+            root.url-or-path = root.website-url-draft;
+        } else if kind == "Folder" {
+            root.app-name = root.folder-name-draft;
+        } else {
+            root.url-or-path = "";
+        }
+        root.icon-value = kind == "Directory" ? "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><path fill=\"#777\" d=\"M5 15a5 5 0 0 1 5-5h17l6 7h21a5 5 0 0 1 5 5v26a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5z\"/></svg>" : (kind == "File" ? "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><path fill=\"#777\" d=\"M14 5h24l13 13v41H14z\"/><path fill=\"white\" d=\"M38 5v14h13z\"/><path stroke=\"white\" stroke-width=\"3\" d=\"M21 34h23M21 41h23M21 48h17\"/></svg>" : "");
+        if kind == "File" || kind == "Directory" {
+            root.icon-preview = kind == "File" ? @image-url("assets/file.svg") : @image-url("assets/directory.svg");
+            root.icon-preview-present = true;
+        }
         root.banner = "";
+        root.sheet-status = "";
+        root.name-error = "";
+        root.command-error = "";
+        root.url-error = "";
+        root.path-error = "";
+        root.icon-error = "";
         root.sheet = true;
-        if kind != "App" { name-field.focus(); }
+
+
+    }
+    function remember-add-draft() {
+        if root.item-type == "App" && root.app-source == "Custom command" {
+            root.custom-name-draft = root.app-name;
+            root.custom-command-draft = root.command;
+        } else if root.item-type == "Website" {
+            root.website-name-draft = root.app-name;
+            root.website-url-draft = root.url-or-path;
+        } else if root.item-type == "Folder" {
+            root.folder-name-draft = root.app-name;
+        }
+    }
+    function app-source-changed(source: string) {
+        sheet-scroll.content-x = 0px; sheet-scroll.content-y = 0px;
+        root.remember-add-draft();
+        root.app-source = source;
+        root.app-name = root.custom-name-draft;
+        root.command = root.custom-command-draft;
+        root.sheet-status = "";
+
+    }
+    function submit-form() {
+        root.name-error = "";
+        root.command-error = "";
+        root.url-error = "";
+        root.path-error = "";
+        root.sheet-status = "";
+        if (root.item-type == "Folder" || root.item-type == "Website" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command"))) && !root.valid-name(root.app-name) {
+            root.name-error = "Enter a Name.";
+            return;
+        }
+        if root.item-type == "App" && root.custom && !root.valid-command(root.command) {
+            root.command-error = "Enter a Command with closed quotes.";
+            return;
+        }
+        if root.item-type == "Website" && !root.valid-url(root.url-or-path) {
+            root.url-error = "Enter a valid HTTP or HTTPS URL.";
+            return;
+        }
+        if (root.item-type == "File" || root.item-type == "Directory") && root.url-or-path == "" {
+            root.path-error = "Enter a Path.";
+            return;
+        }
+        root.busy = true;
+        root.sheet-operation = "saving";
+        if root.item-type == "App" { root.save-app(root.editing, root.app-name, root.command, root.icon-value); }
+        else if root.item-type == "Website" { root.save-website(root.editing, root.app-name, root.url-or-path); }
+        else if root.item-type == "File" || root.item-type == "Directory" { root.save-path(root.editing, root.url-or-path, root.item-type == "Directory", root.icon-value); }
+        else { root.save-folder(root.editing, root.app-name); }
     }
     function edit-item(index: int) {
         if root.items[index].folder { root.edit-folder(index); }
@@ -298,12 +434,17 @@ export component Launcher inherits Window {
             root.context-index = -1;
             root.banner = "";
             root.editing = index;
+            root.path-error = "";
             root.item-type = root.items[index].website ? "Website" : (root.items[index].file ? "File" : "Directory");
             root.app-name = root.items[index].name;
             root.url-or-path = root.items[index].website ? root.items[index].url : root.items[index].path;
-            root.svg = root.items[index].svg;
+            root.icon-value = root.items[index].icon-value;
+            root.icon-preview = root.items[index].icon;
+            root.icon-preview-present = root.items[index].icon-present;
+            root.icon-letter = root.items[index].letter;
             root.sheet = true;
-            name-field.focus();
+
+
         }
     }
     callback open-page(int);
@@ -353,7 +494,7 @@ export component Launcher inherits Window {
         }
         return reject;
     }
-    init => { Palette.color-scheme = ColorScheme.light; }
+    init => { Palette.color-scheme = ColorScheme.dark; }
     default-font-family: "Inter";
     default-font-size: 14px;
     title: "Orbit";
@@ -630,10 +771,10 @@ export component Launcher inherits Window {
         VerticalLayout {
             padding: 28px; spacing: 16px;
             Text { text: "Settings"; font-size: 22px; color: #e0e3f4; }
-            Button { text: "Add page"; enabled: root.page-count < 9 && !root.busy; clicked => { root.busy = true; root.add-page(); root.settings = false; } }
-            Button { text: "Refresh installed apps"; enabled: !root.busy; clicked => { root.busy = true; root.refresh-installed-apps(); } }
+            AddOption { width: 176px; label: "Add page"; enabled: root.page-count < 9 && !root.busy; clicked => { root.busy = true; root.add-page(); root.settings = false; } }
+            AddOption { width: 176px; label: "Refresh installed apps"; enabled: !root.busy; clicked => { root.busy = true; root.refresh-installed-apps(); } }
             Text { text: root.installed-status; color: #a7adc7; }
-            Button { text: "Back"; clicked => { root.settings = false; } }
+            AddOption { width: 176px; label: "Back"; clicked => { root.settings = false; } }
         }
     }
 
@@ -645,22 +786,22 @@ export component Launcher inherits Window {
             x: min(root.context-x, parent.width - self.width);
             y: min(root.context-y, parent.height - self.height);
             width: 200px; height: root.context-index >= 0 ? 154px : 64px;
-            background: white; border-radius: 16px;
+            background: Theme.sheet; border-radius: 16px; border-width: 1px; border-color: Theme.border;
             VerticalLayout {
                 padding: 12px; spacing: 8px;
-                if root.context-index >= 0: Button { text: "Edit"; clicked => {
+                if root.context-index >= 0: AddOption { width: 176px; label: "Edit"; clicked => {
                     root.edit-item(root.context-index);
                 } }
-                if root.context-index >= 0: Button { text: root.items[root.context-index].pinned ? "Unpin" : "Pin"; clicked => { root.busy = true; root.pin-item(root.context-index); root.context-index = -1; } }
-                if root.context-index >= 0: Button { text: "Delete"; clicked => {
+                if root.context-index >= 0: AddOption { width: 176px; label: root.items[root.context-index].pinned ? "Unpin" : "Pin"; clicked => { root.busy = true; root.pin-item(root.context-index); root.context-index = -1; } }
+                if root.context-index >= 0: AddOption { width: 176px; label: "Delete"; clicked => {
                     root.editing = root.context-index;
                     root.app-name = root.items[root.context-index].name;
                     root.context-index = -1;
                     root.banner = ""; root.alert = true;
                     cancel-delete.focus();
                 } }
-                if root.dock-context == "pinned": Button { text: "Unpin"; clicked => { root.busy = true; root.unpin-dock-item(root.context-id); root.dock-context = ""; } }
-                if root.dock-context == "recent": Button { text: "Remove from Recent"; clicked => { root.busy = true; root.remove-recent-item(root.context-id); root.dock-context = ""; } }
+                if root.dock-context == "pinned": AddOption { width: 176px; label: "Unpin"; clicked => { root.busy = true; root.unpin-dock-item(root.context-id); root.dock-context = ""; } }
+                if root.dock-context == "recent": AddOption { width: 176px; label: "Remove from Recent"; clicked => { root.busy = true; root.remove-recent-item(root.context-id); root.dock-context = ""; } }
             }
         }
     }
@@ -668,143 +809,329 @@ export component Launcher inherits Window {
     sheet-backdrop := Rectangle {
         width: root.width; height: root.height;
         visible: root.sheet;
-        background: #00000070;
-        TouchArea { enabled: !root.busy && !root.picker && !root.alert; clicked => { root.close-top-layer(); } }
+        background: Theme.backdrop;
+        TouchArea { enabled: !root.picker && !root.alert; clicked => { root.close-top-layer(); } }
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: min(480px, parent.width - 32px);
-            height: min(root.item-type == "App" && root.editing < 0 ? (root.app-source == "Installed apps" ? 560px : 500px) : 430px, parent.height - 32px);
-            background: white; border-radius: 20px;
+            width: min(560px, max(288px, parent.width - (parent.width >= 600px ? 48px : 32px)));
+            height: min(root.item-type == "File" || root.item-type == "Directory" ? (root.editing >= 0 ? 336px : 404px) : (root.editing >= 0 ? (root.custom && root.item-type == "App" ? 420px : 280px) : (root.item-type == "Folder" ? 330px : 580px)), parent.height - 32px);
+            background: Theme.sheet;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: 16px;
             TouchArea { }
             VerticalLayout {
-                padding: 24px; spacing: 12px;
-                Text { text: root.editing < 0 ? "Add item" : ("Edit " + root.item-type); color: #202020; font-size: 22px; font-weight: 600; }
-                if root.editing < 0: HorizontalLayout {
-                    spacing: 4px;
-                    Button { width: (parent.width - 16px) / 5; text: "App"; clicked => { root.add-item("App"); } }
-                    Button { width: (parent.width - 16px) / 5; text: "Website"; clicked => { root.add-item("Website"); } }
-                    Button { width: (parent.width - 16px) / 5; text: "File"; clicked => { root.add-item("File"); } }
-                    Button { width: (parent.width - 16px) / 5; text: "Directory"; clicked => { root.add-item("Directory"); } }
-                    Button { width: (parent.width - 16px) / 5; text: "Folder"; clicked => { root.add-item("Folder"); } }
+                padding: 16px;
+                spacing: 16px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: root.editing < 0 ? "Add item" : ("Edit " + root.item-type);
+                        color: Theme.text;
+                        font-size: 20px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    AddOption {
+                        label: "×";
+                        width: 40px;
+                        height: 40px;
+                        accessible-label: "Close the top layer";
+                        clicked => { root.close-top-layer(); }
+                    }
                 }
-                if root.item-type == "App" && root.editing < 0: HorizontalLayout {
-                    spacing: 4px;
-                    Button { width: (parent.width - 8px) / 3; text: "Actions"; clicked => { root.app-source = "Actions"; } }
-                    Button { width: (parent.width - 8px) / 3; text: "Installed apps"; clicked => { root.app-source = "Installed apps"; root.installed-filter = ""; } }
-                    Button { width: (parent.width - 8px) / 3; text: "Custom command"; clicked => { root.app-source = "Custom command"; name-field.focus(); } }
+                if root.editing < 0: FlexboxLayout {
+                    flex-wrap: wrap;
+                    spacing: 8px;
+                    AddOption { label: "App"; selected: root.item-type == "App"; clicked => { root.add-item("App"); } }
+                    AddOption { label: "Website"; selected: root.item-type == "Website"; clicked => { root.add-item("Website"); } }
+                    AddOption { label: "File"; selected: root.item-type == "File"; clicked => { root.add-item("File"); } }
+                    AddOption { label: "Directory"; selected: root.item-type == "Directory"; clicked => { root.add-item("Directory"); } }
+                    AddOption { label: "Folder"; selected: root.item-type == "Folder"; clicked => { root.add-item("Folder"); } }
                 }
-                if root.item-type == "App" && root.editing < 0 && root.app-source == "Actions": Flickable {
-                    height: 176px;
+                if root.item-type == "App" && root.editing < 0: FlexboxLayout {
+                    flex-wrap: wrap;
+                    spacing: 8px;
+                    AddOption { label: "Custom command"; option-width: 148px; selected: root.app-source == "Custom command"; clicked => { root.app-source-changed("Custom command"); } }
+                    AddOption { label: "Actions"; selected: root.app-source == "Actions"; clicked => { root.app-source-changed("Actions"); } }
+                    AddOption { label: "Installed apps"; option-width: 132px; selected: root.app-source == "Installed apps"; clicked => { root.installed-filter = ""; root.filter-installed-apps(""); root.app-source-changed("Installed apps"); } }
+                }
+                sheet-scroll := Flickable {
+                    interactive: true;
+                    vertical-stretch: 1;
+                    min-height: 100px;
                     content-width: self.width;
-                    content-height: 176px;
-                    actions-list := VerticalLayout {
-                        width: parent.width;
-                        spacing: 4px;
-                        Button { text: "Lock screen"; clicked => { root.busy = true; root.add-system-action("lock-screen"); } }
-                        Button { text: "Take screenshot"; clicked => { root.busy = true; root.add-system-action("screenshot"); } }
-                        Button { text: "Sleep"; clicked => { root.busy = true; root.add-system-action("sleep"); } }
-                        Button { text: "Log out"; clicked => { root.busy = true; root.add-system-action("log-out"); } }
-                    }
-                }
-                Text { text: "Name"; visible: root.item-type == "Website" || root.item-type == "Folder" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command")); height: root.item-type == "Website" || root.item-type == "Folder" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command")) ? 24px : 0px; color: #404040; }
-                name-field := LineEdit {
-                    visible: root.item-type == "Website" || root.item-type == "Folder" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command"));
-                    min-height: root.item-type == "Website" || root.item-type == "Folder" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command")) ? 32px : 0px;
-                    preferred-height: root.item-type == "Website" || root.item-type == "Folder" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command")) ? 32px : 0px;
-                    max-height: root.item-type == "Website" || root.item-type == "Folder" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command")) ? 32px : 0px;
-                    text <=> root.app-name;
-                    enabled: !root.busy && !root.picker && !root.alert;
-                    accepted => {
-                        if root.item-type == "App" && root.custom { command-field.focus(); }
-                        else if root.item-type == "Website" { address-field.focus(); }
-                        else { save-button.focus(); }
-                    }
-                }
-                Text { text: "Command"; visible: root.item-type == "App" && root.custom && (root.editing >= 0 || root.app-source == "Custom command"); height: root.item-type == "App" && root.custom && (root.editing >= 0 || root.app-source == "Custom command") ? 24px : 0px; color: #404040; }
-                command-field := LineEdit {
-                    visible: root.item-type == "App" && root.custom && (root.editing >= 0 || root.app-source == "Custom command");
-                    min-height: root.item-type == "App" && root.custom && (root.editing >= 0 || root.app-source == "Custom command") ? 32px : 0px;
-                    preferred-height: root.item-type == "App" && root.custom && (root.editing >= 0 || root.app-source == "Custom command") ? 32px : 0px;
-                    max-height: root.item-type == "App" && root.custom && (root.editing >= 0 || root.app-source == "Custom command") ? 32px : 0px;
-                    text <=> root.command;
-                    enabled: !root.busy && !root.picker && !root.alert;
-                    accepted => { icon-button.focus(); }
-                }
-                Text {
-                    text: "URL"; visible: root.item-type == "Website"; height: root.item-type == "Website" ? 24px : 0px; color: #404040;
-                }
-                address-field := LineEdit {
-                    visible: root.item-type == "Website";
-                    min-height: root.item-type == "Website" ? 32px : 0px;
-                    preferred-height: root.item-type == "Website" ? 32px : 0px;
-                    max-height: root.item-type == "Website" ? 32px : 0px;
-                    text <=> root.url-or-path;
-                    enabled: !root.busy && !root.picker && !root.alert;
-                    accepted => { save-button.focus(); }
-                }
-                if root.item-type == "App" && root.editing < 0 && root.app-source == "Installed apps": VerticalLayout {
-                    spacing: 4px;
-                    Button { text: "Refresh installed apps"; enabled: !root.busy; clicked => { root.busy = true; root.refresh-installed-apps(); } }
-                    Text { text: root.installed-status; color: #404040; }
-                    LineEdit { text <=> root.installed-filter; enabled: !root.busy; }
-                    Flickable {
-                        height: min(180px, max(40px, root.installed-apps.length * 40px));
-                        content-width: self.width;
-                        content-height: max(40px, root.installed-apps.length * 40px);
-                        installed-list := VerticalLayout {
-                            width: parent.width;
-                            spacing: 4px;
-                            for app in root.installed-apps: Button {
-                                visible: root.installed-filter == "" || app.name.to-lowercase().starts-with(root.installed-filter.to-lowercase());
-                                text: app.name;
+                    content-height: sheet-content.preferred-height;
+                    sheet-content := VerticalLayout {
+                            width: root.sheet-content-width;
+                            alignment: start;
+                        height: self.preferred-height;
+                        spacing: 12px;
+                        if root.item-type == "App" && root.editing < 0 && root.app-source == "Actions": VerticalLayout {
+                            width: root.sheet-content-width;
+                            alignment: start;
+                            spacing: 8px;
+                            AddOption { label: "Lock screen"; trailing: "+"; full-width: true; available-width: root.sheet-content-width; enabled: !root.busy; clicked => { root.busy = true; root.sheet-operation = "adding"; root.sheet-status = "Adding…"; root.add-system-action("lock-screen"); } }
+                            AddOption { label: "Take screenshot"; trailing: "+"; full-width: true; available-width: root.sheet-content-width; enabled: !root.busy; clicked => { root.busy = true; root.sheet-operation = "adding"; root.sheet-status = "Adding…"; root.add-system-action("screenshot"); } }
+                            AddOption { label: "Sleep"; trailing: "+"; full-width: true; available-width: root.sheet-content-width; enabled: !root.busy; clicked => { root.busy = true; root.sheet-operation = "adding"; root.sheet-status = "Adding…"; root.add-system-action("sleep"); } }
+                            AddOption { label: "Log out"; trailing: "+"; full-width: true; available-width: root.sheet-content-width; enabled: !root.busy; clicked => { root.busy = true; root.sheet-operation = "adding"; root.sheet-status = "Adding…"; root.add-system-action("log-out"); } }
+                        }
+                        if root.item-type == "App" && root.editing < 0 && root.app-source == "Installed apps": VerticalLayout {
+                            width: root.sheet-content-width;
+                            alignment: start;
+                            spacing: 8px;
+                            AddOption {
+                                label: "Refresh installed apps";
+                                option-width: 220px;
+                                trailing: root.busy && root.sheet-operation == "refreshing" ? "◌" : "↻";
+                                full-width: true; available-width: root.sheet-content-width;
                                 enabled: !root.busy;
-                                clicked => { root.busy = true; root.add-installed-app(app.id); }
+                                clicked => {
+                                    root.busy = true;
+                                    root.sheet-operation = "refreshing";
+                                    root.sheet-status = "Refreshing… Cached apps stay available.";
+                                    root.refresh-installed-apps();
+                                }
                             }
+                            Text {
+                                text: root.installed-status == "" ? (root.installed-apps-loaded ? "0 apps · Cached inventory" : "No cached apps. Refresh installed apps.") : root.installed-status;
+                                color: Theme.secondary;
+                                font-size: 12px;
+
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                LineEdit {
+                                    text <=> root.installed-filter;
+                                    placeholder-text: "Filter installed apps";
+                                    enabled: !root.busy;
+                                    min-height: 40px;
+                                    preferred-height: 40px;
+                                    horizontal-stretch: 1;
+                                    edited(text) => { root.filter-installed-apps(text); }
+                                }
+                                AddOption { label: "Clear filter"; enabled: root.installed-filter != "" && !root.busy; clicked => { root.installed-filter = ""; root.filter-installed-apps(""); } }
+                            }
+                            if root.installed-apps.length == 0 && root.installed-filter == "": Text {
+                                text: root.installed-apps-loaded ? "No items found" : "Refresh installed apps to load the list.";
+                                color: Theme.secondary;
+                                font-size: 14px;
+
+                            }
+                            if root.installed-filter != "" && !root.installed-apps-match: Text {
+                                text: "No items match this filter.";
+                                color: Theme.secondary;
+                                font-size: 14px;
+                            }
+                            VerticalLayout {
+                            width: root.sheet-content-width;
+                            alignment: start;
+                                spacing: 8px;
+                                for app in root.installed-apps: AddOption {
+                                                                        label: app.name;
+                                    icon: app.icon; icon-present: app.icon-present;
+                                    trailing: root.busy && root.sheet-operation == "adding" ? "Adding…" : "+";
+                                    full-width: true; available-width: root.sheet-content-width;
+                                    enabled: !root.busy;
+                                    clicked => {
+                                        root.busy = true;
+                                        root.sheet-operation = "adding";
+                                        root.sheet-status = "Adding…";
+                                        root.add-installed-app(app.id);
+                                    }
+                                }
+                            }
+                        }
+                        if root.item-type == "App" && root.custom && (root.editing >= 0 || root.app-source == "Custom command"): VerticalLayout {
+                            width: root.sheet-content-width;
+                            alignment: start;
+                            spacing: 12px;
+                            custom_name_field := AddField {
+                                width: root.sheet-content-width;
+                                label: "Name";
+                                placeholder: "e.g. Terminal";
+                                text <=> root.app-name;
+                                error: root.name-error;
+                                enabled: !root.busy;
+                                edited => { root.name-error = ""; }
+                                accepted => { custom_command_field.focus(); }
+                            }
+                            custom_command_field := AddField {
+                                width: root.sheet-content-width;
+                                label: "Command";
+                                placeholder: "e.g. foot --title Terminal";
+                                text <=> root.command;
+                                error: root.command-error;
+                                enabled: !root.busy;
+                                multiline: true;
+                                edited => { root.command-error = ""; }
+                                accepted => { root.submit-form(); }
+                            }
+                            HorizontalLayout {
+                                width: root.sheet-content-width; height: 48px; spacing: 12px; alignment: start;
+                                Rectangle {
+                                    width: 48px; height: 48px; border-radius: 12px; background: Theme.selection;
+                                    if root.icon-preview-present: Image { width: 48px; height: 48px; source: root.icon-preview; image-fit: contain; }
+                                    if !root.icon-preview-present: Text { text: root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.focus; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                AddOption { label: "Change icon"; option-width: 136px; height: 48px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
+                            }
+                        }
+                        if root.item-type == "App" && !root.custom && root.editing >= 0: VerticalLayout {
+                            width: root.sheet-content-width;
+                            alignment: start;
+                            spacing: 12px;
+                            AddField {
+                                width: root.sheet-content-width;
+                                label: "Name";
+                                placeholder: "e.g. Terminal";
+                                text <=> root.app-name;
+                                error: root.name-error;
+                                enabled: !root.busy;
+                                edited => { root.name-error = ""; }
+                                accepted => { root.submit-form(); }
+                            }
+                            HorizontalLayout {
+                                width: root.sheet-content-width; height: 48px; spacing: 12px; alignment: start;
+                                Rectangle {
+                                    width: 48px; height: 48px; border-radius: 12px; background: Theme.selection;
+                                    if root.icon-preview-present: Image { width: 48px; height: 48px; source: root.icon-preview; image-fit: contain; }
+                                    if !root.icon-preview-present: Text { text: root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.focus; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                AddOption { label: "Change icon"; option-width: 136px; height: 48px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
+                            }
+                        }
+                        if root.item-type == "Website": VerticalLayout {
+                            width: root.sheet-content-width;
+                            alignment: start;
+                            spacing: 12px;
+                            website_name_field := AddField {
+                                width: root.sheet-content-width; label: "Name"; placeholder: "e.g. Work"; text <=> root.app-name; error: root.name-error; enabled: !root.busy; edited => { root.name-error = ""; } accepted => { website_url_field.focus(); } }
+                            website_url_field := AddField {
+                                width: root.sheet-content-width; label: "URL"; placeholder: "https://example.com"; text <=> root.url-or-path; error: root.url-error; enabled: !root.busy; edited => { root.url-error = ""; } accepted => { root.submit-form(); } }
+                        }
+                        if root.item-type == "Folder": folder_name_field := AddField {
+                                width: root.sheet-content-width;
+                            label: "Name";
+                            placeholder: "e.g. Work";
+                            text <=> root.app-name;
+                            error: root.name-error;
+                            enabled: !root.busy;
+                            edited => { root.name-error = ""; }
+                            accepted => { root.submit-form(); }
+                        }
+                        if root.item-type == "File" || root.item-type == "Directory": VerticalLayout {
+                            width: root.sheet-content-width; alignment: start; spacing: 12px;
+                            AddField {
+                                width: root.sheet-content-width;
+                                label: "Path";
+                                placeholder: root.item-type == "Directory" ? "/home/user/Documents" : "/home/user/Documents/file.pdf";
+                                text <=> root.url-or-path;
+                                error: root.path-error;
+                                enabled: !root.busy;
+                                edited => { root.path-error = ""; }
+                                accepted => { root.submit-form(); }
+                            }
+                            AddOption {
+                                label: root.busy && root.sheet-operation == "choosing" ? "Choose…" : (root.item-type == "Directory" ? "Choose directory" : "Choose file");
+                                option-width: 148px;
+                                enabled: !root.busy;
+                                clicked => {
+                                    root.busy = true;
+                                    root.sheet-operation = "choosing";
+                                    root.sheet-status = "Choose a path…";
+                                    root.choose-path(root.item-type == "Directory");
+                                }
+                            }
+                            HorizontalLayout {
+                                width: root.sheet-content-width; height: 48px; spacing: 12px; alignment: start;
+                                Rectangle {
+                                    width: 48px; height: 48px; border-radius: 12px; background: Theme.selection;
+                                    if root.icon-preview-present: Image { width: 48px; height: 48px; source: root.icon-preview; image-fit: contain; }
+                                    if !root.icon-preview-present: Text { text: root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.focus; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                AddOption { label: "Change icon"; option-width: 136px; height: 48px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
+                            }
+                        }
+                        if root.sheet-status != "": Text {
+                            text: (root.sheet-operation == "adding" || root.sheet-operation == "saving" || root.sheet-operation == "refreshing") ? "◌ " + root.sheet-status : "! " + root.sheet-status;
+                            color: root.sheet-operation == "adding" || root.sheet-operation == "saving" || root.sheet-operation == "refreshing" ? Theme.focus : Theme.error;
+                            font-size: 12px;
+                            wrap: word-wrap;
+
                         }
                     }
                 }
-                icon-button := Button { text: "Icon"; visible: root.item-type == "File" || root.item-type == "Directory" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command")); height: root.item-type == "File" || root.item-type == "Directory" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command")) ? 34px : 0px; enabled: !root.busy && !root.picker && !root.alert; clicked => { root.svg-draft = root.svg; root.picker = true; } }
-                if root.item-type == "File" || root.item-type == "Directory": Button {
-                    text: root.item-type == "Directory" ? "Choose directory" : "Choose file";
-                    enabled: !root.busy && !root.picker && !root.alert;
-                    clicked => { root.busy = true; root.choose-path(root.editing, root.item-type == "Directory", root.svg); }
-                }
-                if root.banner != "": Text { text: root.banner; color: #c02020; wrap: word-wrap; }
-                Rectangle { vertical-stretch: 1; }
                 HorizontalLayout {
                     spacing: 8px;
-                    Button { text: root.editing < 0 ? "Cancel" : "Delete"; enabled: !root.busy && !root.picker && !root.alert; clicked => {
-                        if root.editing < 0 { root.close-top-layer(); }
-                        else { root.banner = ""; root.alert = true; cancel-delete.focus(); }
-                    } }
-                    save-button := Button { text: "Save"; primary: true; visible: root.item-type == "Website" || root.item-type == "Folder" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command")); height: root.item-type == "Website" || root.item-type == "Folder" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command")) ? 34px : 0px; enabled: !root.busy && !root.picker && !root.alert; clicked => {
-                        root.busy = true;
-                        if root.item-type == "App" { root.save-app(root.editing, root.app-name, root.command, root.svg); }
-                        else if root.item-type == "Website" { root.save-website(root.editing, root.app-name, root.url-or-path); }
-                        else { root.save-folder(root.editing, root.app-name); }
-                    } }
+                    AddOption {
+                        label: root.editing < 0 ? "Cancel" : "Delete";
+                        selected: false;
+                        enabled: root.editing >= 0 ? !root.busy : true;
+                        horizontal-stretch: 1;
+                        clicked => {
+                            if root.editing < 0 { root.close-top-layer(); }
+                            else { root.banner = ""; root.alert = true; cancel-delete.focus(); }
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    if root.item-type == "Website" || root.item-type == "Folder" || root.item-type == "File" || root.item-type == "Directory" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command")): AddOption {
+                        label: root.busy && root.sheet-operation == "saving" ? "Saving…" : "Save";
+                        primary: true;
+                        enabled: !root.busy;
+                        clicked => { root.submit-form(); }
+                    }
                 }
             }
         }
     }
     if root.picker: Rectangle {
-        width: root.width; height: root.height;
-        background: #00000070;
-        TouchArea { clicked => { root.picker = false; } }
+        width: root.width; height: root.height; background: Theme.backdrop;
+        TouchArea { clicked => { root.close-top-layer(); } }
         Rectangle {
             x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
-            width: min(480px, parent.width - 32px); height: min(400px, parent.height - 32px);
-            background: white; border-radius: 20px;
+            width: min(520px, parent.width - 32px); height: min(380px, parent.height - 32px);
+            background: Theme.sheet; border-width: 1px; border-color: Theme.border; border-radius: 16px;
             TouchArea { }
             VerticalLayout {
-                padding: 24px; spacing: 12px;
-                Text { text: "Icon"; font-size: 22px; color: #202020; }
-                Button { text: "Letter"; clicked => { root.svg = ""; root.picker = false; } }
-                Text { text: "SVG"; color: #404040; }
-                TextEdit { text <=> root.svg-draft; }
-                Button { text: "Save"; primary: true; clicked => { root.svg = root.svg-draft; root.picker = false; } }
-                Button { text: "Cancel"; clicked => { root.picker = false; } }
+                padding: 16px; spacing: 16px;
+                HorizontalLayout {
+                    Text { text: "Icon"; color: Theme.text; font-size: 20px; font-weight: 600; vertical-alignment: center; }
+                    AddOption { label: "×"; option-width: 40px; accessible-label: "Close the top layer"; clicked => { root.close-top-layer(); } }
+                }
+                HorizontalLayout {
+                    spacing: 8px; alignment: start;
+                    AddOption { label: "Letter"; option-width: 80px; selected: root.icon-mode == "Letter"; clicked => { root.icon-mode = "Letter"; root.icon-error = ""; } }
+                    AddOption { label: "SVG"; option-width: 72px; selected: root.icon-mode == "SVG"; clicked => { root.icon-mode = "SVG"; root.icon-error = ""; } }
+                    AddOption { label: "URL"; option-width: 72px; enabled: false; }
+                    AddOption { label: "Choose icon"; option-width: 128px; selected: root.icon-mode == "Choose icon"; clicked => { root.icon-mode = "Choose icon"; root.icon-error = ""; } }
+                }
+                VerticalLayout {
+                    alignment: start; spacing: 8px;
+                    if root.icon-mode == "Letter": AddField {
+                        width: parent.width;
+                        label: "Letter"; placeholder: "A, AB, or an emoji"; text <=> root.letter-draft;
+                    }
+                    if root.icon-mode == "Letter": Text { text: "1–2 characters, including emojis"; color: Theme.secondary; font-size: 12px; }
+                    if root.icon-mode == "SVG": AddField {
+                        width: parent.width;
+                        label: "SVG"; placeholder: "Paste SVG markup"; multiline: true; text <=> root.svg-draft;
+                    }
+                    if root.icon-mode == "Choose icon": AddOption { label: root.icon-busy ? "Choosing…" : "Choose icon"; option-width: 144px; enabled: !root.icon-busy; clicked => { root.icon-busy = true; root.choose-icon(root.icon-session); } }
+                    if root.icon-mode == "Choose icon": Text { text: root.icon-file-draft == "" ? "PNG, JPEG, SVG or ICO" : root.icon-file-draft; color: Theme.secondary; font-size: 12px; overflow: elide; }
+                    if root.icon-error != "": Text { text: root.icon-error; color: Theme.error; font-size: 12px; wrap: word-wrap; }
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    AddOption { label: "Cancel"; clicked => { root.close-top-layer(); } }
+                    Rectangle { horizontal-stretch: 1; }
+                    AddOption { label: root.icon-busy ? "Saving…" : "Save"; primary: true; enabled: !root.icon-busy;
+                        clicked => { root.icon-busy = true; root.save-icon(root.icon-mode, root.icon-mode == "Letter" ? root.letter-draft : root.icon-mode == "SVG" ? root.svg-draft : root.icon-file-draft, root.icon-session); }
+                    }
+                }
             }
         }
     }
@@ -837,7 +1164,7 @@ export component Launcher inherits Window {
                                 x: (parent.width - self.width) / 2; width: 64px; height: 64px;
                                 border-radius: 14px; background: white;
                                 Image { x: 8px; y: 8px; width: 48px; height: 48px; source: root.folder-items[index].icon; image-fit: contain; }
-                                if root.folder-items[index].svg == "": Text {
+                                if !root.folder-items[index].icon-present: Text {
                                     text: root.folder-items[index].letter; color: #404040; font-size: 28px;
                                     horizontal-alignment: center; vertical-alignment: center;
                                 }
@@ -896,23 +1223,22 @@ export component Launcher inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
             width: min(360px, parent.width - 32px); height: root.banner == "" ? 190px : 250px;
-            background: white; border-radius: 20px;
+            background: Theme.sheet; border-radius: 16px; border-width: 1px; border-color: Theme.border;
             TouchArea { }
             VerticalLayout {
                 padding: 24px; spacing: 16px;
                 Text {
                     text: root.items[root.editing].folder ? ("Delete folder '" + root.app-name + "'? Its apps will move to the page.")
                         : ("Delete '" + root.app-name + "' from Orbit?");
-                    color: #202020; font-size: 17px; wrap: word-wrap;
+                    color: Theme.text; font-size: 17px; wrap: word-wrap;
                 }
                 if root.banner != "": Text { text: root.banner; color: #c02020; wrap: word-wrap; }
                 HorizontalLayout {
                     spacing: 12px;
-                    cancel-delete := Button { text: "Cancel"; enabled: !root.busy; clicked => { root.alert = false; } }
-                    Rectangle {
-                        border-radius: 8px; background: #ff3b30;
-                        Text { text: "Delete"; color: white; horizontal-alignment: center; vertical-alignment: center; }
-                        TouchArea { enabled: !root.busy; mouse-cursor: pointer; clicked => { root.busy = true; root.delete-item(root.editing); } }
+                    cancel-delete := AddOption { label: "Cancel"; enabled: !root.busy; clicked => { root.alert = false; } }
+                    AddOption {
+                        label: "Delete"; destructive: true; enabled: !root.busy;
+                        clicked => { root.busy = true; root.delete-item(root.editing); }
                     }
                 }
             }

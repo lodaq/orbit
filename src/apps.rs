@@ -1,21 +1,25 @@
-use crate::config::{App, Config, Icon, InstalledApp, Item, Launch, SystemAction};
-use crate::{AppTile, InstalledAppTile, Launcher, config, platform, recent};
+use crate::add_item::{Inventory, RequestSequence};
+use crate::config::{App, Config, Icon, Item, Launch, SystemAction};
+use crate::{AppTile, InstalledAppTile, Launcher, add_item, config, platform, recent};
 use slint::{ComponentHandle, Rgba8Pixel, SharedPixelBuffer};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 
 enum Action {
     Page(usize),
     Search(String),
+    FilterInstalled(String),
     OpenResult(usize, usize),
     OpenDock(usize, usize, i32),
     Pin(usize),
     Unpin(String),
     RemoveRecent(String),
-    Save(i32, String, String, String),
-    SaveWebsite(i32, String, String),
-    ChoosePath(i32, bool, String),
-    SaveFolder(i32, String),
+    Save(i32, String, String, String, u64),
+    SaveWebsite(i32, String, String, u64),
+    ChoosePath(bool, u64),
+    SavePath(i32, String, bool, String, u64),
+    SaveFolder(i32, String, u64),
     Delete(usize),
     Open(usize),
     OpenFolder(usize),
@@ -25,9 +29,9 @@ enum Action {
     Drop(usize, usize, i32, i32, bool),
     MoveFolderApp(usize, usize, usize),
     ReorderFolderApp(usize, usize, usize),
-    AddPredefined(String),
-    AddInstalledApp(String),
-    RefreshInstalledApps,
+    AddPredefined(String, u64),
+    AddInstalledApp(String, u64),
+    RefreshInstalledApps(u64),
 }
 
 struct Apps {
@@ -35,31 +39,45 @@ struct Apps {
     page: usize,
     icons: HashMap<String, SharedPixelBuffer<Rgba8Pixel>>,
     open_folder: Option<usize>,
-    installed_apps: Vec<InstalledApp>,
-    installed_status: String,
+    inventory: Inventory,
+    installed_filter: String,
     query: String,
     recent: recent::Recent,
 }
 
+impl Action {
+    fn request_id(&self) -> Option<u64> {
+        match self {
+            Self::Save(.., request)
+            | Self::SaveWebsite(.., request)
+            | Self::ChoosePath(.., request)
+            | Self::SavePath(.., request)
+            | Self::SaveFolder(.., request)
+            | Self::AddPredefined(_, request)
+            | Self::AddInstalledApp(_, request)
+            | Self::RefreshInstalledApps(request) => Some(*request),
+            _ => None,
+        }
+    }
+}
+
 pub fn connect(launcher: &Launcher) {
     let (send, receive) = mpsc::channel();
-    callbacks(launcher, send);
+    let requests = Arc::new(RequestSequence::default());
+    callbacks(launcher, send, requests.clone());
+    crate::icons::connect(launcher);
     let weak = launcher.as_weak();
     std::thread::spawn(move || {
         let (config, banner) = config::load();
         let (recent, recent_banner) = recent::Recent::load();
-        let installed_apps = platform::read_installed_apps()
-            .ok()
-            .flatten()
-            .and_then(|data| serde_json::from_slice(&data).ok())
-            .unwrap_or_default();
+        let (inventory, inventory_banner) = Inventory::load();
         let mut apps = Apps {
             config,
             page: 0,
             icons: HashMap::new(),
             open_folder: None,
-            installed_apps,
-            installed_status: String::new(),
+            inventory,
+            installed_filter: String::new(),
             query: String::new(),
             recent,
         };
@@ -69,9 +87,18 @@ pub fn connect(launcher: &Launcher) {
         } else {
             banner
         };
+        let banner = if banner.is_empty() {
+            inventory_banner
+        } else {
+            banner
+        };
         apps.update(&weak, false);
         finish(&weak, banner, false, false);
         for action in receive {
+            let request = action.request_id();
+            if request.is_some_and(|request| !requests.is_current(request)) {
+                continue;
+            }
             let recent_id = apps.recent_id(&action);
             let remove_recent_id = match &action {
                 Action::RemoveRecent(id) => Some(id.clone()),
@@ -84,22 +111,33 @@ pub fn connect(launcher: &Launcher) {
                     | Action::Unpin(_)
                     | Action::Save(..)
                     | Action::SaveWebsite(..)
-                    | Action::ChoosePath(..)
+                    | Action::SavePath(..)
                     | Action::SaveFolder(..)
                     | Action::Delete(_)
                     | Action::AddPage
                     | Action::Drop(..)
                     | Action::MoveFolderApp(..)
                     | Action::ReorderFolderApp(..)
-                    | Action::AddPredefined(_)
-                    | Action::AddInstalledApp(_)
+                    | Action::AddPredefined(..)
+                    | Action::AddInstalledApp(..)
             );
-            let update =
-                !launching || matches!(action, Action::OpenResult(..) | Action::OpenDock(..));
+            let choosing = matches!(action, Action::ChoosePath(..));
+            let update = !choosing
+                && (!launching || matches!(action, Action::OpenResult(..) | Action::OpenDock(..)));
             let page_only = matches!(action, Action::Page(_))
                 && !(apps.config.pages.len() > 1 && apps.config.pages[apps.page].items.is_empty());
-            let result = apps.apply(action);
+            let refreshing = matches!(action, Action::RefreshInstalledApps(_));
+            let filtering = matches!(action, Action::FilterInstalled(_));
+            let result = apps.apply(action, &requests, &weak);
+            if request.is_some_and(|request| !requests.is_current(request)) {
+                continue;
+            }
             let success = result.is_ok();
+            if refreshing && !success {
+                apps.inventory
+                    .fail(result.as_ref().err().cloned().unwrap_or_default());
+                apps.update(&weak, false);
+            }
             let recent_changed = success && recent_id.is_some_and(|id| apps.recent.record(&id));
             // RemoveRecent is applied in Apps::apply; save it here without removing twice.
             let recent_removed = success && remove_recent_id.is_some();
@@ -108,7 +146,9 @@ pub fn connect(launcher: &Launcher) {
             {
                 eprintln!("orbit: {error}");
             }
-            if success && (update || recent_changed || recent_removed) {
+            if success && filtering {
+                apps.update_installed_apps(&weak);
+            } else if success && (update || recent_changed || recent_removed) {
                 apps.update(&weak, page_only);
             }
             finish(
@@ -121,8 +161,12 @@ pub fn connect(launcher: &Launcher) {
     });
 }
 
-fn callbacks(launcher: &Launcher, send: Sender<Action>) {
+fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSequence>) {
     let sender = send.clone();
+    launcher.on_first_letter(|name| crate::icons::first_letter(&name).into());
+    launcher.on_valid_name(|name| add_item::valid_name(&name));
+    launcher.on_valid_command(|command| add_item::valid_command(&command));
+    launcher.on_valid_url(|url| add_item::valid_url(&url));
     launcher.on_search(move |query| {
         let _ = sender.send(Action::Search(query.into()));
     });
@@ -151,33 +195,80 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>) {
         let _ = sender.send(Action::Page(index as usize));
     });
     let sender = send.clone();
+    let requests_for_save = requests.clone();
     launcher.on_save_app(move |index, name, command, svg| {
-        let _ = sender.send(Action::Save(index, name.into(), command.into(), svg.into()));
+        let request = requests_for_save.issue();
+        let _ = sender.send(Action::Save(
+            index,
+            name.into(),
+            command.into(),
+            svg.into(),
+            request,
+        ));
     });
     let sender = send.clone();
+    let requests_for_action = requests.clone();
     launcher.on_add_system_action(move |action| {
-        let _ = sender.send(Action::AddPredefined(action.into()));
+        let request = requests_for_action.issue();
+        let _ = sender.send(Action::AddPredefined(action.into(), request));
     });
     let sender = send.clone();
+    let requests_for_app = requests.clone();
     launcher.on_add_installed_app(move |id| {
-        let _ = sender.send(Action::AddInstalledApp(id.into()));
+        let request = requests_for_app.issue();
+        let _ = sender.send(Action::AddInstalledApp(id.into(), request));
     });
     let sender = send.clone();
+    let requests_for_refresh = requests.clone();
     launcher.on_refresh_installed_apps(move || {
-        let _ = sender.send(Action::RefreshInstalledApps);
+        let request = requests_for_refresh.issue();
+        let _ = sender.send(Action::RefreshInstalledApps(request));
     });
     let sender = send.clone();
+    launcher.on_filter_installed_apps(move |filter| {
+        let _ = sender.send(Action::FilterInstalled(filter.to_lowercase()));
+    });
+    let sender = send.clone();
+    let requests_for_website = requests.clone();
     launcher.on_save_website(move |index, name, url| {
-        let _ = sender.send(Action::SaveWebsite(index, name.into(), url.into()));
+        let request = requests_for_website.issue();
+        let _ = sender.send(Action::SaveWebsite(index, name.into(), url.into(), request));
     });
     let sender = send.clone();
-    launcher.on_choose_path(move |index, directory, svg| {
-        let _ = sender.send(Action::ChoosePath(index, directory, svg.into()));
+    let requests_for_path = requests.clone();
+    let weak_for_path = launcher.as_weak();
+    launcher.on_choose_path(move |directory| {
+        if let Some(launcher) = weak_for_path.upgrade()
+            && let Err(error) = platform::hide(&launcher)
+        {
+            launcher.set_sheet_status(error.to_string().into());
+            launcher.set_sheet_operation("".into());
+            launcher.set_busy(false);
+            return;
+        }
+        let request = requests_for_path.issue();
+        let _ = sender.send(Action::ChoosePath(directory, request));
     });
     let sender = send.clone();
+    let requests_for_save_path = requests.clone();
+    launcher.on_save_path(move |index, path, directory, svg| {
+        let request = requests_for_save_path.issue();
+        let _ = sender.send(Action::SavePath(
+            index,
+            path.into(),
+            directory,
+            svg.into(),
+            request,
+        ));
+    });
+    let sender = send.clone();
+    let requests_for_folder = requests.clone();
     launcher.on_save_folder(move |index, name| {
-        let _ = sender.send(Action::SaveFolder(index, name.into()));
+        let request = requests_for_folder.issue();
+        let _ = sender.send(Action::SaveFolder(index, name.into(), request));
     });
+    let requests_for_cancel = requests;
+    launcher.on_cancel_add(move || requests_for_cancel.cancel());
     let sender = send.clone();
     launcher.on_delete_item(move |index| {
         let _ = sender.send(Action::Delete(index as usize));
@@ -278,7 +369,7 @@ impl Apps {
 
     fn load_icon(&mut self, id: &str, icon: &Icon) -> Result<(), String> {
         let image = match icon {
-            Icon::Letter => None,
+            Icon::Letter | Icon::Text(_) => None,
             Icon::Svg(svg) => Some(decode_svg(svg)?),
             Icon::File(name) => {
                 let data = match platform::read_icon(name) {
@@ -309,10 +400,20 @@ impl Apps {
         Ok(())
     }
 
-    fn apply(&mut self, action: Action) -> Result<(), String> {
+    fn apply(
+        &mut self,
+        action: Action,
+        requests: &RequestSequence,
+        weak: &slint::Weak<Launcher>,
+    ) -> Result<(), String> {
         match action {
             Action::Search(query) => {
                 self.query = query.to_lowercase();
+                Ok(())
+            }
+            Action::FilterInstalled(filter) => {
+                self.installed_filter = filter;
+                self.load_installed_icons();
                 Ok(())
             }
             Action::Pin(index) => {
@@ -373,7 +474,7 @@ impl Apps {
             }
             Action::OpenDock(page, index, folder_app) => {
                 if folder_app < 0 {
-                    self.apply(Action::OpenResult(page, index))
+                    self.apply(Action::OpenResult(page, index), requests, weak)
                 } else {
                     self.launch_folder_app(page, index, folder_app as usize)
                 }
@@ -398,8 +499,12 @@ impl Apps {
                 }
                 Ok(())
             }
-            Action::Save(index, name, command, svg) => self.save(index, name, command, svg),
-            Action::SaveFolder(index, name) => self.save_folder(index, name),
+            Action::Save(index, name, command, svg, request) => {
+                self.save(index, name, command, svg, requests, request)
+            }
+            Action::SaveFolder(index, name, request) => {
+                self.save_folder(index, name, requests, request)
+            }
             Action::Delete(index) => self.delete(index),
             Action::Open(index) => self.open_item(index),
             Action::OpenFolder(index) => {
@@ -419,26 +524,29 @@ impl Apps {
             Action::ReorderFolderApp(folder, source, target) => {
                 self.reorder_folder_app(folder, source, target)
             }
-            Action::AddPredefined(action) => self.add_system_action(&action),
-            Action::AddInstalledApp(id) => self.add_installed_app(&id),
-            Action::RefreshInstalledApps => self.refresh_installed_apps(),
-            Action::SaveWebsite(index, name, url) => self.save_website(index, name, url),
-            Action::ChoosePath(index, directory, svg) => {
+            Action::AddPredefined(action, request) => {
+                self.add_system_action(&action, requests, request)
+            }
+            Action::AddInstalledApp(id, request) => self.add_installed_app(&id, requests, request),
+            Action::RefreshInstalledApps(request) => self.refresh_installed_apps(requests, request),
+            Action::SaveWebsite(index, name, url, request) => {
+                self.save_website(index, name, url, requests, request)
+            }
+            Action::ChoosePath(directory, request) => {
                 let Some(path) = platform::choose_path(directory) else {
-                    return Err(String::new());
+                    return Ok(());
                 };
-                let name = path
-                    .file_name()
-                    .and_then(std::ffi::OsStr::to_str)
-                    .unwrap_or_default()
-                    .to_string();
-                self.save_path(
-                    index,
-                    name,
-                    path.to_string_lossy().into_owned(),
-                    directory,
-                    svg,
-                )
+                if !requests.is_current(request) {
+                    return Ok(());
+                }
+                let path = path.to_string_lossy().into_owned();
+                let _ = weak.upgrade_in_event_loop(move |launcher| {
+                    launcher.invoke_path_chosen(path.into());
+                });
+                Ok(())
+            }
+            Action::SavePath(index, path, directory, svg, _) => {
+                self.save_path(index, path, directory, svg)
             }
         }
     }
@@ -490,7 +598,8 @@ impl Apps {
             Launch::Command(command) => platform::launch(command),
             Launch::Installed(id) => {
                 let installed = self
-                    .installed_apps
+                    .inventory
+                    .apps()
                     .iter()
                     .find(|installed| &installed.id == id)
                     .ok_or_else(|| {
@@ -502,7 +611,12 @@ impl Apps {
         }
     }
 
-    fn add_system_action(&mut self, action: &str) -> Result<(), String> {
+    fn add_system_action(
+        &mut self,
+        action: &str,
+        requests: &RequestSequence,
+        request: u64,
+    ) -> Result<(), String> {
         let (name, action) = match action {
             "lock-screen" => ("Lock screen", SystemAction::LockScreen),
             "screenshot" => ("Take screenshot", SystemAction::Screenshot),
@@ -516,11 +630,25 @@ impl Apps {
             icon: Icon::Letter,
             launch: Launch::Action(action),
         };
+        if !requests.is_current(request) {
+            return Ok(());
+        }
         self.store(-1, Item::App(app))
     }
 
-    fn add_installed_app(&mut self, id: &str) -> Result<(), String> {
-        let Some(installed) = self.installed_apps.iter().find(|app| app.id == id).cloned() else {
+    fn add_installed_app(
+        &mut self,
+        id: &str,
+        requests: &RequestSequence,
+        request: u64,
+    ) -> Result<(), String> {
+        let Some(installed) = self
+            .inventory
+            .apps()
+            .iter()
+            .find(|app| app.id == id)
+            .cloned()
+        else {
             return Err("Installed app is missing".into());
         };
         let item_id = new_id()?;
@@ -530,22 +658,89 @@ impl Apps {
             icon: installed.icon.clone(),
             launch: Launch::Installed(id.into()),
         };
+        if !requests.is_current(request) {
+            return Ok(());
+        }
         self.store(-1, Item::App(app))?;
         let _ = self.load_icon(&item_id, &installed.icon);
         Ok(())
     }
 
-    fn refresh_installed_apps(&mut self) -> Result<(), String> {
+    fn refresh_installed_apps(
+        &mut self,
+        requests: &RequestSequence,
+        request: u64,
+    ) -> Result<(), String> {
+        self.inventory.refreshing();
         let installed_apps = platform::scan_installed_apps()
             .map_err(|error| format!("Couldn't refresh installed apps: {error}"))?;
+        if !requests.is_current(request) {
+            return Ok(());
+        }
         platform::write_installed_apps(
             &serde_json::to_vec_pretty(&installed_apps)
                 .map_err(|error| format!("Couldn't save installed apps: {error}"))?,
         )
         .map_err(|error| format!("Couldn't save installed apps: {error}"))?;
-        self.installed_status = format!("{} installed apps", installed_apps.len());
-        self.installed_apps = installed_apps;
+        self.inventory.replace(installed_apps);
+        self.load_installed_icons();
         Ok(())
+    }
+
+    fn load_installed_icons(&mut self) {
+        let icons: Vec<_> = self
+            .inventory
+            .apps()
+            .iter()
+            .filter(|app| !self.icons.contains_key(&app.id))
+            .map(|app| (app.id.clone(), app.icon.clone()))
+            .collect();
+        for (id, icon) in icons {
+            let _ = self.load_icon(&id, &icon);
+        }
+    }
+
+    fn update_installed_apps(&self, weak: &slint::Weak<Launcher>) {
+        let installed_apps: Vec<_> = self
+            .inventory
+            .apps()
+            .iter()
+            .filter(|app| {
+                self.installed_filter.is_empty()
+                    || app.name.to_lowercase().starts_with(&self.installed_filter)
+            })
+            .map(|app| {
+                (
+                    app.id.clone(),
+                    app.name.clone(),
+                    self.icons.get(&app.id).cloned(),
+                )
+            })
+            .collect();
+        let has_match = !installed_apps.is_empty();
+        let _ = weak.upgrade_in_event_loop(move |launcher| {
+            let installed_apps = installed_apps
+                .into_iter()
+                .map(|(id, name, icon)| {
+                    let icon_present = icon.is_some();
+                    InstalledAppTile {
+                        letter: name
+                            .chars()
+                            .next()
+                            .map(|letter| letter.to_string())
+                            .unwrap_or_default()
+                            .into(),
+                        id: id.into(),
+                        name: name.into(),
+                        icon: icon.map(slint::Image::from_rgba8).unwrap_or_default(),
+                        icon_present,
+                    }
+                })
+                .collect::<Vec<_>>();
+            launcher
+                .set_installed_apps(std::rc::Rc::new(slint::VecModel::from(installed_apps)).into());
+            launcher.set_installed_apps_match(has_match);
+        });
     }
 
     fn save(
@@ -554,8 +749,10 @@ impl Apps {
         name: String,
         command: String,
         svg: String,
+        requests: &RequestSequence,
+        request: u64,
     ) -> Result<(), String> {
-        if name.trim().is_empty() {
+        if !add_item::valid_name(&name) {
             return Err("Name is empty".into());
         }
         let existing = if index >= 0 {
@@ -568,17 +765,13 @@ impl Apps {
             return Ok(());
         }
         let id = app.id.clone();
-        let icon = match &app.icon {
-            Icon::Svg(svg) if matches!(existing, Some(Item::App(old)) if matches!(&old.icon, Icon::Svg(old_svg) if old_svg == svg)) => {
-                self.icons.get(&id).cloned()
-            }
-            Icon::Svg(svg) => Some(decode_svg(svg)?),
-            _ => None,
-        };
+        let icon = app.icon.clone();
+        self.load_icon(&id, &icon)?;
+        if !requests.is_current(request) {
+            return Ok(());
+        }
         self.store(index, Item::App(app))?;
-        if let Some(icon) = icon {
-            self.icons.insert(id, icon);
-        } else {
+        if matches!(icon, Icon::Letter | Icon::Text(_)) {
             self.icons.remove(&id);
         }
         Ok(())
@@ -645,12 +838,19 @@ impl Apps {
         Ok(())
     }
 
-    fn save_website(&mut self, index: i32, name: String, url: String) -> Result<(), String> {
-        if name.trim().is_empty() {
+    fn save_website(
+        &mut self,
+        index: i32,
+        name: String,
+        url: String,
+        requests: &RequestSequence,
+        request: u64,
+    ) -> Result<(), String> {
+        if !add_item::valid_name(&name) {
             return Err("Name is empty".into());
         }
-        if !valid_url(url.trim()) {
-            return Err("URL must start with http:// or https://".into());
+        if !add_item::valid_url(&url) {
+            return Err("Enter a valid HTTP or HTTPS URL.".into());
         }
         let existing = (index >= 0)
             .then(|| self.config.pages[self.page].items.get(index as usize))
@@ -686,6 +886,12 @@ impl Apps {
         } else {
             Icon::Letter
         };
+        if !requests.is_current(request) {
+            if let Icon::File(file) = &icon {
+                platform::remove_icon(file);
+            }
+            return Ok(());
+        }
         let item = Item::Website {
             id: id.clone(),
             name: name.trim().into(),
@@ -710,16 +916,31 @@ impl Apps {
     fn save_path(
         &mut self,
         index: i32,
-        name: String,
         path: String,
         directory: bool,
         svg: String,
     ) -> Result<(), String> {
-        if name.trim().is_empty() {
-            return Err("Name is empty".into());
+        let path = path.trim();
+        let location = std::path::Path::new(path);
+        if !location.is_absolute() {
+            return Err("Enter an absolute Path".into());
         }
-        if path.trim().is_empty() {
-            return Err("Path is empty".into());
+        let metadata = std::fs::metadata(location).map_err(|_| "Path does not exist")?;
+        if directory && !metadata.is_dir() || !directory && !metadata.is_file() {
+            return Err(if directory {
+                "Path is not a directory"
+            } else {
+                "Path is not a file"
+            }
+            .into());
+        }
+        let name = location
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .unwrap_or(path)
+            .to_string();
+        if !add_item::valid_name(&name) {
+            return Err("Name is empty".into());
         }
         let existing = (index >= 0)
             .then(|| self.config.pages[self.page].items.get(index as usize))
@@ -731,12 +952,12 @@ impl Apps {
             None => new_id()?,
         };
         let name = name.trim().to_string();
-        let path = path.trim().to_string();
-        let (icon, image) = if svg.is_empty() {
-            (Icon::Letter, None)
-        } else {
-            (Icon::Svg(svg.clone()), Some(decode_svg(&svg)?))
-        };
+        let path = path.to_string();
+        let icon = crate::icons::parse(&svg)?;
+        self.load_icon(&id, &icon)?;
+        if matches!(icon, Icon::Letter | Icon::Text(_)) {
+            self.icons.remove(&id);
+        }
         let item = if directory {
             Item::Directory {
                 id,
@@ -752,18 +973,18 @@ impl Apps {
                 icon,
             }
         };
-        let id = item.id().to_string();
         self.store(index, item)?;
-        if let Some(image) = image {
-            self.icons.insert(id, image);
-        } else {
-            self.icons.remove(&id);
-        }
         Ok(())
     }
 
-    fn save_folder(&mut self, index: i32, name: String) -> Result<(), String> {
-        if name.trim().is_empty() {
+    fn save_folder(
+        &mut self,
+        index: i32,
+        name: String,
+        requests: &RequestSequence,
+        request: u64,
+    ) -> Result<(), String> {
+        if !add_item::valid_name(&name) {
             return Err("Name is empty".into());
         }
         let mut config = self.config.clone();
@@ -780,6 +1001,9 @@ impl Apps {
                 name: name.trim().into(),
                 apps: Vec::new(),
             });
+        }
+        if !requests.is_current(request) {
+            return Ok(());
         }
         config
             .save()
@@ -1026,8 +1250,13 @@ impl Apps {
             .map(|(page, index, item)| self.tile(item, *page, *index))
             .collect();
         let installed_apps: Vec<_> = self
-            .installed_apps
+            .inventory
+            .apps()
             .iter()
+            .filter(|app| {
+                self.installed_filter.is_empty()
+                    || app.name.to_lowercase().starts_with(&self.installed_filter)
+            })
             .map(|app| {
                 (
                     app.id.clone(),
@@ -1036,7 +1265,9 @@ impl Apps {
                 )
             })
             .collect();
-        let installed_status = self.installed_status.clone();
+        let installed_status = self.inventory.status().to_string();
+        let installed_apps_loaded = self.inventory.loaded();
+        let installed_apps_match = !installed_apps.is_empty();
         let folder = self.open_folder.and_then(|index| {
             let Item::Folder { name, apps, .. } = self.config.pages[self.page].items.get(index)?
             else {
@@ -1097,6 +1328,8 @@ impl Apps {
             launcher
                 .set_installed_apps(std::rc::Rc::new(slint::VecModel::from(installed_apps)).into());
             launcher.set_installed_status(installed_status.into());
+            launcher.set_installed_apps_loaded(installed_apps_loaded);
+            launcher.set_installed_apps_match(installed_apps_match);
             if let Some((index, name, items)) = folder {
                 launcher.set_folder_index(index);
                 launcher.set_folder_name(name.into());
@@ -1151,18 +1384,14 @@ fn prepare_app(
         None => (new_id()?, Launch::Command(command)),
     };
     if let Launch::Command(command) = &launch
-        && shlex::split(command).is_none_or(|args| args.is_empty() || args[0].is_empty())
+        && !add_item::valid_command(command)
     {
         return Err("Command is empty or has an unclosed quote".into());
     }
     Ok(App {
         id,
         name: name.trim().into(),
-        icon: if svg.trim().is_empty() {
-            Icon::Letter
-        } else {
-            Icon::Svg(svg)
-        },
+        icon: crate::icons::parse(&svg)?,
         launch,
     })
 }
@@ -1174,7 +1403,7 @@ fn new_id() -> Result<String, String> {
     Ok(format!("{}-{}", std::process::id(), time.as_nanos()))
 }
 
-fn decode_svg(svg: &str) -> Result<SharedPixelBuffer<Rgba8Pixel>, String> {
+pub(crate) fn decode_svg(svg: &str) -> Result<SharedPixelBuffer<Rgba8Pixel>, String> {
     let image =
         slint::Image::load_from_svg_data(svg.as_bytes()).map_err(|_| "Couldn't read SVG icon")?;
     image
@@ -1182,7 +1411,10 @@ fn decode_svg(svg: &str) -> Result<SharedPixelBuffer<Rgba8Pixel>, String> {
         .ok_or_else(|| "Couldn't read SVG icon".into())
 }
 
-fn decode_icon(data: &[u8], name: &str) -> Result<SharedPixelBuffer<Rgba8Pixel>, String> {
+pub(crate) fn decode_icon(
+    data: &[u8],
+    name: &str,
+) -> Result<SharedPixelBuffer<Rgba8Pixel>, String> {
     let extension = std::path::Path::new(name)
         .extension()
         .and_then(std::ffi::OsStr::to_str)
@@ -1203,18 +1435,29 @@ fn decode_icon(data: &[u8], name: &str) -> Result<SharedPixelBuffer<Rgba8Pixel>,
         .ok_or_else(|| "Couldn't read website icon".into())
 }
 
-fn valid_url(url: &str) -> bool {
-    let Some((scheme, address)) = url.split_once("://") else {
-        return false;
-    };
-    matches!(scheme, "http" | "https")
-        && !address.split('/').next().unwrap_or_default().is_empty()
-        && !url.chars().any(char::is_whitespace)
-}
-
 fn finish(weak: &slint::Weak<Launcher>, banner: String, saved: bool, launched: bool) {
     let _ = weak.upgrade_in_event_loop(move |launcher| {
-        launcher.set_banner(banner.into());
+        let operation = launcher.get_sheet_operation();
+        let restore_error = if operation == "choosing" {
+            platform::restore_after_chooser(&launcher)
+                .err()
+                .map(|error| error.to_string())
+        } else {
+            None
+        };
+        if !operation.is_empty() {
+            if let Some(error) = restore_error {
+                launcher.set_sheet_status(error.into());
+            } else if !banner.is_empty() {
+                launcher.set_sheet_status(banner.into());
+            } else if operation == "choosing" {
+                launcher.set_sheet_status("".into());
+            }
+            launcher.set_sheet_operation("".into());
+            launcher.set_banner("".into());
+        } else {
+            launcher.set_banner(banner.into());
+        }
         launcher.set_busy(false);
         if saved {
             launcher.invoke_reset_launcher();
@@ -1238,7 +1481,8 @@ struct Tile {
     command: Option<String>,
     url: String,
     path: String,
-    svg: String,
+    icon_value: String,
+    letter: String,
     icon: Option<SharedPixelBuffer<Rgba8Pixel>>,
     app: bool,
     website: bool,
@@ -1261,9 +1505,6 @@ impl Tile {
                 if let Launch::Command(command) = &app.launch {
                     tile.command = Some(command.clone());
                 }
-                if let Icon::Svg(svg) = &app.icon {
-                    tile.svg = svg.clone();
-                }
                 tile.icon = icons.get(&app.id).cloned();
             }
             Item::Website { id, url, .. } => {
@@ -1271,20 +1512,14 @@ impl Tile {
                 tile.url = url.clone();
                 tile.icon = icons.get(id).cloned();
             }
-            Item::File { id, path, icon, .. } => {
+            Item::File { id, path, .. } => {
                 tile.file = true;
                 tile.path = path.clone();
-                if let Icon::Svg(svg) = icon {
-                    tile.svg = svg.clone();
-                }
                 tile.icon = icons.get(id).cloned();
             }
-            Item::Directory { id, path, icon, .. } => {
+            Item::Directory { id, path, .. } => {
                 tile.directory = true;
                 tile.path = path.clone();
-                if let Icon::Svg(svg) = icon {
-                    tile.svg = svg.clone();
-                }
                 tile.icon = icons.get(id).cloned();
             }
             Item::Folder { apps, .. } => {
@@ -1305,6 +1540,12 @@ impl Tile {
             }
             Item::Folder { .. } => None,
         };
+        if let Some(icon) = icon {
+            tile.icon_value = serde_json::to_string(icon).unwrap_or_default();
+            if let Icon::Text(text) = icon {
+                tile.letter = text.clone();
+            }
+        }
         if let Some(Icon::Svg(svg)) = icon {
             for (name, artwork) in [
                 ("website", include_str!("../ui/assets/website.svg")),
@@ -1323,7 +1564,7 @@ impl Tile {
     }
 
     fn into_slint(self) -> AppTile {
-        let icon_present = self.icon.is_some() || !self.svg.is_empty();
+        let icon_present = self.icon.is_some();
         AppTile {
             id: self.id.into(),
             page: self.page,
@@ -1331,19 +1572,19 @@ impl Tile {
             folder_app_index: self.folder_app_index.unwrap_or(-1),
             pinned: self.pinned,
             artwork: self.artwork.into(),
-            letter: self
-                .name
-                .chars()
-                .next()
-                .map(|letter| letter.to_string())
-                .unwrap_or_default()
-                .into(),
+            text_icon: !self.letter.is_empty(),
+            letter: if self.letter.is_empty() {
+                crate::icons::first_letter(&self.name)
+            } else {
+                self.letter
+            }
+            .into(),
             name: self.name.into(),
             custom: self.command.is_some(),
             command: self.command.unwrap_or_default().into(),
             url: self.url.into(),
             path: self.path.into(),
-            svg: self.svg.into(),
+            icon_value: self.icon_value.into(),
             icon: self.icon.map(slint::Image::from_rgba8).unwrap_or_default(),
             icon_present,
             app: self.app,
@@ -1379,8 +1620,8 @@ mod tests {
             page: 0,
             icons: HashMap::new(),
             open_folder: None,
-            installed_apps: Vec::new(),
-            installed_status: String::new(),
+            inventory: Inventory::default(),
+            installed_filter: String::new(),
             query: String::new(),
             recent: recent::Recent::default(),
         };
