@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="896 978.5 48 48" fill="none"><defs><mask id="mask27_16_1585" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="896" y="978" width="48" height="49">
+<path d="M944 978.5H896V1026.5H944V978.5Z" fill="white" />
+</mask>
+<linearGradient id="paint5_linear_16_1585" x1="896" y1="978.5" x2="944" y2="978.5" gradientUnits="userSpaceOnUse">
+<stop stop-color="#7A8DFA" />
+<stop offset="1" stop-color="#424A9C" />
+</linearGradient>
+</defs><g mask="url(#mask27_16_1585)">
+<path d="M930 978.5H910C902.268 978.5 896 984.768 896 992.5V1012.5C896 1020.23 902.268 1026.5 910 1026.5H930C937.732 1026.5 944 1020.23 944 1012.5V992.5C944 984.768 937.732 978.5 930 978.5Z" fill="url(#paint5_linear_16_1585)" />
+<path d="M910 979H930C937.456 979 943.5 985.044 943.5 992.5V1012.5C943.5 1019.96 937.456 1026 930 1026H910C902.544 1026 896.5 1019.96 896.5 1012.5V992.5C896.5 985.044 902.544 979 910 979Z" stroke="#A8B3FF" stroke-opacity="0.207843" />
+<path d="M933.3 1002.5C933.3 1009.85 927.35 1015.8 920 1015.8C912.65 1015.8 906.7 1009.85 906.7 1002.5C906.7 995.155 912.65 989.2 920 989.2C927.35 989.2 933.3 995.155 933.3 1002.5Z" stroke-width="1.4" stroke="#DFE5FF" />
+<path d="M929 993.5L923.52 1006.25L911 1011.5L916.48 998.75L929 993.5Z" fill="white" />
+<path d="M929 993.5L920.39 1002.5L911 1011.5L923.52 1006.25L929 993.5Z" fill="#303C86" />
+</g>
+</svg>
