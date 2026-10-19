@@ -106,8 +106,9 @@ From top to bottom: top bar, the open page, page dots, dock.
 - No names. At least 1, at most 9.
 - A new page is created by dropping an item past the right edge of the last page, clicking + beside the page dots, or clicking Add page in Settings.
 - Drag an empty area of the page left or right to move to the previous or next page. The page follows the pointer without delay and settles into place after release. At the first or last page, it moves only a little and returns to the center.
+- A 24 px gap separates page surfaces during a swipe.
 - The page area fills the available width and height. The + beside the page dots creates and opens an empty page with the mouse.
-- An empty page is deleted when you leave it, unless it is the only one.
+- Leaving an empty page does not remove it.
 - First run: one empty page with the Add tile.
 - Startup page controls are deferred; reopening keeps the current page.
 

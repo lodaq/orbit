@@ -49,7 +49,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **File search path** | A folder searched recursively for files by Search anything. |
 | **Directory search path** | A folder whose immediate directories appear in Search anything. |
 | **Folder** | Holds apps. Opens like an iOS folder. Cannot contain other folders. Its tile shows a small preview of its apps. |
-| **Page** | One screen of items, like a phone home screen page. Pages have no names. Maximum 9. An empty page is deleted when you leave it, unless it is the only one. |
+| **Page** | One screen of items, like a phone home screen page. Pages have no names. Maximum 9. Leaving an empty page does not remove it. |
 | **Page swipe** | Dragging an empty area of a page left or right to open the previous or next page. |
 | **Grid** | The rows and columns of tiles on a page or inside an open folder. |
 | **Tile** | The rounded square that shows one item (an app, website, file, directory or folder) or the Add tile. |

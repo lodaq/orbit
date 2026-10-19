@@ -12,7 +12,7 @@
 - `ui/launcher.slint`: the top bar, banner, search results, scrolling page grid, page dots, Settings path lists, app and folder sheets, open folder panel, Icon picker, context menu, and delete alert; `build.rs` compiles it.
 - `Cargo.toml` and `Cargo.lock`: dependencies and their locked versions. Speed results are in `doc/SPEC.md`, section 3.
 
-Steps 1–4 are complete. Step 4 adds folders, item drops, page swipes, page creation, and removal of an empty page when leaving it. Step 5 adds Websites, Files, Directories, Actions, Custom command and Installed apps. Pinning and Recent come with the dock in step 6, grid shortcuts in step 7, Settings and appearance in step 8, glyphs in step 9, and packaging in step 10.
+Steps 1–4 are complete. Step 4 adds folders, item drops, page swipes and page creation. Leaving an empty page does not remove it. Step 5 adds Websites, Files, Directories, Actions, Custom command and Installed apps. Pinning and Recent come with the dock in step 6, grid shortcuts in step 7, Settings and appearance in step 8, glyphs in step 9, and packaging in step 10.
 
 The approved supplied UI update adds the reference launcher appearance, search across saved pages, a pinned dock, and a Settings panel. A later request adds Recent to the dock. Search path management extends Settings with saved file and directory roots. These are explicit exceptions to the original step order, not completion of the remaining steps.
 

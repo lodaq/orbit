@@ -226,7 +226,7 @@ export component Launcher inherits Window {
     private property <length> context-y;
     private property <length> page-drag-offset;
     private property <bool> page-dragging;
-    private property <length> page-span: page.width;
+    private property <length> page-span: page.width + 24px;
     private property <[AppTile]> transition-items;
     private property <[AppTile]> transition-incoming-items;
     private property <bool> transitioning;
@@ -255,6 +255,8 @@ export component Launcher inherits Window {
     private property <int> drag-index: -1;
     private property <AppTile> drag-item;
     private property <int> drag-view-page: -1;
+    private property <length> drag-page-offset;
+    private property <bool> drop-pending;
     private property <[AppTile]> drag-view-items;
     private property <int> drop-target: -1;
     private property <length> drag-x;
@@ -302,6 +304,7 @@ export component Launcher inherits Window {
     callback reset-launcher();
     callback finish-drag();
     callback close-top-layer();
+    animate drag-page-offset { duration: 100ms; easing: ease-out; }
     animate page-drag-offset { duration: root.page-dragging ? 0ms : 100ms; easing: ease-out; }
     animate transition-progress { duration: root.transition-duration; easing: ease-out-sine; }
     transition-timer := Timer {
@@ -326,11 +329,11 @@ export component Launcher inherits Window {
         triggered => {
             if root.edge-target == root.drag-page {
                 root.drag-view-page = -1;
-                root.page-drag-offset = 0px;
+                root.drag-page-offset = 0px;
             } else {
                 root.drag-view-page = root.edge-target;
                 root.drag-view-items = root.edge-target > root.drag-page ? root.next-items : root.previous-items;
-                root.page-drag-offset = root.edge-target > root.drag-page ? -root.page-span : root.page-span;
+                root.drag-page-offset = root.edge-target > root.drag-page ? -root.page-span : root.page-span;
             }
             root.edge-ready = true;
             self.running = false;
@@ -350,11 +353,6 @@ export component Launcher inherits Window {
         running: false;
         interval: 220ms;
         triggered => { root.folder-closing = false; self.running = false; }
-    }
-    page-drop-timer := Timer {
-        running: false;
-        interval: 120ms;
-        triggered => { root.drag-view-page = -1; root.drag-view-items = []; self.running = false; }
     }
     function close-folder-view() {
         root.folder-open = false;
@@ -379,9 +377,12 @@ export component Launcher inherits Window {
     }
     page-focus := FocusScope { width: 0px; height: 0px; }
     finish-drag => {
-        if root.drag-view-page >= 0 { page-drop-timer.start(); }
-        root.page-drag-offset = 0px;
+        if !root.drop-pending { return; }
+        root.drag-view-page = -1;
+        root.drag-view-items = [];
+        root.drag-page-offset = 0px;
         root.drop-target = -1;
+        root.drop-pending = false;
     }
     reset-launcher => {
         if root.folder-open { root.close-folder(); }
@@ -390,7 +391,8 @@ export component Launcher inherits Window {
         root.drag-index = -1;
         root.drag-view-page = -1;
         root.drag-view-items = [];
-        page-drop-timer.stop();
+        root.drop-pending = false;
+        root.drag-page-offset = 0px;
         root.drop-target = -1;
         root.dragged = false;
         root.drag-click = false;
@@ -714,6 +716,7 @@ export component Launcher inherits Window {
                 opacity: root.transitioning || root.drag-view-page >= 0 ? 1 : min(1, abs(root.page-drag-offset) / 96px);
                 x: (page.width - self.width) / 2 + (root.transitioning
                     ? root.transition-start + (-root.transition-direction * root.page-span - root.transition-start) * root.transition-progress
+                    : root.drag-view-page >= 0 ? root.drag-page-offset + (root.drag-view-page > root.drag-page ? root.page-span : -root.page-span)
                     : root.page-drag-offset + (root.page-drag-offset < 0px ? root.page-span : -root.page-span));
                 y: 0px;
                 width: page.width;
@@ -725,9 +728,9 @@ export component Launcher inherits Window {
                 border-width: 1px;
                 border-color: #a6b1ed33;
                 border-radius: 24px;
-                background: #513b6888;
+                background: #324d6b88;
                 for index in preview.preview-items.length + 1: PageTile {
-                    property <int> position: root.dragged && root.drag-view-page >= 0 && root.drop-target >= 0 && index >= root.drop-target ? index + 1 : index;
+                    property <int> position: (root.dragged || root.drop-pending) && root.drag-view-page >= 0 && root.drop-target >= 0 && index >= root.drop-target ? index + 1 : index;
                     x: mod(self.position, preview.columns) * preview.tile-size + (preview.tile-size - 128px) / 2;
                     y: floor(self.position / preview.columns) * preview.tile-size + (preview.tile-size - 128px) / 2;
                     items: preview.preview-items;
@@ -739,17 +742,19 @@ export component Launcher inherits Window {
             grid := Rectangle {
                 x: (page.width - self.width) / 2 + (root.transitioning
                     ? root.transition-start + (-root.transition-direction * root.page-span - root.transition-start) * root.transition-progress + root.transition-direction * root.page-span
-                    : root.dragged && root.drag-view-page >= 0 ? 0px : root.page-drag-offset);
+                    : root.drag-view-page >= 0 ? 0px : root.page-drag-offset);
                 y: 0px;
                 width: page.width;
                 property <[AppTile]> display-items: root.transitioning ? root.transition-incoming-items : root.items;
                 property <int> columns: max(1, floor(self.width / 144px));
                 property <length> tile-size: self.width / self.columns;
+                opacity: root.page-dragging || root.transitioning ? 0.88 : 1;
+                animate opacity { duration: 100ms; easing: ease-out; }
                 height: max(page.height, ceil((self.display-items.length + 1) / self.columns) * self.tile-size);
                 border-width: 1px;
-                border-color: root.dragged && root.drag-view-page >= 0 ? transparent : #a6b1ed33;
+                border-color: root.drag-view-page >= 0 ? transparent : #a6b1ed33;
                 border-radius: 24px;
-                background: root.dragged && root.drag-view-page >= 0 ? transparent : #324d6b88;
+                background: root.drag-view-page >= 0 ? transparent : #324d6b88;
                 for index in grid.display-items.length + 1: Rectangle {
                     property <int> position: root.dragged && index < root.items.length && index != root.drag-index && root.drop-target >= 0
                         ? (root.drag-index < root.drop-target && index > root.drag-index && index <= root.drop-target ? index - 1
@@ -761,7 +766,7 @@ export component Launcher inherits Window {
                     animate x { duration: 120ms; easing: ease-out; }
                     animate y { duration: 120ms; easing: ease-out; }
                     PageTile {
-                        opacity: root.dragged && (index == root.drag-index || root.drag-view-page >= 0) ? 0 : 1;
+                        opacity: root.drag-view-page >= 0 || (root.dragged && index == root.drag-index) ? 0 : 1;
                         items: grid.display-items; index: index;
                         hovered: tile.has-hover || (root.dragged && index == root.hover-index);
                         background: root.dragged && index == root.hover-index && root.folder-ready ? #a8b3ff55 : self.hovered ? #ffffff16 : #51405f99;
@@ -788,7 +793,8 @@ export component Launcher inherits Window {
                                 root.drag-click = false;
                                 root.drag-view-page = -1;
                                 root.drag-view-items = [];
-                                page-drop-timer.stop();
+                                root.drop-pending = false;
+                                root.drag-page-offset = 0px;
                                 root.settling = false;
                                 settle-timer.stop();
                                 root.drop-target = -1;
@@ -860,6 +866,7 @@ export component Launcher inherits Window {
                                     root.settle-x = surface-x + mod(target, grid.columns) * grid.tile-size + (grid.tile-size - 128px) / 2;
                                     root.settle-y = surface-y + floor(target / grid.columns) * grid.tile-size + (grid.tile-size - 128px) / 2;
                                     settle-timer.start();
+                                    root.drop-pending = true;
                                     root.drop-item(root.drag-index, target, root.drag-page, destination, root.drag-view-page < 0 && root.folder-ready && root.hover-index == target);
                                 }
                                 folder-timer.stop();
@@ -867,7 +874,7 @@ export component Launcher inherits Window {
                                 root.drag-click = root.dragged;
                                 root.dragged = false;
                                 root.drag-index = -1;
-                                root.drop-target = -1;
+                                if !root.drop-pending { root.drop-target = -1; }
                             }
                             if event.button == PointerEventButton.right && event.kind == PointerEventKind.down
                                 && index < root.items.length {
@@ -1291,7 +1298,10 @@ export component Launcher inherits Window {
                                 width: root.sheet-content-width; height: 48px; spacing: 12px; alignment: start;
                                 Rectangle {
                                     width: 48px; height: 48px; border-radius: 12px; background: Theme.selection;
-                                    if root.icon-preview-present: Image { width: 48px; height: 48px; source: root.icon-preview; image-fit: contain; }
+                                    if root.icon-preview-present: Image {
+                                        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                                        width: 40px; height: 40px; source: root.icon-preview; image-fit: contain;
+                                    }
                                     if !root.icon-preview-present: Text { text: root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.focus; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
                                 }
                                 AddOption { label: "Change icon"; option-width: 136px; height: 48px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }

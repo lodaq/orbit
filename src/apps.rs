@@ -175,8 +175,7 @@ pub fn connect(launcher: &Launcher) {
             let choosing = matches!(action, Action::ChoosePath(..));
             let update = !choosing
                 && (!launching || matches!(action, Action::OpenResult(..) | Action::OpenDock(..)));
-            let page_only = matches!(action, Action::Page(_))
-                && !(apps.config.pages.len() > 1 && apps.config.pages[apps.page].items.is_empty());
+            let page_only = matches!(action, Action::Page(_));
             let refreshing = matches!(action, Action::RefreshInstalledApps(_));
             let filtering = matches!(action, Action::FilterInstalled(_));
             let result = apps.apply(action, &requests, &weak);
@@ -202,7 +201,7 @@ pub fn connect(launcher: &Launcher) {
             } else if success && (update || recent_changed || recent_removed) {
                 apps.update(&weak, page_only);
             }
-            if drag_drop {
+            if drag_drop && !success {
                 let _ = weak.upgrade_in_event_loop(|launcher| launcher.invoke_finish_drag());
             }
             if save_search_path && success {
@@ -577,21 +576,7 @@ impl Apps {
             }
             Action::Page(index) => {
                 if index < self.config.pages.len() && index != self.page {
-                    let mut config = self.config.clone();
-                    let mut next = index;
-                    if config.pages.len() > 1 && config.pages[self.page].items.is_empty() {
-                        config.pages.remove(self.page);
-                        if next > self.page {
-                            next -= 1;
-                        }
-                    }
-                    if config.pages.len() != self.config.pages.len() {
-                        config
-                            .save()
-                            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-                    }
-                    self.config = config;
-                    self.page = next;
+                    self.page = index;
                 }
                 Ok(())
             }
@@ -1622,6 +1607,7 @@ fn set_page_items(
     launcher.set_next_items(model(next));
     launcher.set_current_page(page);
     launcher.set_page_count(count);
+    launcher.invoke_finish_drag();
 }
 
 fn prepare_app(
