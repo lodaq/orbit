@@ -1,16 +1,42 @@
 use crate::add_item::{Inventory, RequestSequence};
 use crate::config::{App, Config, Icon, Item, Launch, SystemAction};
-use crate::{AppTile, InstalledAppTile, Launcher, add_item, config, platform, recent};
+use crate::{
+    ActionChoice, AppTile, FolderPreview, InstalledAppTile, Launcher, add_item, config, platform,
+    recent,
+};
 use slint::{ComponentHandle, Rgba8Pixel, SharedPixelBuffer};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
+
+const ACTIONS: [(&str, &str, SystemAction); 11] = [
+    ("lock-screen", "Lock screen", SystemAction::LockScreen),
+    ("screenshot", "Take screenshot", SystemAction::Screenshot),
+    ("sleep", "Sleep", SystemAction::Sleep),
+    ("log-out", "Log out", SystemAction::LogOut),
+    ("volume-up", "Volume up", SystemAction::VolumeUp),
+    ("volume-down", "Volume down", SystemAction::VolumeDown),
+    ("mute", "Mute", SystemAction::Mute),
+    (
+        "mute-microphone",
+        "Mute microphone",
+        SystemAction::MuteMicrophone,
+    ),
+    ("play-pause", "Play or pause", SystemAction::PlayPause),
+    ("next-track", "Next track", SystemAction::NextTrack),
+    (
+        "previous-track",
+        "Previous track",
+        SystemAction::PreviousTrack,
+    ),
+];
 
 enum Action {
     Page(usize),
     Search(String),
     FilterInstalled(String),
-    OpenResult(usize, usize),
+    OpenResult(i32, usize),
     OpenDock(usize, usize, i32),
     Pin(usize),
     Unpin(String),
@@ -32,6 +58,8 @@ enum Action {
     AddPredefined(String, u64),
     AddInstalledApp(String, u64),
     RefreshInstalledApps(u64),
+    SaveSearchPath(bool, i32, String),
+    DeleteSearchPath(bool, usize),
 }
 
 struct Apps {
@@ -42,7 +70,14 @@ struct Apps {
     inventory: Inventory,
     installed_filter: String,
     query: String,
+    search_paths: Option<Vec<SearchPathResult>>,
     recent: recent::Recent,
+}
+
+struct SearchPathResult {
+    name: String,
+    path: String,
+    directory: bool,
 }
 
 impl Action {
@@ -79,6 +114,7 @@ pub fn connect(launcher: &Launcher) {
             inventory,
             installed_filter: String::new(),
             query: String::new(),
+            search_paths: None,
             recent,
         };
         let banner = apps.load_icons().err().unwrap_or(banner);
@@ -104,7 +140,8 @@ pub fn connect(launcher: &Launcher) {
                 Action::RemoveRecent(id) => Some(id.clone()),
                 _ => None,
             };
-            let launching = recent_id.is_some();
+            let launching =
+                recent_id.is_some() || matches!(action, Action::OpenResult(page, _) if page < 0);
             let saving = matches!(
                 action,
                 Action::Pin(_)
@@ -120,7 +157,21 @@ pub fn connect(launcher: &Launcher) {
                     | Action::ReorderFolderApp(..)
                     | Action::AddPredefined(..)
                     | Action::AddInstalledApp(..)
+                    | Action::SaveSearchPath(..)
+                    | Action::DeleteSearchPath(..)
             );
+            let drag_drop = matches!(action, Action::Drop(..));
+            let save_search_path = matches!(action, Action::SaveSearchPath(..));
+            let reset_after_save = saving
+                && !matches!(
+                    action,
+                    Action::AddPage
+                        | Action::Drop(..)
+                        | Action::MoveFolderApp(..)
+                        | Action::ReorderFolderApp(..)
+                        | Action::SaveSearchPath(..)
+                        | Action::DeleteSearchPath(..)
+                );
             let choosing = matches!(action, Action::ChoosePath(..));
             let update = !choosing
                 && (!launching || matches!(action, Action::OpenResult(..) | Action::OpenDock(..)));
@@ -151,10 +202,18 @@ pub fn connect(launcher: &Launcher) {
             } else if success && (update || recent_changed || recent_removed) {
                 apps.update(&weak, page_only);
             }
+            if drag_drop {
+                let _ = weak.upgrade_in_event_loop(|launcher| launcher.invoke_finish_drag());
+            }
+            if save_search_path && success {
+                let _ = weak.upgrade_in_event_loop(|launcher| {
+                    launcher.invoke_finish_search_path_save();
+                });
+            }
             finish(
                 &weak,
                 result.err().unwrap_or_default(),
-                saving && success,
+                reset_after_save && success,
                 launching && success,
             );
         }
@@ -172,7 +231,7 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     });
     let sender = send.clone();
     launcher.on_open_result(move |page, index| {
-        let _ = sender.send(Action::OpenResult(page as usize, index as usize));
+        let _ = sender.send(Action::OpenResult(page, index as usize));
     });
     let sender = send.clone();
     launcher.on_open_dock_item(move |page, index, folder_app| {
@@ -223,6 +282,14 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     launcher.on_refresh_installed_apps(move || {
         let request = requests_for_refresh.issue();
         let _ = sender.send(Action::RefreshInstalledApps(request));
+    });
+    let sender = send.clone();
+    launcher.on_save_search_path(move |directory, index, path| {
+        let _ = sender.send(Action::SaveSearchPath(directory, index, path.into()));
+    });
+    let sender = send.clone();
+    launcher.on_delete_search_path(move |directory, index| {
+        let _ = sender.send(Action::DeleteSearchPath(directory, index as usize));
     });
     let sender = send.clone();
     launcher.on_filter_installed_apps(move |filter| {
@@ -325,7 +392,7 @@ impl Apps {
     fn recent_id(&self, action: &Action) -> Option<String> {
         let (page, index, folder_app) = match action {
             Action::Open(index) => (self.page, *index, -1),
-            Action::OpenResult(page, index) => (*page, *index, -1),
+            Action::OpenResult(page, index) => ((*page).try_into().ok()?, *index, -1),
             Action::OpenDock(page, index, folder_app) => (*page, *index, *folder_app),
             Action::LaunchFolder(folder, index) => (self.page, *folder, *index as i32),
             _ => return None,
@@ -409,6 +476,10 @@ impl Apps {
         match action {
             Action::Search(query) => {
                 self.query = query.to_lowercase();
+                if !self.query.is_empty() {
+                    self.load_installed_icons_matching_query();
+                    self.load_search_paths();
+                }
                 Ok(())
             }
             Action::FilterInstalled(filter) => {
@@ -450,17 +521,42 @@ impl Apps {
                 Ok(())
             }
             Action::OpenResult(page, index) => {
+                if page == -1 {
+                    let (_, name, action) = ACTIONS.get(index).ok_or("Action is missing")?;
+                    return platform::launch_action(action)
+                        .map_err(|error| format!("Couldn't start '{name}': {error}"));
+                }
+                if page == -2 {
+                    let app = self
+                        .inventory
+                        .apps()
+                        .get(index)
+                        .ok_or("Installed app is missing")?;
+                    return platform::launch(&app.command)
+                        .map_err(|error| format!("Couldn't start '{}': {error}", app.name));
+                }
+                if page == -3 || page == -4 {
+                    let Some(path) = self
+                        .search_paths
+                        .as_ref()
+                        .and_then(|paths| paths.get(index))
+                    else {
+                        return Ok(());
+                    };
+                    return platform::open(&path.path)
+                        .map_err(|error| format!("Couldn't open '{}': {error}", path.name));
+                }
                 let Some(item) = self
                     .config
                     .pages
-                    .get(page)
+                    .get(page as usize)
                     .and_then(|page| page.items.get(index))
                 else {
                     return Ok(());
                 };
                 let folder = matches!(item, Item::Folder { .. });
                 let previous = self.page;
-                self.page = page;
+                self.page = page as usize;
                 if folder {
                     self.open_folder = Some(index);
                     Ok(())
@@ -474,7 +570,7 @@ impl Apps {
             }
             Action::OpenDock(page, index, folder_app) => {
                 if folder_app < 0 {
-                    self.apply(Action::OpenResult(page, index), requests, weak)
+                    self.apply(Action::OpenResult(page as i32, index), requests, weak)
                 } else {
                     self.launch_folder_app(page, index, folder_app as usize)
                 }
@@ -529,6 +625,10 @@ impl Apps {
             }
             Action::AddInstalledApp(id, request) => self.add_installed_app(&id, requests, request),
             Action::RefreshInstalledApps(request) => self.refresh_installed_apps(requests, request),
+            Action::SaveSearchPath(directory, index, path) => {
+                self.save_search_path(directory, index, path)
+            }
+            Action::DeleteSearchPath(directory, index) => self.delete_search_path(directory, index),
             Action::SaveWebsite(index, name, url, request) => {
                 self.save_website(index, name, url, requests, request)
             }
@@ -617,18 +717,15 @@ impl Apps {
         requests: &RequestSequence,
         request: u64,
     ) -> Result<(), String> {
-        let (name, action) = match action {
-            "lock-screen" => ("Lock screen", SystemAction::LockScreen),
-            "screenshot" => ("Take screenshot", SystemAction::Screenshot),
-            "sleep" => ("Sleep", SystemAction::Sleep),
-            "log-out" => ("Log out", SystemAction::LogOut),
-            _ => return Err("Action is missing".into()),
-        };
+        let (_, name, action) = ACTIONS
+            .iter()
+            .find(|(id, _, _)| *id == action)
+            .ok_or("Action is missing")?;
         let app = App {
             id: new_id()?,
-            name: name.into(),
+            name: (*name).into(),
             icon: Icon::Letter,
-            launch: Launch::Action(action),
+            launch: Launch::Action(action.clone()),
         };
         if !requests.is_current(request) {
             return Ok(());
@@ -698,6 +795,93 @@ impl Apps {
         for (id, icon) in icons {
             let _ = self.load_icon(&id, &icon);
         }
+    }
+
+    fn load_installed_icons_matching_query(&mut self) {
+        let icons: Vec<_> = self
+            .inventory
+            .apps()
+            .iter()
+            .filter(|app| app.name.to_lowercase().contains(&self.query))
+            .filter(|app| !self.icons.contains_key(&app.id))
+            .map(|app| (app.id.clone(), app.icon.clone()))
+            .collect();
+        for (id, icon) in icons {
+            let _ = self.load_icon(&id, &icon);
+        }
+    }
+
+    fn load_search_paths(&mut self) {
+        if self.search_paths.is_none() {
+            self.search_paths = Some(index_search_paths(&self.config));
+        }
+    }
+
+    fn save_search_path(
+        &mut self,
+        directory: bool,
+        index: i32,
+        path: String,
+    ) -> Result<(), String> {
+        let path = PathBuf::from(path.trim());
+        if !path.is_absolute() || !path.is_dir() {
+            return Err("Enter an existing absolute folder path".into());
+        }
+        let path = path
+            .canonicalize()
+            .map_err(|error| format!("Couldn't read path: {error}"))?
+            .to_string_lossy()
+            .into_owned();
+        let mut config = self.config.clone();
+        let paths = if directory {
+            &mut config.directory_search_paths
+        } else {
+            &mut config.file_search_paths
+        };
+        if index >= 0 {
+            let Some(saved_path) = paths.get_mut(index as usize) else {
+                return Ok(());
+            };
+            if *saved_path == path {
+                return Ok(());
+            }
+            *saved_path = path;
+        } else if !paths.contains(&path) {
+            paths.push(path);
+        } else {
+            return Ok(());
+        }
+        config
+            .save()
+            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
+        self.config = config;
+        self.search_paths = None;
+        if !self.query.is_empty() {
+            self.load_search_paths();
+        }
+        Ok(())
+    }
+
+    fn delete_search_path(&mut self, directory: bool, index: usize) -> Result<(), String> {
+        let mut config = self.config.clone();
+        let paths = if directory {
+            &mut config.directory_search_paths
+        } else {
+            &mut config.file_search_paths
+        };
+        if index >= paths.len() {
+            return Ok(());
+        }
+        paths.remove(index);
+        config
+            .save()
+            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
+        self.config = config;
+        self.search_paths = None;
+        if !self.query.is_empty() {
+            self.load_search_paths();
+        }
+        Ok(())
     }
 
     fn update_installed_apps(&self, weak: &slint::Weak<Launcher>) {
@@ -1043,7 +1227,7 @@ impl Apps {
             return Ok(());
         }
         let items = &self.config.pages[origin].items;
-        if source >= items.len() || target > items.len() {
+        if source >= items.len() {
             return Ok(());
         }
         let mut config = self.config.clone();
@@ -1060,19 +1244,17 @@ impl Apps {
                 return Ok(());
             }
             let item = config.pages[origin].items.remove(source);
-            config.pages[destination].items.push(item);
-            let next_page = if config.pages.len() > 1 && config.pages[origin].items.is_empty() {
-                config.pages.remove(origin);
-                destination.saturating_sub(usize::from(destination > origin))
-            } else {
-                destination
-            };
+            let insertion = target.min(config.pages[destination].items.len());
+            config.pages[destination].items.insert(insertion, item);
             config
                 .save()
                 .map_err(|error| format!("Couldn't save config.json: {error}"))?;
             self.config = config;
-            self.page = next_page;
+            self.page = destination;
             self.open_folder = None;
+            return Ok(());
+        }
+        if target > items.len() {
             return Ok(());
         }
         if source == target {
@@ -1208,6 +1390,18 @@ impl Apps {
         let next = page_items(self.page + 1);
         let page = self.page as i32;
         let count = self.config.pages.len() as i32;
+        let file_search_paths = self
+            .config
+            .file_search_paths
+            .iter()
+            .map(|path| path.as_str().into())
+            .collect::<Vec<slint::SharedString>>();
+        let directory_search_paths = self
+            .config
+            .directory_search_paths
+            .iter()
+            .map(|path| path.as_str().into())
+            .collect::<Vec<slint::SharedString>>();
         if page_only {
             let _ = weak.upgrade_in_event_loop(move |launcher| {
                 set_page_items(&launcher, items, previous, next, page, count);
@@ -1242,13 +1436,61 @@ impl Apps {
             .filter(|tile| !tile.folder)
             .take(2)
             .collect();
-        let results: Vec<_> = all
+        let mut results: Vec<_> = all
             .iter()
             .filter(|(_, _, item)| {
                 !self.query.is_empty() && item.name().to_lowercase().contains(&self.query)
             })
             .map(|(page, index, item)| self.tile(item, *page, *index))
             .collect();
+        if !self.query.is_empty() {
+            results.extend(
+                ACTIONS
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (_, name, _))| name.to_lowercase().contains(&self.query))
+                    .map(|(index, (_, name, _))| Tile {
+                        name: (*name).into(),
+                        page: -1,
+                        index: index as i32,
+                        artwork: "action".into(),
+                        app: true,
+                        ..Tile::default()
+                    }),
+            );
+            results.extend(
+                self.inventory
+                    .apps()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, app)| app.name.to_lowercase().contains(&self.query))
+                    .map(|(index, app)| Tile {
+                        id: app.id.clone(),
+                        name: app.name.clone(),
+                        icon: self.icons.get(&app.id).cloned(),
+                        page: -2,
+                        index: index as i32,
+                        app: true,
+                        ..Tile::default()
+                    }),
+            );
+            results.extend(
+                self.search_paths
+                    .iter()
+                    .flatten()
+                    .enumerate()
+                    .filter(|(_, path)| path.name.to_lowercase().contains(&self.query))
+                    .map(|(index, path)| Tile {
+                        name: path.name.clone(),
+                        path: path.path.clone(),
+                        page: if path.directory { -4 } else { -3 },
+                        index: index as i32,
+                        file: !path.directory,
+                        directory: path.directory,
+                        ..Tile::default()
+                    }),
+            );
+        }
         let installed_apps: Vec<_> = self
             .inventory
             .apps()
@@ -1325,11 +1567,29 @@ impl Apps {
                 ))
                 .into(),
             );
+            launcher.set_actions(
+                std::rc::Rc::new(slint::VecModel::from(
+                    ACTIONS
+                        .iter()
+                        .map(|(id, name, _)| ActionChoice {
+                            id: (*id).into(),
+                            name: (*name).into(),
+                        })
+                        .collect::<Vec<_>>(),
+                ))
+                .into(),
+            );
             launcher
                 .set_installed_apps(std::rc::Rc::new(slint::VecModel::from(installed_apps)).into());
             launcher.set_installed_status(installed_status.into());
             launcher.set_installed_apps_loaded(installed_apps_loaded);
             launcher.set_installed_apps_match(installed_apps_match);
+            launcher.set_file_search_paths(
+                std::rc::Rc::new(slint::VecModel::from(file_search_paths)).into(),
+            );
+            launcher.set_directory_search_paths(
+                std::rc::Rc::new(slint::VecModel::from(directory_search_paths)).into(),
+            );
             if let Some((index, name, items)) = folder {
                 launcher.set_folder_index(index);
                 launcher.set_folder_name(name.into());
@@ -1468,6 +1728,60 @@ fn finish(weak: &slint::Weak<Launcher>, banner: String, saved: bool, launched: b
     });
 }
 
+fn index_search_paths(config: &Config) -> Vec<SearchPathResult> {
+    let mut results = Vec::new();
+    for root in &config.file_search_paths {
+        let mut folders = vec![PathBuf::from(root)];
+        while let Some(folder) = folders.pop() {
+            let Ok(entries) = std::fs::read_dir(folder) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                if kind.is_dir() {
+                    folders.push(entry.path());
+                } else if kind.is_file() {
+                    results.push(search_path_result(entry.path(), false));
+                }
+            }
+        }
+    }
+    for root in &config.directory_search_paths {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        results.extend(entries.flatten().filter_map(|entry| {
+            entry
+                .file_type()
+                .ok()
+                .filter(std::fs::FileType::is_dir)
+                .map(|_| search_path_result(entry.path(), true))
+        }));
+    }
+    results.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    results.dedup_by(|left, right| left.path == right.path);
+    results
+}
+
+fn search_path_result(path: PathBuf, directory: bool) -> SearchPathResult {
+    SearchPathResult {
+        name: path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+        path: path.to_string_lossy().into_owned(),
+        directory,
+    }
+}
+
 // Pixel buffers can cross threads; Slint images stay on the interface thread.
 #[derive(Default)]
 struct Tile {
@@ -1489,7 +1803,13 @@ struct Tile {
     file: bool,
     directory: bool,
     folder: bool,
-    preview: String,
+    preview_icons: Vec<FolderIcon>,
+}
+
+#[derive(Default)]
+struct FolderIcon {
+    icon: Option<SharedPixelBuffer<Rgba8Pixel>>,
+    letter: String,
 }
 
 impl Tile {
@@ -1525,11 +1845,13 @@ impl Tile {
             Item::Folder { apps, .. } => {
                 tile.folder = true;
                 for app in apps.iter().take(4) {
-                    if !tile.preview.is_empty() {
-                        tile.preview.push(' ');
-                    }
-                    tile.preview
-                        .push(app.name.chars().next().unwrap_or_default());
+                    tile.preview_icons.push(FolderIcon {
+                        icon: icons.get(&app.id).cloned(),
+                        letter: match &app.icon {
+                            Icon::Text(text) => text.clone(),
+                            _ => crate::icons::first_letter(&app.name),
+                        },
+                    });
                 }
             }
         }
@@ -1592,7 +1914,17 @@ impl Tile {
             file: self.file,
             directory: self.directory,
             folder: self.folder,
-            preview: self.preview.into(),
+            preview_icons: std::rc::Rc::new(slint::VecModel::from(
+                self.preview_icons
+                    .into_iter()
+                    .map(|icon| FolderPreview {
+                        icon_present: icon.icon.is_some(),
+                        icon: icon.icon.map(slint::Image::from_rgba8).unwrap_or_default(),
+                        letter: icon.letter.into(),
+                    })
+                    .collect::<Vec<_>>(),
+            ))
+            .into(),
         }
     }
 }

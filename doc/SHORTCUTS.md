@@ -48,8 +48,10 @@ The launcher opens with Search anything focused. Ctrl+K focuses it again and Ent
 | Shift + wheel up | Next page |
 | Shift + wheel down | Previous page |
 | Click a page dot | Open that page |
+| Click + beside the page dots | Add and open a page |
 | Drag an empty area of the page left or right | Open the previous or next page |
 | Click Add page in Settings | Add an empty page |
+| Add, Edit or Delete a file or directory search path in Settings | Manage folders searched by Search anything |
 | Click the Settings icon | Open Settings |
 | Click Back in Settings | Return to the launcher |
 | Click the Close icon | Hide the launcher |

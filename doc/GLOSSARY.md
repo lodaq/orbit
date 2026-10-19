@@ -9,7 +9,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Orbit** | The application. |
 | **Launcher** | The fullscreen view with pages and the dock. Shown by `orbit toggle`. Hidden by launching an app, pressing Esc, toggling again, losing focus, or the Close button. It always opens with all folders closed. |
 | **Daemon** | The background process that starts at login and keeps Orbit ready, so showing the launcher is instant. |
-| **Settings** | The dark panel with Add page, Refresh installed apps and Back. Further settings remain deferred. The Back button or Esc returns to the launcher. |
+| **Settings** | The dark panel with Add page, Refresh installed apps, file search paths, directory search paths and Back. The Back button or Esc returns to the launcher. |
 | **Background** | The radial gradient behind the pages, from the supplied SVG reference. |
 | **Top bar** | The row at the top of the launcher: the Orbit logo and name on the left, the Settings and Close icons on the right. |
 
@@ -29,6 +29,13 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Take screenshot** | A System action that saves a screenshot in `~/Pictures/Orbit/`. |
 | **Sleep** | A System action that suspends the computer. |
 | **Log out** | A System action that ends the Hyprland session. |
+| **Volume up** | A System action that raises the default audio output volume. |
+| **Volume down** | A System action that lowers the default audio output volume. |
+| **Mute** | A System action that toggles the default audio output mute state. |
+| **Mute microphone** | A System action that toggles the default audio input mute state. |
+| **Play or pause** | A System action that toggles media playback. |
+| **Next track** | A System action that skips to the next media track. |
+| **Previous track** | A System action that returns to the previous media track. |
 | **Installed app** | An app whose launch is a reference to a program found on this computer. It stores no command. Added from the Installed apps list. The same installed app can be added more than once. |
 | **Installed apps list** | The saved index of programs found on this computer. Changed only by **Refresh installed apps**. Never updates by itself. |
 | **Refresh installed apps** | Scans the application entries installed on this computer and updates the Installed apps list. |
@@ -39,12 +46,14 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Choose file** | Opens the native file chooser and fills Path with the selected file. |
 | **Choose directory** | Opens the native file chooser and fills Path with the selected directory. |
 | **Path** | The editable location of a file or directory on this computer. |
+| **File search path** | A folder searched recursively for files by Search anything. |
+| **Directory search path** | A folder whose immediate directories appear in Search anything. |
 | **Folder** | Holds apps. Opens like an iOS folder. Cannot contain other folders. Its tile shows a small preview of its apps. |
 | **Page** | One screen of items, like a phone home screen page. Pages have no names. Maximum 9. An empty page is deleted when you leave it, unless it is the only one. |
 | **Page swipe** | Dragging an empty area of a page left or right to open the previous or next page. |
 | **Grid** | The rows and columns of tiles on a page or inside an open folder. |
 | **Tile** | The rounded square that shows one item (an app, website, file, directory or folder) or the Add tile. |
-| **Page dots** | The row of dots that shows which page is open. |
+| **Page dots** | The row of dots that shows which page is open, with a + control to add a page. |
 | **Add tile** | The "+" tile at the end of a page. Opens the Add item sheet. |
 
 ## The dock
@@ -81,7 +90,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Stepper** | A pair of minus and plus buttons that change a number, such as the font size in Settings. |
 | **Focus ring** | The outline drawn around the item the keyboard is on. |
 | **Tooltip** | The name shown when you hover or focus a dock icon. |
-| **Filter box** | The small text field at the top of the Icon picker and of the Installed apps list. It narrows the list as you type. The separate Search anything field searches page items. |
+| **Filter box** | The small text field at the top of the Icon picker and of the Installed apps list. It narrows the list as you type. Search anything searches page items, System actions, the cached Installed apps list and configured file and directory search paths. |
 | **Banner** | A short inline error, for example when a launch fails. The launcher stays open. |
 
 ## Keys and mouse
@@ -112,9 +121,9 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | Term | Meaning |
 |---|---|
-| **Search anything** | Searches saved page items by name across pages. Ctrl+K focuses the field. |
+| **Search anything** | Searches saved page items, System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Ctrl+K focuses the field. |
 | **No items found** | Empty search results. |
-| **Add page** | Creates an empty page from Settings. |
+| **Add page** | Creates an empty page from Settings or the + beside the page dots. |
 | **Switch pages** | Footer hint for Left and Right. |
 | **Back to desktop** | Footer hint for Esc. |
 

@@ -7,6 +7,10 @@ pub struct Config {
     pub pages: Vec<Page>,
     #[serde(default)]
     pub pinned: Vec<String>,
+    #[serde(default)]
+    pub file_search_paths: Vec<String>,
+    #[serde(default)]
+    pub directory_search_paths: Vec<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -74,6 +78,13 @@ pub enum SystemAction {
     Screenshot,
     Sleep,
     LogOut,
+    VolumeUp,
+    VolumeDown,
+    Mute,
+    MuteMicrophone,
+    PlayPause,
+    NextTrack,
+    PreviousTrack,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -113,6 +124,8 @@ impl Default for Config {
             version: 1,
             pages: vec![Page { items: Vec::new() }],
             pinned: Vec::new(),
+            file_search_paths: Vec::new(),
+            directory_search_paths: Vec::new(),
         }
     }
 }

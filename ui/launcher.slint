@@ -3,6 +3,12 @@ import { AddOption, AddField } from "controls.slint";
 import "fonts/Inter.ttf";
 import { Button, LineEdit, Palette } from "std-widgets.slint";
 
+export struct FolderPreview {
+    icon: image,
+    icon-present: bool,
+    letter: string,
+}
+
 export struct AppTile {
     text-icon: bool,
     id: string,
@@ -25,7 +31,7 @@ export struct AppTile {
     file: bool,
     directory: bool,
     folder: bool,
-    preview: string,
+    preview-icons: [FolderPreview],
 }
 
 export struct InstalledAppTile {
@@ -34,6 +40,11 @@ export struct InstalledAppTile {
     letter: string,
     icon: image,
     icon-present: bool,
+}
+
+export struct ActionChoice {
+    id: string,
+    name: string,
 }
 
 component ItemIcon inherits Rectangle {
@@ -48,15 +59,39 @@ component ItemIcon inherits Rectangle {
             : dock && item.artwork == "command" ? @image-url("assets/dock-command.svg")
             : dock && item.artwork == "directory" ? @image-url("assets/dock-directory.svg")
             : dock && item.artwork == "browser" ? @image-url("assets/dock-browser.svg")
+            : item.artwork == "action" ? @image-url("assets/action.svg")
             : item.icon-present ? item.icon
             : item.website ? @image-url("assets/website.svg")
             : item.file ? @image-url("assets/file.svg")
             : item.directory ? @image-url("assets/directory.svg")
-            : item.folder ? @image-url("assets/folder.svg")
+            : item.folder ? @image-url("assets/folder-empty.svg")
             : @image-url("assets/letter.svg");
         image-fit: contain;
     }
-    if (item.app || item.text-icon) && !item.icon-present: Text { text: item.letter; color: #e0e5ff; font-size: parent.width * (item.text-icon ? 0.32 : 0.4); horizontal-alignment: center; vertical-alignment: center; }
+    if (item.app || item.text-icon) && !item.icon-present && item.artwork != "action": Text { text: item.letter; color: #e0e5ff; font-size: parent.width * (item.text-icon ? 0.32 : 0.4); horizontal-alignment: center; vertical-alignment: center; }
+    if item.folder && item.preview-icons.length == 0: Text {
+        text: "Empty"; color: #e0e5ff; font-size: parent.width * 0.16;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+    for index in item.preview-icons.length: Rectangle {
+        x: parent.width * (mod(index, 2) == 0 ? 0.16 : 0.55);
+        y: parent.height * (index < 2 ? 0.16 : 0.55);
+        width: parent.width * 0.29; height: self.width;
+        border-radius: self.width * 0.22; background: #8597dc;
+        if item.preview-icons[index].icon-present: Image {
+            width: parent.width; height: parent.height;
+            source: item.preview-icons[index].icon; image-fit: contain;
+        }
+        if !item.preview-icons[index].icon-present: Image {
+            width: parent.width; height: parent.height;
+            source: @image-url("assets/letter.svg"); image-fit: contain;
+        }
+        if !item.preview-icons[index].icon-present: Text {
+            text: item.preview-icons[index].letter; color: #eef1ff;
+            font-size: parent.width * 0.56;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+    }
 }
 
 component PageTile inherits Rectangle {
@@ -65,7 +100,7 @@ component PageTile inherits Rectangle {
     in property <bool> hovered;
     width: 128px;
     height: 128px;
-    background: hovered ? #ffffff0b : transparent;
+    background: hovered ? #ffffff16 : #51405f99;
     border-radius: 20px;
     border-width: 1px;
     border-color: index < items.length ? #a6b1ed33 : transparent;
@@ -128,9 +163,18 @@ export component Launcher inherits Window {
     in property <[AppTile]> dock-items;
     in property <[AppTile]> recent-items;
     in property <[AppTile]> search-results;
+    in property <[string]> file-search-paths;
+    in property <[string]> directory-search-paths;
     in-out property <string> search-text;
     private property <bool> settings;
+    private property <bool> search-path-editor;
+    private property <bool> search-path-directory;
+    private property <int> search-path-index: -1;
+    private property <string> search-path-draft;
     callback search(string);
+    callback save-search-path(bool, int, string);
+    callback delete-search-path(bool, int);
+    callback finish-search-path-save();
     callback open-result(int, int);
     callback open-dock-item(int, int, int);
     callback pin-item(int);
@@ -143,6 +187,7 @@ export component Launcher inherits Window {
     page-key(direction) => { if !root.sheet && !root.folder-open && root.search-text == "" && !root.settings && root.context-index < 0 && root.dock-context == "" { root.change-page(root.current-page + direction); } }
 
     in property <[InstalledAppTile]> installed-apps;
+    in property <[ActionChoice]> actions;
     in property <string> installed-status;
     in property <bool> installed-apps-loaded;
     in property <bool> installed-apps-match;
@@ -150,6 +195,7 @@ export component Launcher inherits Window {
     in property <string> folder-name;
     in-out property <int> folder-index: -1;
     in-out property <bool> folder-open;
+    private property <bool> folder-closing;
     in-out property <bool> busy;
     private property <bool> sheet;
     private property <bool> alert;
@@ -180,7 +226,7 @@ export component Launcher inherits Window {
     private property <length> context-y;
     private property <length> page-drag-offset;
     private property <bool> page-dragging;
-    private property <length> page-span: min(1152px, page.width) + 16px;
+    private property <length> page-span: page.width;
     private property <[AppTile]> transition-items;
     private property <[AppTile]> transition-incoming-items;
     private property <bool> transitioning;
@@ -205,7 +251,18 @@ export component Launcher inherits Window {
     private property <string> website-url-draft;
     private property <string> folder-name-draft;
     private property <bool> dragged;
+    private property <bool> drag-click;
     private property <int> drag-index: -1;
+    private property <AppTile> drag-item;
+    private property <int> drag-view-page: -1;
+    private property <[AppTile]> drag-view-items;
+    private property <int> drop-target: -1;
+    private property <length> drag-x;
+    private property <length> drag-y;
+    private property <bool> settling;
+    private property <AppTile> settling-item;
+    private property <length> settle-x;
+    private property <length> settle-y;
     private property <int> hover-index: -1;
     private property <bool> folder-ready;
     private property <int> drag-page: -1;
@@ -213,6 +270,13 @@ export component Launcher inherits Window {
     private property <bool> edge-ready;
     private property <bool> folder-dragged;
     private property <int> folder-drag-index: -1;
+    private property <int> folder-drop-target: -1;
+    private property <length> folder-drag-x;
+    private property <length> folder-drag-y;
+    private property <bool> folder-settling;
+    private property <AppTile> folder-settling-item;
+    private property <length> folder-settle-x;
+    private property <length> folder-settle-y;
     callback save-app(int, string, string, string);
     callback add-system-action(string);
     callback add-installed-app(string);
@@ -222,6 +286,7 @@ export component Launcher inherits Window {
     callback choose-path(bool);
     callback path-chosen(string);
     path-chosen(path) => { root.url-or-path = path; root.path-error = ""; }
+    finish-search-path-save => { root.search-path-editor = false; root.search-path-draft = ""; }
     callback save-path(int, string, bool, string);
     callback save-folder(int, string);
     callback cancel-add();
@@ -235,6 +300,7 @@ export component Launcher inherits Window {
     callback move-folder-app(int, int, int);
     callback reorder-folder-app(int, int, int);
     callback reset-launcher();
+    callback finish-drag();
     callback close-top-layer();
     animate page-drag-offset { duration: root.page-dragging ? 0ms : 100ms; easing: ease-out; }
     animate transition-progress { duration: root.transition-duration; easing: ease-out-sine; }
@@ -257,13 +323,83 @@ export component Launcher inherits Window {
     edge-timer := Timer {
         running: false;
         interval: 500ms;
-        triggered => { root.edge-ready = true; self.running = false; }
+        triggered => {
+            if root.edge-target == root.drag-page {
+                root.drag-view-page = -1;
+                root.page-drag-offset = 0px;
+            } else {
+                root.drag-view-page = root.edge-target;
+                root.drag-view-items = root.edge-target > root.drag-page ? root.next-items : root.previous-items;
+                root.page-drag-offset = root.edge-target > root.drag-page ? -root.page-span : root.page-span;
+            }
+            root.edge-ready = true;
+            self.running = false;
+        }
+    }
+    settle-timer := Timer {
+        running: false;
+        interval: 140ms;
+        triggered => { root.settling = false; self.running = false; }
+    }
+    folder-settle-timer := Timer {
+        running: false;
+        interval: 140ms;
+        triggered => { root.folder-settling = false; self.running = false; }
+    }
+    folder-close-timer := Timer {
+        running: false;
+        interval: 220ms;
+        triggered => { root.folder-closing = false; self.running = false; }
+    }
+    page-drop-timer := Timer {
+        running: false;
+        interval: 120ms;
+        triggered => { root.drag-view-page = -1; root.drag-view-items = []; self.running = false; }
+    }
+    function close-folder-view() {
+        root.folder-open = false;
+        root.folder-closing = true;
+        folder-close-timer.start();
+        root.close-folder();
+    }
+    function move-folder-out(x: length, y: length) {
+        let column = floor((x - grid.absolute-position.x) / grid.tile-size);
+        let row = floor((y - grid.absolute-position.y) / grid.tile-size);
+        let target = min(root.items.length, max(0, row * grid.columns + column));
+        root.folder-settling-item = root.folder-items[root.folder-drag-index];
+        root.folder-settling = true;
+        root.folder-settle-x = grid.absolute-position.x + mod(target, grid.columns) * grid.tile-size + (grid.tile-size - 64px) / 2;
+        root.folder-settle-y = grid.absolute-position.y + floor(target / grid.columns) * grid.tile-size + (grid.tile-size - 64px) / 2;
+        folder-settle-timer.start();
+        root.busy = true;
+        root.move-folder-app(root.folder-index, root.folder-drag-index, target);
+        root.folder-drag-index = -1;
+        root.folder-drop-target = -1;
+        root.close-folder-view();
     }
     page-focus := FocusScope { width: 0px; height: 0px; }
+    finish-drag => {
+        if root.drag-view-page >= 0 { page-drop-timer.start(); }
+        root.page-drag-offset = 0px;
+        root.drop-target = -1;
+    }
     reset-launcher => {
         if root.folder-open { root.close-folder(); }
         root.page-dragging = false;
         root.page-drag-offset = 0px;
+        root.drag-index = -1;
+        root.drag-view-page = -1;
+        root.drag-view-items = [];
+        page-drop-timer.stop();
+        root.drop-target = -1;
+        root.dragged = false;
+        root.drag-click = false;
+        root.settling = false;
+        settle-timer.stop();
+        root.folder-settling = false;
+        folder-settle-timer.stop();
+        root.folder-closing = false;
+        folder-close-timer.stop();
         root.transitioning = false;
         root.transition-items = [];
         root.transition-incoming-items = [];
@@ -271,6 +407,7 @@ export component Launcher inherits Window {
         page.content-x = 0px;
         root.search-text = "";
         root.settings = false;
+        root.search-path-editor = false;
         root.sheet = false;
         root.alert = false;
         root.picker = false;
@@ -299,7 +436,8 @@ export component Launcher inherits Window {
             page-focus.focus();
         }
         else if root.context-index >= 0 || root.dock-context != "" { root.context-index = -1; root.dock-context = ""; }
-        else if root.folder-open { root.folder-open = false; root.close-folder(); }
+        else if root.folder-open { root.close-folder-view(); }
+        else if root.settings && root.search-path-editor { root.search-path-editor = false; }
         else if root.settings { root.settings = false; }
         else if root.search-text != "" { root.search-text = ""; page-focus.focus(); }
         else { root.hide-launcher(); }
@@ -525,7 +663,7 @@ export component Launcher inherits Window {
         top-button := TouchArea { mouse-cursor: pointer; clicked => { if index == 0 { root.settings = !root.settings; } else { root.hide-launcher(); } } }
     }
     VerticalLayout {
-        padding-left: 48px; padding-right: 48px; padding-top: 166px; padding-bottom: 134px;
+        padding-left: 0px; padding-right: 0px; padding-top: 166px; padding-bottom: 134px;
         spacing: 0px;
         if root.banner != "": Text {
             text: root.banner;
@@ -572,55 +710,70 @@ export component Launcher inherits Window {
                     scroll-event(event) => { return root.scroll-page(event); }
                 }
             preview := Rectangle {
-                visible: root.transitioning
-                    || (root.page-drag-offset < 0px && root.current-page < root.page-count - 1)
-                    || (root.page-drag-offset > 0px && root.current-page > 0);
+                visible: root.transitioning || root.page-count > 1 || root.drag-view-page >= 0;
+                opacity: root.transitioning || root.drag-view-page >= 0 ? 1 : min(1, abs(root.page-drag-offset) / 96px);
                 x: (page.width - self.width) / 2 + (root.transitioning
                     ? root.transition-start + (-root.transition-direction * root.page-span - root.transition-start) * root.transition-progress
                     : root.page-drag-offset + (root.page-drag-offset < 0px ? root.page-span : -root.page-span));
                 y: 0px;
-                width: min(1152px, page.width);
-                property <[AppTile]> preview-items: root.transitioning ? root.transition-items
+                width: page.width;
+                property <[AppTile]> preview-items: root.drag-view-page >= 0 ? root.drag-view-items : root.transitioning ? root.transition-items
                     : (root.page-drag-offset < 0px ? root.next-items : root.previous-items);
                 property <int> columns: max(1, floor(self.width / 144px));
                 property <length> tile-size: self.width / self.columns;
-                height: ceil((self.preview-items.length + 1) / self.columns) * self.tile-size;
+                height: max(page.height, ceil((self.preview-items.length + (root.drag-view-page >= 0 ? 2 : 1)) / self.columns) * self.tile-size);
                 border-width: 1px;
                 border-color: #a6b1ed33;
                 border-radius: 24px;
+                background: #513b6888;
                 for index in preview.preview-items.length + 1: PageTile {
-                    x: mod(index, preview.columns) * preview.tile-size + (preview.tile-size - 128px) / 2;
-                    y: floor(index / preview.columns) * preview.tile-size + (preview.tile-size - 128px) / 2;
+                    property <int> position: root.dragged && root.drag-view-page >= 0 && root.drop-target >= 0 && index >= root.drop-target ? index + 1 : index;
+                    x: mod(self.position, preview.columns) * preview.tile-size + (preview.tile-size - 128px) / 2;
+                    y: floor(self.position / preview.columns) * preview.tile-size + (preview.tile-size - 128px) / 2;
                     items: preview.preview-items;
                     index: index;
+                    animate x { duration: 120ms; easing: ease-out; }
+                    animate y { duration: 120ms; easing: ease-out; }
                 }
             }
             grid := Rectangle {
                 x: (page.width - self.width) / 2 + (root.transitioning
                     ? root.transition-start + (-root.transition-direction * root.page-span - root.transition-start) * root.transition-progress + root.transition-direction * root.page-span
-                    : root.page-drag-offset);
+                    : root.dragged && root.drag-view-page >= 0 ? 0px : root.page-drag-offset);
                 y: 0px;
-                width: min(1152px, page.width);
+                width: page.width;
                 property <[AppTile]> display-items: root.transitioning ? root.transition-incoming-items : root.items;
                 property <int> columns: max(1, floor(self.width / 144px));
                 property <length> tile-size: self.width / self.columns;
-                height: ceil((self.display-items.length + 1) / self.columns) * self.tile-size;
+                height: max(page.height, ceil((self.display-items.length + 1) / self.columns) * self.tile-size);
                 border-width: 1px;
-                border-color: #a6b1ed33;
+                border-color: root.dragged && root.drag-view-page >= 0 ? transparent : #a6b1ed33;
                 border-radius: 24px;
+                background: root.dragged && root.drag-view-page >= 0 ? transparent : #324d6b88;
                 for index in grid.display-items.length + 1: Rectangle {
-                    x: mod(index, grid.columns) * grid.tile-size + (grid.tile-size - 128px) / 2;
-                    y: floor(index / grid.columns) * grid.tile-size + (grid.tile-size - 128px) / 2;
+                    property <int> position: root.dragged && index < root.items.length && index != root.drag-index && root.drop-target >= 0
+                        ? (root.drag-index < root.drop-target && index > root.drag-index && index <= root.drop-target ? index - 1
+                        : root.drag-index > root.drop-target && index >= root.drop-target && index < root.drag-index ? index + 1 : index)
+                        : index;
+                    x: mod(self.position, grid.columns) * grid.tile-size + (grid.tile-size - 128px) / 2;
+                    y: floor(self.position / grid.columns) * grid.tile-size + (grid.tile-size - 128px) / 2;
                     width: 128px; height: 128px;
-                    PageTile { items: grid.display-items; index: index; hovered: tile.has-hover; }
+                    animate x { duration: 120ms; easing: ease-out; }
+                    animate y { duration: 120ms; easing: ease-out; }
+                    PageTile {
+                        opacity: root.dragged && (index == root.drag-index || root.drag-view-page >= 0) ? 0 : 1;
+                        items: grid.display-items; index: index;
+                        hovered: tile.has-hover || (root.dragged && index == root.hover-index);
+                        background: root.dragged && index == root.hover-index && root.folder-ready ? #a8b3ff55 : self.hovered ? #ffffff16 : #51405f99;
+                    }
                     tile := TouchArea {
                         scroll-event(event) => { return root.scroll-page(event); }
                         enabled: !root.busy && !root.transitioning && !root.picker && !root.alert;
                         mouse-cursor: pointer;
                         clicked => {
-                            if root.dragged { root.dragged = false; return; }
+                            if root.drag-click { root.drag-click = false; return; }
                             if index == root.items.length { root.add-item("App"); }
-                            else if root.items[index].folder { root.folder-index = index; root.open-folder(index); root.folder-open = true; }
+                            else if root.items[index].folder { root.folder-index = index; root.folder-closing = false; root.open-folder(index); }
                             else if root.items[index].app || root.items[index].website || root.items[index].file || root.items[index].directory {
                                 root.busy = true;
                                 root.open-item(index);
@@ -630,7 +783,15 @@ export component Launcher inherits Window {
                             if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                                 root.drag-index = index;
                                 root.drag-page = root.current-page;
+                                if index < root.items.length { root.drag-item = root.items[index]; }
                                 root.dragged = false;
+                                root.drag-click = false;
+                                root.drag-view-page = -1;
+                                root.drag-view-items = [];
+                                page-drop-timer.stop();
+                                root.settling = false;
+                                settle-timer.stop();
+                                root.drop-target = -1;
                                 root.hover-index = -1;
                                 root.folder-ready = false;
                                 folder-timer.stop();
@@ -643,13 +804,17 @@ export component Launcher inherits Window {
                                 root.dragged = true;
                                 let x = self.absolute-position.x + self.mouse-x;
                                 let y = self.absolute-position.y + self.mouse-y;
+                                root.drag-x = x - 64px;
+                                root.drag-y = y - 64px;
                                 if y < page.absolute-position.y + 24px {
                                     page.content-y = max(0px, page.content-y - 12px);
                                 } else if y > page.absolute-position.y + page.height - 24px {
                                     page.content-y = min(max(0px, page.content-height - page.height), page.content-y + 12px);
                                 }
-                                let edge = x < 32px ? root.current-page - 1 : (x > root.width - 32px ? root.current-page + 1 : -1);
-                                if edge >= 0 && (edge < root.page-count || (edge == root.page-count && root.page-count < 9)) {
+                                let shown-page = root.drag-view-page >= 0 ? root.drag-view-page : root.current-page;
+                                let edge = x < 32px ? shown-page - 1 : (x > root.width - 32px ? shown-page + 1 : -1);
+                                if edge >= 0 && abs(edge - root.drag-page) <= 1
+                                    && (edge < root.page-count || (edge == root.page-count && root.page-count < 9)) {
                                     if root.edge-target != edge {
                                         root.edge-target = edge;
                                         root.edge-ready = false;
@@ -660,10 +825,14 @@ export component Launcher inherits Window {
                                     root.edge-ready = false;
                                     edge-timer.stop();
                                 }
-                                let column = floor((x - grid.absolute-position.x) / (grid.width / grid.columns));
-                                let row = floor((y - grid.absolute-position.y) / grid.tile-size);
+                                let surface-x = root.drag-view-page >= 0 ? preview.absolute-position.x : grid.absolute-position.x;
+                                let surface-y = root.drag-view-page >= 0 ? preview.absolute-position.y : grid.absolute-position.y;
+                                let column = floor((x - surface-x) / grid.tile-size);
+                                let row = floor((y - surface-y) / grid.tile-size);
                                 let target = max(0, row * grid.columns + column);
-                                if target < root.items.length && target != root.drag-index && root.items[target].app {
+                                root.drop-target = min(root.drag-view-page >= 0 ? root.drag-view-items.length : root.items.length, target);
+                                if root.drag-view-page < 0 && root.drag-index < root.items.length && root.items[root.drag-index].app
+                                    && target < root.items.length && target != root.drag-index && root.items[target].app {
                                     if root.hover-index != target {
                                         root.hover-index = target;
                                         root.folder-ready = false;
@@ -676,28 +845,29 @@ export component Launcher inherits Window {
                                 }
                             }
                             if event.kind == PointerEventKind.up && root.drag-index >= 0 {
-                                if root.dragged && index < root.items.length {
+                                if root.dragged && root.drag-index < root.items.length {
                                     root.busy = true;
                                     let x = self.absolute-position.x + self.mouse-x;
                                     let y = self.absolute-position.y + self.mouse-y;
-                                    let destination = root.edge-ready ? root.edge-target : root.current-page;
-                                    let column = floor((x - grid.absolute-position.x) / (grid.width / grid.columns));
-                                    let row = floor((y - grid.absolute-position.y) / grid.tile-size);
-                                    let target = min(root.items.length, max(0, row * grid.columns + column));
-                                    root.drop-item(root.drag-index, target, root.drag-page, destination, root.folder-ready && root.hover-index == target);
-                                } else if root.dragged && index == root.items.length {
-                                    root.busy = true;
-                                    let x = self.absolute-position.x + self.mouse-x;
-                                    let y = self.absolute-position.y + self.mouse-y;
-                                    let destination = root.edge-ready ? root.edge-target : root.current-page;
-                                    let column = floor((x - grid.absolute-position.x) / (grid.width / grid.columns));
-                                    let row = floor((y - grid.absolute-position.y) / grid.tile-size);
-                                    let target = min(root.items.length, max(0, row * grid.columns + column));
-                                    root.drop-item(root.drag-index, target, root.drag-page, destination, root.folder-ready && root.hover-index == target);
+                                    let destination = root.drag-view-page >= 0 ? root.drag-view-page : root.current-page;
+                                    let surface-x = root.drag-view-page >= 0 ? preview.absolute-position.x : grid.absolute-position.x;
+                                    let surface-y = root.drag-view-page >= 0 ? preview.absolute-position.y : grid.absolute-position.y;
+                                    let column = floor((x - surface-x) / grid.tile-size);
+                                    let row = floor((y - surface-y) / grid.tile-size);
+                                    let target = min(root.drag-view-page >= 0 ? root.drag-view-items.length : root.items.length, max(0, row * grid.columns + column));
+                                    root.settling-item = root.drag-item;
+                                    root.settling = true;
+                                    root.settle-x = surface-x + mod(target, grid.columns) * grid.tile-size + (grid.tile-size - 128px) / 2;
+                                    root.settle-y = surface-y + floor(target / grid.columns) * grid.tile-size + (grid.tile-size - 128px) / 2;
+                                    settle-timer.start();
+                                    root.drop-item(root.drag-index, target, root.drag-page, destination, root.drag-view-page < 0 && root.folder-ready && root.hover-index == target);
                                 }
                                 folder-timer.stop();
                                 edge-timer.stop();
+                                root.drag-click = root.dragged;
+                                root.dragged = false;
                                 root.drag-index = -1;
+                                root.drop-target = -1;
                             }
                             if event.button == PointerEventButton.right && event.kind == PointerEventKind.down
                                 && index < root.items.length {
@@ -713,13 +883,27 @@ export component Launcher inherits Window {
             }
         }
     }
+    if (root.dragged && root.drag-index >= 0 && root.drag-index < root.items.length) || root.settling: Rectangle {
+        x: root.dragged ? root.drag-x : root.settle-x;
+        y: root.dragged ? root.drag-y : root.settle-y;
+        width: 128px; height: 128px;
+        opacity: 0.88;
+        animate x { duration: 120ms; easing: ease-out; }
+        animate y { duration: 120ms; easing: ease-out; }
+        PageTile { items: [root.dragged ? root.drag-item : root.settling-item]; index: 0; hovered: true; }
+    }
     HorizontalLayout {
         x: (root.width - self.width) / 2; y: root.height - 158px;
-        width: root.page-count * 16px; height: 24px; spacing: 0px;
+        width: (root.page-count + (root.page-count < 9 ? 1 : 0)) * 16px; height: 24px; spacing: 0px;
         for index in root.page-count: Rectangle {
             width: 16px; height: 24px;
             Rectangle { x: 5px; y: 9px; width: index == root.current-page ? 7px : 5px; height: self.width; border-radius: self.width / 2; background: index == root.current-page ? #a8b3ff : #657097; }
             TouchArea { mouse-cursor: pointer; clicked => { root.change-page(index); } }
+        }
+        if root.page-count < 9: Rectangle {
+            width: 16px; height: 24px;
+            Text { text: "+"; width: parent.width; height: parent.height; color: #a8b3ff; font-size: 17px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { mouse-cursor: pointer; enabled: !root.busy; clicked => { root.busy = true; root.add-page(); } }
         }
     }
     dock := Rectangle {
@@ -754,27 +938,82 @@ export component Launcher inherits Window {
     Image { x: root.width - 160px; y: root.height - 21px; width: 112px; height: 13px; source: @image-url("assets/close-hint.svg"); }
     if root.search-text != "" && !root.settings: Flickable {
         x: (root.width - self.width) / 2; y: 166px; width: min(1316.572px, root.width - 96px); height: root.height - 340px;
-        content-height: max(self.height, ceil(root.search-results.length / max(1, floor(self.width / 160px))) * 132px);
+        content-height: max(self.height, ceil(root.search-results.length / max(1, floor(self.width / 160px))) * 148px);
         for item[index] in root.search-results: Rectangle {
             property <int> columns: max(1, floor(parent.width / 160px));
-            x: mod(index, self.columns) * (parent.width / self.columns); y: floor(index / self.columns) * 132px;
-            width: parent.width / self.columns; height: 124px;
+            x: mod(index, self.columns) * (parent.width / self.columns); y: floor(index / self.columns) * 148px;
+            width: parent.width / self.columns; height: 140px;
+            background: index == 0 ? #a8b3ff26 : transparent;
+            border-width: index == 0 ? 1px : 0px;
+            border-color: #a8b3ff66;
+            border-radius: 18px;
             ItemIcon { x: (parent.width - 80px) / 2; y: 0px; width: 80px; height: 80px; item: item; }
-            Text { y: 98px; height: 24px; width: parent.width; text: item.name; color: #e0e3f4; horizontal-alignment: center; overflow: elide; }
+            Text { y: 88px; height: 24px; width: parent.width; text: item.name; color: #e0e3f4; horizontal-alignment: center; overflow: elide; }
+            if item.page < 0: Text {
+                y: 115px; width: parent.width; height: 18px;
+                text: item.page == -1 ? "Actions" : item.page == -2 ? "Installed apps" : item.page == -3 ? "File" : "Directory";
+                color: #a7adc7; font-size: 11px; horizontal-alignment: center;
+            }
             TouchArea { mouse-cursor: pointer; enabled: !root.busy; clicked => { root.busy = true; root.open-result(item.page, item.index); } }
         }
         if root.search-results.length == 0: Text { text: "No items found"; color: #a7adc7; }
     }
     if root.settings: Rectangle {
-        x: (root.width - self.width) / 2; y: 128px; width: min(600px, root.width - 96px); height: 300px;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        width: min(760px, root.width - 80px); height: min(840px, root.height - 80px);
         background: #20243b; border-color: #a6b1ed26; border-width: 1px; border-radius: 20px;
         VerticalLayout {
-            padding: 28px; spacing: 16px;
+            padding: 24px; spacing: 10px;
             Text { text: "Settings"; font-size: 22px; color: #e0e3f4; }
-            AddOption { width: 176px; label: "Add page"; enabled: root.page-count < 9 && !root.busy; clicked => { root.busy = true; root.add-page(); root.settings = false; } }
-            AddOption { width: 176px; label: "Refresh installed apps"; enabled: !root.busy; clicked => { root.busy = true; root.refresh-installed-apps(); } }
+            HorizontalLayout {
+                spacing: 8px;
+                AddOption { label: "Add page"; option-width: 132px; enabled: root.page-count < 9 && !root.busy; clicked => { root.busy = true; root.add-page(); root.settings = false; } }
+                AddOption { label: "Refresh installed apps"; option-width: 190px; enabled: !root.busy; clicked => { root.busy = true; root.refresh-installed-apps(); } }
+            }
             Text { text: root.installed-status; color: #a7adc7; }
-            AddOption { width: 176px; label: "Back"; clicked => { root.settings = false; } }
+            Flickable {
+                vertical-stretch: 1; min-height: 120px;
+                content-width: self.width;
+                content-height: settings-path-list.preferred-height;
+                settings-path-list := VerticalLayout {
+                    width: parent.width; height: self.preferred-height; spacing: 8px;
+                    Text { text: "File search paths"; color: #e0e3f4; font-size: 15px; font-weight: 600; }
+                    for path[index] in root.file-search-paths: HorizontalLayout {
+                        height: 40px; spacing: 8px;
+                        Text { text: path; color: #a7adc7; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                        AddOption { label: "Edit"; option-width: 64px; enabled: !root.busy; clicked => { root.search-path-directory = false; root.search-path-index = index; root.search-path-draft = path; root.search-path-editor = true; } }
+                        AddOption { label: "Delete"; option-width: 72px; destructive: true; enabled: !root.busy; clicked => { root.busy = true; root.delete-search-path(false, index); } }
+                    }
+                    AddOption { label: "Add file path"; option-width: 144px; enabled: !root.busy; clicked => { root.search-path-directory = false; root.search-path-index = -1; root.search-path-draft = ""; root.search-path-editor = true; } }
+                    Text { text: "Directory search paths"; color: #e0e3f4; font-size: 15px; font-weight: 600; }
+                    for path[index] in root.directory-search-paths: HorizontalLayout {
+                        height: 40px; spacing: 8px;
+                        Text { text: path; color: #a7adc7; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                        AddOption { label: "Edit"; option-width: 64px; enabled: !root.busy; clicked => { root.search-path-directory = true; root.search-path-index = index; root.search-path-draft = path; root.search-path-editor = true; } }
+                        AddOption { label: "Delete"; option-width: 72px; destructive: true; enabled: !root.busy; clicked => { root.busy = true; root.delete-search-path(true, index); } }
+                    }
+                    AddOption { label: "Add directory path"; option-width: 176px; enabled: !root.busy; clicked => { root.search-path-directory = true; root.search-path-index = -1; root.search-path-draft = ""; root.search-path-editor = true; } }
+                }
+            }
+            if root.search-path-editor: Rectangle {
+                height: 116px; border-radius: 12px; background: #ffffff08;
+                VerticalLayout {
+                    padding: 12px; spacing: 8px;
+                    AddField {
+                        label: root.search-path-directory ? "Directory search path" : "File search path";
+                        placeholder: "/home/user/Documents"; text <=> root.search-path-draft;
+                        accepted => { root.busy = true; root.save-search-path(root.search-path-directory, root.search-path-index, root.search-path-draft); }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        AddOption { label: "Cancel"; option-width: 80px; enabled: !root.busy; clicked => { root.search-path-editor = false; } }
+                        AddOption { label: "Save"; option-width: 80px; primary: true; enabled: !root.busy; clicked => { root.busy = true; root.save-search-path(root.search-path-directory, root.search-path-index, root.search-path-draft); } }
+                    }
+                }
+            }
+            HorizontalLayout {
+                AddOption { label: "Back"; option-width: 96px; clicked => { root.search-path-editor = false; root.settings = false; } }
+            }
         }
     }
 
@@ -809,6 +1048,8 @@ export component Launcher inherits Window {
     sheet-backdrop := Rectangle {
         width: root.width; height: root.height;
         visible: root.sheet;
+        opacity: root.sheet ? 1 : 0;
+        animate opacity { duration: 120ms; easing: ease-out; }
         background: Theme.backdrop;
         TouchArea { enabled: !root.picker && !root.alert; clicked => { root.close-top-layer(); } }
         Rectangle {
@@ -873,10 +1114,11 @@ export component Launcher inherits Window {
                             width: root.sheet-content-width;
                             alignment: start;
                             spacing: 8px;
-                            AddOption { label: "Lock screen"; trailing: "+"; full-width: true; available-width: root.sheet-content-width; enabled: !root.busy; clicked => { root.busy = true; root.sheet-operation = "adding"; root.sheet-status = "Adding…"; root.add-system-action("lock-screen"); } }
-                            AddOption { label: "Take screenshot"; trailing: "+"; full-width: true; available-width: root.sheet-content-width; enabled: !root.busy; clicked => { root.busy = true; root.sheet-operation = "adding"; root.sheet-status = "Adding…"; root.add-system-action("screenshot"); } }
-                            AddOption { label: "Sleep"; trailing: "+"; full-width: true; available-width: root.sheet-content-width; enabled: !root.busy; clicked => { root.busy = true; root.sheet-operation = "adding"; root.sheet-status = "Adding…"; root.add-system-action("sleep"); } }
-                            AddOption { label: "Log out"; trailing: "+"; full-width: true; available-width: root.sheet-content-width; enabled: !root.busy; clicked => { root.busy = true; root.sheet-operation = "adding"; root.sheet-status = "Adding…"; root.add-system-action("log-out"); } }
+                            for action in root.actions: AddOption {
+                                label: action.name; trailing: "+"; full-width: true;
+                                available-width: root.sheet-content-width; enabled: !root.busy;
+                                clicked => { root.busy = true; root.sheet-operation = "adding"; root.sheet-status = "Adding…"; root.add-system-action(action.id); }
+                            }
                         }
                         if root.item-type == "App" && root.editing < 0 && root.app-source == "Installed apps": VerticalLayout {
                             width: root.sheet-content-width;
@@ -1135,18 +1377,28 @@ export component Launcher inherits Window {
             }
         }
     }
-    if root.folder-open: Rectangle {
+    folder-backdrop := Rectangle {
         width: root.width; height: root.height;
+        visible: root.folder-open || root.folder-closing;
+        opacity: root.folder-open ? 1 : 0;
+        animate opacity { duration: 220ms; easing: ease-out; }
         background: #00000070;
-        TouchArea { clicked => { root.folder-open = false; root.close-folder(); } }
+        TouchArea { enabled: root.folder-open; clicked => { root.close-folder-view(); } }
         folder-panel := Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(560px, parent.width - 32px);
-            height: min(560px, parent.height - 32px);
+            x: root.folder-open ? (parent.width - self.width) / 2 : grid.absolute-position.x + mod(root.folder-index, grid.columns) * grid.tile-size;
+            y: root.folder-open ? (parent.height - self.height) / 2 : grid.absolute-position.y + floor(root.folder-index / grid.columns) * grid.tile-size;
+            width: root.folder-open ? min(560px, parent.width - 32px) : 128px;
+            height: root.folder-open ? min(560px, parent.height - 32px) : 128px;
+            animate x { duration: 220ms; easing: ease-out; }
+            animate y { duration: 220ms; easing: ease-out; }
+            animate width { duration: 220ms; easing: ease-out; }
+            animate height { duration: 220ms; easing: ease-out; }
             background: #f5f5f7; border-radius: 24px;
-            TouchArea { }
+            TouchArea { enabled: root.folder-open; }
             VerticalLayout {
+                visible: root.folder-open || root.folder-closing;
+                opacity: root.folder-open ? 1 : 0;
+                animate opacity { duration: 150ms; easing: ease-out; }
                 padding: 24px; spacing: 16px;
                 Text { text: root.folder-name; color: #202020; font-size: 22px; font-weight: 600; }
                 Flickable {
@@ -1157,9 +1409,16 @@ export component Launcher inherits Window {
                         property <int> columns: max(1, floor(self.width / 112px));
                         height: ceil(root.folder-items.length / self.columns) * 112px;
                         for index in root.folder-items.length: Rectangle {
-                            x: mod(index, folder-grid.columns) * (folder-grid.width / folder-grid.columns);
-                            y: floor(index / folder-grid.columns) * 112px;
+                            property <int> position: root.folder-dragged && root.folder-drop-target >= 0 && index != root.folder-drag-index
+                                ? (root.folder-drag-index < root.folder-drop-target && index > root.folder-drag-index && index <= root.folder-drop-target ? index - 1
+                                : root.folder-drag-index > root.folder-drop-target && index >= root.folder-drop-target && index < root.folder-drag-index ? index + 1 : index)
+                                : index;
+                            x: mod(self.position, folder-grid.columns) * (folder-grid.width / folder-grid.columns);
+                            y: floor(self.position / folder-grid.columns) * 112px;
                             width: folder-grid.width / folder-grid.columns; height: 108px;
+                            opacity: root.folder-dragged && index == root.folder-drag-index ? 0 : 1;
+                            animate x { duration: 120ms; easing: ease-out; }
+                            animate y { duration: 120ms; easing: ease-out; }
                             Rectangle {
                                 x: (parent.width - self.width) / 2; width: 64px; height: 64px;
                                 border-radius: 14px; background: white;
@@ -1171,6 +1430,7 @@ export component Launcher inherits Window {
                             }
                             Text { y: 70px; width: parent.width; text: root.folder-items[index].name; color: #202020; font-size: 13px; horizontal-alignment: center; overflow: elide; }
                             TouchArea {
+                                enabled: root.folder-open;
                                 mouse-cursor: pointer;
                                 clicked => {
                                     if root.folder-dragged { root.folder-dragged = false; return; }
@@ -1181,10 +1441,23 @@ export component Launcher inherits Window {
                                     if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                                         root.folder-drag-index = index;
                                         root.folder-dragged = false;
+                                        root.folder-drop-target = -1;
+                                        root.folder-settling = false;
+                                        folder-settle-timer.stop();
                                     }
                                     if event.kind == PointerEventKind.move && root.folder-drag-index >= 0
                                         && (abs(self.mouse-x - self.pressed-x) > 8px || abs(self.mouse-y - self.pressed-y) > 8px) {
                                         root.folder-dragged = true;
+                                        let x = self.absolute-position.x + self.mouse-x;
+                                        let y = self.absolute-position.y + self.mouse-y;
+                                        root.folder-drag-x = x - 32px;
+                                        root.folder-drag-y = y - 32px;
+                                        let outside = x < folder-panel.absolute-position.x || x > folder-panel.absolute-position.x + folder-panel.width
+                                            || y < folder-panel.absolute-position.y || y > folder-panel.absolute-position.y + folder-panel.height;
+                                        if outside { root.move-folder-out(x, y); return; }
+                                        let column = floor((x - folder-grid.absolute-position.x) / (folder-grid.width / folder-grid.columns));
+                                        let row = floor((y - folder-grid.absolute-position.y) / 112px);
+                                        root.folder-drop-target = min(root.folder-items.length - 1, max(0, row * folder-grid.columns + column));
                                     }
                                     if event.kind == PointerEventKind.up && root.folder-drag-index >= 0 {
                                         let x = self.absolute-position.x + self.mouse-x;
@@ -1192,20 +1465,21 @@ export component Launcher inherits Window {
                                         let outside = x < folder-panel.absolute-position.x || x > folder-panel.absolute-position.x + folder-panel.width
                                             || y < folder-panel.absolute-position.y || y > folder-panel.absolute-position.y + folder-panel.height;
                                         if root.folder-dragged && outside {
-                                            let column = floor((x - grid.absolute-position.x) / (grid.width / grid.columns));
-                                            let row = floor((y - grid.absolute-position.y) / 132px);
-                                            let target = min(root.items.length, max(0, row * grid.columns + column));
-                                            root.busy = true;
-                                            root.move-folder-app(root.folder-index, root.folder-drag-index, target);
-                                            root.folder-open = false;
+                                            root.move-folder-out(x, y);
                                         } else if root.folder-dragged {
                                             let column = floor((x - folder-grid.absolute-position.x) / (folder-grid.width / folder-grid.columns));
                                             let row = floor((y - folder-grid.absolute-position.y) / 112px);
                                             let target = min(root.folder-items.length - 1, max(0, row * folder-grid.columns + column));
+                                            root.folder-settling-item = root.folder-items[root.folder-drag-index];
+                                            root.folder-settling = true;
+                                            root.folder-settle-x = folder-grid.absolute-position.x + mod(target, folder-grid.columns) * (folder-grid.width / folder-grid.columns) + ((folder-grid.width / folder-grid.columns) - 64px) / 2;
+                                            root.folder-settle-y = folder-grid.absolute-position.y + floor(target / folder-grid.columns) * 112px;
+                                            folder-settle-timer.start();
                                             root.busy = true;
                                             root.reorder-folder-app(root.folder-index, root.folder-drag-index, target);
                                         }
                                         root.folder-drag-index = -1;
+                                        root.folder-drop-target = -1;
                                     }
                                 }
                             }
@@ -1215,9 +1489,19 @@ export component Launcher inherits Window {
             }
         }
     }
+    if (root.folder-open && root.folder-dragged && root.folder-drag-index >= 0 && root.folder-drag-index < root.folder-items.length) || root.folder-settling: Rectangle {
+        x: root.folder-drag-index >= 0 ? root.folder-drag-x : root.folder-settle-x;
+        y: root.folder-drag-index >= 0 ? root.folder-drag-y : root.folder-settle-y;
+        width: 64px; height: 64px; opacity: 0.88;
+        animate x { duration: 120ms; easing: ease-out; }
+        animate y { duration: 120ms; easing: ease-out; }
+        ItemIcon { width: 64px; height: 64px; item: root.folder-drag-index >= 0 ? root.folder-items[root.folder-drag-index] : root.folder-settling-item; }
+    }
     alert-backdrop := Rectangle {
         width: root.width; height: root.height;
         visible: root.alert;
+        opacity: root.alert ? 1 : 0;
+        animate opacity { duration: 120ms; easing: ease-out; }
         background: #00000070;
         TouchArea { enabled: !root.busy; clicked => { root.alert = false; } }
         Rectangle {

@@ -942,6 +942,21 @@ pub fn launch_action(action: &SystemAction) -> Result<(), Box<dyn std::error::Er
         }
         SystemAction::Sleep => detached(Command::new("systemctl").arg("suspend"))?,
         SystemAction::LogOut => detached(Command::new("hyprctl").args(["dispatch", "exit"]))?,
+        SystemAction::VolumeUp => {
+            detached(Command::new("wpctl").args(["set-volume", "@DEFAULT_AUDIO_SINK@", "5%+"]))?
+        }
+        SystemAction::VolumeDown => {
+            detached(Command::new("wpctl").args(["set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]))?
+        }
+        SystemAction::Mute => {
+            detached(Command::new("wpctl").args(["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]))?
+        }
+        SystemAction::MuteMicrophone => {
+            detached(Command::new("wpctl").args(["set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"]))?
+        }
+        SystemAction::PlayPause => detached(Command::new("playerctl").arg("play-pause"))?,
+        SystemAction::NextTrack => detached(Command::new("playerctl").arg("next"))?,
+        SystemAction::PreviousTrack => detached(Command::new("playerctl").arg("previous"))?,
     }
     Ok(())
 }
