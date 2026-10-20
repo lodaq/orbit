@@ -1,19 +1,25 @@
+# V2 authority
+
+The user approved `Orbit_Desktop_Launcher_UX_Spec_v2.md` on 2026-10-20 as authoritative wherever it conflicts with this document. Windows and Arch Linux, spatial grids, widgets, exclusive dock ownership, new UI terms, and the complete v2 build sequence are authorized. Existing visual artwork and nonconflicting performance and coding rules remain in force. The older build-step restriction does not apply to v2.
+
 # Orbit shortcuts
 
-Orbit is made for the mouse. Keys are few and fixed: they are not editable and there is no Shortcuts section in Settings. Ctrl+K focuses Search anything; there are no bare letter or digit shortcuts. Everything a key can do can also be done with the mouse (see the mouse table below and `SPEC.md` section 6).
+Orbit is mouse first. Settings → Shortcuts lists Orbit bindings and lets you add, change or delete them. Choose an action and record a key combination; duplicate combinations are rejected. The tables below are defaults. Text editing shortcuts are provided by text fields, and the global toggle remains in Hyprland. Ctrl+K returns focus to the search field; while results are visible, arrows navigate results and typing edits the query.
 
 ## Launcher
 
-The launcher opens with Search anything focused. Ctrl+K focuses it again and Enter opens its first result. Esc clears search before hiding the launcher. Grid focus navigation remains deferred.
+The launcher opens with Search anything focused. Ctrl+K focuses it again and Enter opens its selected result. Esc clears search before hiding the launcher. Grid arrows move between spatial neighbors, Enter opens the focused item, Shift+F10 opens its Context menu, and PageUp/PageDown switches pages.
 
 | Action | Shortcut |
 |---|---|
-| Previous page (outside fields, sheets and folders) | `←` |
+| Move left in search results / Previous page outside search | `←` |
 | Move focus down | `↓` |
 | Move focus up | `↑` |
-| Next page (outside fields, sheets and folders) | `→` |
+| Move right in search results / Next page outside search | `→` |
 | Open (launch an app, open a Website, File or Directory, open a Folder, activate the Add tile) | `Enter` |
 | Close the top layer (picker, then sheet or alert, then open folder, then launcher; on Settings, go back) | `Esc` |
+
+Actions with no default binding can also be assigned: Open Settings, Add page and Delete page. Deleting the final binding disables an Orbit action’s shortcut; its mouse control remains available.
 
 ## Sheets, pickers, alerts and Settings
 
@@ -30,6 +36,14 @@ The launcher opens with Search anything focused. Ctrl+K focuses it again and Ent
 - In a picker list or a filter box: it chooses the highlighted item.
 - On a button (Save, Cancel, Delete) or a Settings control: it presses it. In an alert, Cancel is focused first.
 - In a Name, URL, Path or Command field: it moves to the next field or saves the item.
+
+## Desktop navigation
+
+- `←`, `→`, `↑`, `↓`: move focus to the nearest item in that direction.
+- `Enter`: open the focused item.
+- `Shift+F10`: open its Context menu.
+- `PageUp`, `PageDown`: change Page.
+- Context menu → Move to Page transfers an item to a selected Page.
 
 ## Mouse (fixed)
 

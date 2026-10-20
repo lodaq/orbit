@@ -2,16 +2,23 @@
 
 Features you have decided to build after the MVP. None of them is built in the MVP, and the coding agent must not build them until they are moved into the MVP scope.
 
-Ideas that are not decided yet are in `ROADMAP.md`.
+Ideas that are not decided yet are in `roadmap.md`.
 
 ## General
 
 | Feature | Notes |
 |---|---|
-| Widgets | Not defined yet. |
+| Search prefixes | Add prefixes to narrow or change a search; define syntax later. |
+| Search postfixes | Add postfixes to narrow or change a search; define syntax later. |
+| Search image | Paste an image to search by image; choose the search provider later. |
+| Full TickTick integration | Integrate TickTick tasks, lists and workflows throughout Orbit. |
+| Touchpad shortcuts | Add gestures for launcher actions and page navigation; choose the gestures later. |
+| Keyboard shortcuts | Expand keyboard navigation and item management; choose the shortcuts later. |
+| Widgets | Add widgets, including Telegram, WhatsApp and TickTick widgets matching the appearance and interactions of their phone widgets. Integration details remain to be designed. |
+| Quote and current task | Show a quote and the current TickTick task on the main launcher screen. |
 | Search bar | Taken out of the MVP. The Figma design has one: a search field at the top of the launcher with a shortcut hint. What it would search (apps and folders only, or also installed apps) is not decided. |
 | Emoji as icon | Taken out of the MVP. Needs a quick test first: Slint's default renderer may draw emoji as flat one-color shapes, and color emoji may need the Skia renderer, which would make Orbit bigger and slower to start. |
-| URL as icon | Taken out of the MVP. Orbit would fetch a website's icon once, save it, and never fetch it again unless you ask. Needs a way to download and read web pages. Which library does it is the coding agent's choice, under `RULES.md`. |
+| URL as icon | Taken out of the MVP. Orbit would fetch a website's icon once, save it, and never fetch it again unless you ask. Needs a way to download and read web pages. Which library does it is the coding agent's choice, under `rules.md`. |
 | Image icon | Taken out of the MVP. Choose a PNG or SVG file in the Icon picker, copied into Orbit's icons folder when saved. A native file dialog takes focus, so hide-on-focus-loss must pause while it is open (or the file is chosen by typing its path). |
 | Background image | Taken out of the MVP, which has only solid colors. "Choose image…" in Settings. The image is copied and resized to the screen once, because a decoded 4K image is about 33 MB. Same file dialog note as Image icon. |
 | Custom and gradient backgrounds | Taken out of the MVP. A color of your own choosing, and soft layered gradients. |

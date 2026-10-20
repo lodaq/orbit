@@ -18,9 +18,11 @@ Installed apps rows show their cached system icons. Missing system artwork uses 
 
 ## Interaction
 
+Open folders use the sheet colors, border and 16 px corners and padding. Their 20 px title sits above a scrolling grid with 16 px gaps. Each app has a 64 px icon, an 8 px gap before its 20 px label area, and an inset hover surface. The panel fits its rows up to the available screen height.
+
 Add item opens from the Add tile. Selecting an Action or Installed app adds immediately; forms save explicitly. Refresh is manual. Filtering uses cached entries. Errors stay with the relevant field or operation and preserve drafts. Changing an icon uses a draft; Cancel discards it. Backdrop and Esc close the top layer. Showing and hiding Orbit remain instant.
 
-Use the keys in SHORTCUTS.md. The atlas's extra key proposals do not change Orbit's shortcuts. Do not implement the deferred Glyph picker as part of visual work.
+Use the keys in shortcuts.md. The atlas's extra key proposals do not change Orbit's shortcuts. Do not implement the deferred Glyph picker as part of visual work.
 
 ## Review
 

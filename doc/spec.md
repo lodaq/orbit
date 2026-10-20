@@ -1,15 +1,27 @@
+# V2 authority
+
+The user approved `Orbit_Desktop_Launcher_UX_Spec_v2.md` on 2026-10-20 as authoritative wherever it conflicts with this document. Windows and Arch Linux, spatial grids, widgets, exclusive dock ownership, new UI terms, and the complete v2 build sequence are authorized. Existing visual artwork and nonconflicting performance and coding rules remain in force. The older build-step restriction does not apply to v2.
+
 # Orbit spec
 
-Every decision for the MVP, in one place. Words follow `GLOSSARY.md`. Shortcuts are in `SHORTCUTS.md`. Coding rules are in `RULES.md`. What is not in the MVP is in `PLANNED_FEATURES.md` and `ROADMAP.md`.
+## Current behavior
+
+Folder center targets accept Apps, Websites, Files and Directories. After a 500 ms center dwell, release creates a folder or appends to an existing folder. Edge targets exclusively reorder after their own dwell. Folder children retain shortcut type, URL/path, ID and icon through extraction, dissolution, unpacking and restart. Widgets and folders never become folder children.
+
+`Orbit_Desktop_Launcher_UX_Spec_v2.md` is the current product specification and acceptance-test source. Its desktop Android-inspired spatial model supersedes the earlier list-only home-screen, Arch-only target and ordered-dock assumptions below. Existing Orbit appearance, item launching, search, native pickers and background-work requirements remain in force when compatible. New layout data lives in `config.json` version 2 with stable page IDs, explicit item rectangles, widget instances and active page; version 1 files migrate on load. Grid sizing is persisted in the existing Settings page. A dock pin owns a shortcut's layout location; page arrays retain its item record for existing app/search/recent lookups.
+
+
+
+Every decision for the MVP, in one place. Words follow `glossary.md`. Shortcuts are in `shortcuts.md`. Coding rules are in `rules.md`. What is not in the MVP is in `planned-features.md` and `roadmap.md`.
 
 ## 1. What Orbit is
 
-A fullscreen app launcher for Arch Linux (Hyprland), styled like iOS. You arrange apps and folders on pages, like a phone home screen, and open it instantly with a key. It starts empty. Search anything searches saved page items, System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Ctrl+K focuses it. Windows is not in the MVP (see `PLANNED_FEATURES.md`).
+A fullscreen app launcher for Arch Linux (Hyprland), styled like iOS. You arrange apps and folders on pages, like a phone home screen, and open it instantly with a key. It starts empty. Search anything searches saved page items, System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Ctrl+K focuses it. Windows is not in the MVP (see `planned-features.md`).
 
 ## 2. Stack
 
 - Rust and Slint. No web view. One binary.
-- Goals, in order: extremely fast, minimal, simple (see `RULES.md`).
+- Goals, in order: extremely fast, minimal, simple (see `rules.md`).
 - Font: Inter, embedded in the binary. Glyph icons: Phosphor, loaded only while the Icon picker is open.
 - Orbit is for personal use and is not distributed. If that changes, first check Slint's licence (GPLv3, or the royalty-free terms with attribution) and ship the licence texts for Inter (SIL OFL) and Phosphor (MIT).
 
@@ -19,6 +31,7 @@ A fullscreen app launcher for Arch Linux (Hyprland), styled like iOS. You arrang
 - `orbit toggle` shows or hides the launcher. If no daemon is running, it starts one and shows the launcher.
 - Only one daemon runs. The commands reach it over a Unix socket.
 - The launcher is a borderless, true fullscreen window on the monitor that has the cursor.
+- Opening and closing the launcher keeps an already visible Hyprland special workspace open.
 - It hides when: an app launches successfully, `Esc` is pressed with nothing else open, `orbit toggle` runs again, it loses focus, or the Close button in the top bar is clicked.
 - You add `exec-once = orbit daemon` and `bind = SUPER, SPACE, exec, orbit toggle` to `hyprland.conf` (the key is yours). Orbit never edits that file. The app asks for fullscreen itself. An optional window rule can turn off Hyprland's open animation. Check the current rule syntax when you write the README.
 
@@ -88,13 +101,13 @@ From top to bottom: top bar, the open page, page dots, dock.
 
 **Context menu** (right-click an item): Edit, Pin (or Unpin), Delete on page items and folder apps. A pinned dock item offers Unpin; a Recent dock item offers Remove from Recent.
 
-**Sheets.** All open over a dimmed backdrop inside the launcher window.
+**Sheets.** All open over a dimmed backdrop inside the launcher window. The Add item sheet fits the selected tab's content, has a maximum height of 760 px, and scrolls only when that content exceeds the available height.
 - *Add item:* segmented control App, Website, File, Directory or Folder. For an App, a second segmented control: Custom command (first and selected by default), Actions or Installed apps. Actions shows Lock screen, Take screenshot, Sleep, Log out, Volume up, Volume down, Mute, Mute microphone, Play or pause, Next track and Previous track; choosing one adds it to the current page and closes the sheet. Audio and media actions use `wpctl` and `playerctl`, following the [Hyprland media examples](https://wiki.hypr.land/0.53.0/Configuring/Binds/) and [WirePlumber command reference](https://pipewire.pages.freedesktop.org/wireplumber/man/wpctl.html). Custom command has Name, Icon and Command, with Cancel and Save. Installed apps shows the saved Installed apps list and a Refresh installed apps button; clicking an app adds it right away at the end of the current page (before the Add tile) and closes the sheet, with no Save. Adding the same installed app again is allowed. Its name and icon come from the list and can be changed later with Edit. Website has Name and URL. File and Directory each have an editable Path, a native chooser button, a default Icon with Change icon beside it, and Cancel and Save. The chooser fills Path. Save checks the path, derives the item name, adds it to the current page and closes the sheet. A Folder has just a Name, with Cancel and Save.
 - *Edit app:* Name, Icon, Command (custom command apps only). Delete and Save.
 - *Edit website:* Name and URL. Its cached icon is refreshed when the URL is changed.
 - *Edit file* and *Edit directory:* editable Path, native chooser button, Icon and Change icon, with Delete and Save. Choosing another path fills Path; Save updates the item and its name from that path. The Icon preview and Change icon button are vertically centered together in these sheets and Edit app.
 - *Edit folder:* Name. Delete and Save.
-- Keys inside sheets, pickers and alerts are listed in `SHORTCUTS.md`. They are fixed. `Enter` in a Name, URL, Path or Command field moves to the next field or Save. Clicking the backdrop closes the sheet.
+- Keys inside sheets, pickers and alerts are listed in `shortcuts.md`. Their defaults can be changed in Settings. `Enter` in a Name, URL, Path or Command field moves to the next field or Save. Clicking the backdrop closes the sheet.
 
 **Alert.** Delete always asks for confirmation.
 - Deleting an app removes it everywhere: its page or folder, the dock.
@@ -108,7 +121,7 @@ From top to bottom: top bar, the open page, page dots, dock.
 - Drag an empty area of the page left or right to move to the previous or next page. The page follows the pointer without delay and settles into place after release. At the first or last page, it moves only a little and returns to the center.
 - A 24 px gap separates page surfaces during a swipe.
 - The page area fills the available width and height. The + beside the page dots creates and opens an empty page with the mouse.
-- Leaving an empty page does not remove it.
+- Leaving an empty page does not remove it. Delete page in Settings removes the current page after confirmation, moving its items to the previous page (or the next page when deleting the first). The last page cannot be deleted.
 - First run: one empty page with the Add tile.
 - Startup page controls are deferred; reopening keeps the current page.
 
@@ -117,7 +130,7 @@ From top to bottom: top bar, the open page, page dots, dock.
 - A folder opens from its tile into a centered panel over the backdrop, with one scrolling grid. Clicking outside or pressing `Esc` closes it.
 - Dropping an app on another app makes a folder with both. Dropping an app on a folder adds it. Websites, files and directories can be reordered and moved between pages, but do not make folders.
 - A folder disappears when its last app leaves it.
-- Dragging an app out past the panel edge closes the folder and places the app on the current page.
+- Dragging an app out past the panel edge closes the folder visually and keeps the app under the pointer. Only releasing it over the page moves it out of the folder; Esc cancels without changing the folder.
 
 **Dock.**
 - Pin or Unpin in an item's context menu adds or removes it from the dock. The item stays on its page.
@@ -128,9 +141,9 @@ From top to bottom: top bar, the open page, page dots, dock.
 
 **Drag and drop** (iOS behavior).
 - A click without movement launches. Dragging makes the other items slide aside to open a gap, and dropping fills it.
-- Holding an app over the middle of another app for about half a second makes a folder. A folder dropped onto anything only reorders.
-- Holding a dragged item at the left or right screen edge for about half a second shows the neighboring page. At the right edge of the last page, it shows a new empty page (if there are fewer than 9). Dropping inserts the item at the pointer's position and opens that page. Near the top or bottom edge, the page scrolls.
-- Dropping on the dock snaps the item back. `Esc` during a drag cancels it.
+- Holding an app over the central 112 px area of another app or folder for 2 seconds previews the combined folder on the target; releasing creates the folder or adds the app. The target stays in place and highlights while ready. A folder dropped onto anything only reorders.
+- Holding a dragged item at the left or right screen edge advances through successive pages every half second until the edge is left or the last available page is reached. At the right edge of the last page, it shows a new empty page (if there are fewer than 9). Dropping inserts the item at the pointer's position and opens that page. Near the top or bottom edge, the page scrolls.
+- Dropping on the dock snaps the item back. `Esc` during a drag cancels it. A drag changes saved data only on release. One stationary input surface tracks the pointer while rendered tiles move; the dragged tile follows without interpolation. Page and folder moves resolve their source and folder target by item ID. The same folder hold works after changing pages.
 
 **Everything works with the mouse.** Orbit is mouse first, and the keyboard only repeats what the mouse can do.
 
@@ -174,7 +187,11 @@ Installed apps use their real system icon, resolved once when you press Refresh 
 
 ## 9. Settings
 
-The top bar Settings control opens a dark panel with Add page, Refresh installed apps, file and directory search paths, and Back. Add, Edit or Delete a path in either list. Each path is an existing folder and can be entered as an absolute Path. File search paths are searched recursively for files; Directory search paths show only their immediate directories. Indexing starts on the first non-empty search and stays cached until a path changes. The refresh status is visible in the panel. Esc returns to the launcher. Appearance and startup controls remain deferred.
+The top bar Settings control opens a dark panel with Add page, Refresh installed apps, file and directory search paths, and Back. Add, Edit or Delete a path in either list. Each path is an existing folder and can be entered as an absolute Path. File search paths are searched recursively for files; Directory search paths show only their immediate directories. Indexing starts on the first non-empty search and stays cached until a path changes. The refresh status is visible in the panel. Esc returns to the launcher. Page margin and Item size controls save to config.json. Page margins are equal on all four sides, default to 10 px and allow 0–64 px. Page tiles stay square, default to 128 px and allow 80–240 px. Startup controls remain deferred.
+
+Settings also has Export data and Import data. Export saves a versioned JSON backup containing pages, folders, saved icons, Pinned, Recent, search paths and the Installed apps list. Import opens the native chooser directly, then validates the chosen backup before replacing data. Cancelling the chooser leaves data unchanged. It retains the previous data in a sibling `orbit-before-import-<time>` directory and reloads the launcher. File and Directory items keep their paths; the referenced files and installed programs are not included. Both operations run on the worker and use a centered floating native file chooser. Orbit stays fullscreen behind the chooser, and returns focus to Settings when it closes. This explicitly requested addition is outside the original build order.
+
+Settings has General and Shortcuts tabs. Shortcuts lists each Orbit action once, with all assigned key combinations grouped in that row. Users can record, change, add and delete individual combinations. Duplicate key combinations are rejected. Bindings persist in config.json and backups; old configurations receive the defaults. Native text editing remains provided by text fields; the global toggle is configured in Hyprland. These user-requested changes extend the original fixed-shortcut scope.
 
 ## 10. Look
 
@@ -185,15 +202,15 @@ The authoritative visual reference is `doc/orbit-ui/orbit.png` and `orbit.svg` (
 - Top bar: logo at (48,40), 360 × 44 px centered search at y=34, controls 48 px apart at the right.
 - Grid: 144 px between item centers at reference width. The page area fills the available width and height, and the grid adds columns as width permits. The page and its 128 × 128 px item tiles have 1 px borders. Item tiles have a lighter background on hover. The gaps between tiles do not select items.
 - Page dots are centered 146 px above the bottom. The dock is 94 px tall, 26 px above the bottom, with 26 px corners and 100 px per item. Each dock item's hover area is inset 6 px on all sides. The separator divides Recent from Pinned when both are present.
-- Search filters saved page items, all System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. The first result is highlighted and selected; Enter opens it, and clicking any result opens that result. Results show their saved or cached icon when available. Choosing an action runs it, and choosing an installed app launches it without adding it to a page. Esc clears search before hiding.
+- Search filters saved page items, all System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. The first result is initially selected. Arrow keys move the selection through the grid without wrapping and scroll it into view. Enter opens the selected result. Clicking any result opens it. Each highlight encloses the icon and labels with padding and a gap from neighboring results. Results show their saved or cached icon when available. Choosing an action runs it, and choosing an installed app launches it without adding it to a page. Esc clears search before hiding.
 - Left and Right switch pages when a text field, sheet or folder is not active. Ctrl+K focuses search.
 - Preserve native, interactive controls. The exported `main.slint` is only a full-screen PNG and cannot be used as the application implementation.
-- Sheets, the Context menu and Delete alerts follow the supplied Add item reference in `doc/add-item` and the shared rules in `DESIGN_SYSTEM.md`. The 2026-10-18 request adds system icons to Installed apps rows.
+- Sheets, the Context menu and Delete alerts follow the supplied Add item reference in `doc/add-item` and the shared rules in `design-system.md`. The 2026-10-18 request adds system icons to Installed apps rows.
 
 **Animation.** Short and few, because Orbit must stay fast.
 - Showing and hiding the launcher: none. It is instant.
 - Page switch: the adjacent page appears beside the open page during a mouse drag, and both pages slide together after release with ease-out motion. A full switch takes about 170 ms; a partly dragged page settles faster according to the distance left.
-- Folder open and close: the panel grows from its tile and shrinks back to it, about 220 ms. Its content fades in as it opens.
+- Folder open: instant, with no movement or fade. Folder close: the panel shrinks back to its tile in about 220 ms.
 - Drag: other items slide into the gap, about 120 ms, and the dropped item settles into place.
 - Sheet and alert: the backdrop and panel fade in, about 120 ms.
 - Focus ring and hover: none.
@@ -228,14 +245,14 @@ Each step ends with an app that runs on Arch.
 4. **Folders and drag and drop:** folders, reordering, moving between pages, mouse page swipes, creating and deleting pages. This is the largest step.
 5. **Item types and App sources:** Websites, files and directories; Actions and custom commands; scan, cache and choose installed apps from the Add item sheet.
 6. **Dock:** Recent, Pinned and pin reordering.
-7. **Keyboard:** the few keys in `SHORTCUTS.md` and the focus ring.
+7. **Keyboard:** the few keys in `shortcuts.md` and the focus ring.
 8. **Settings and looks:** startup page, appearance, background color, iOS polish.
 9. **Glyph picker:** the Phosphor Icon picker.
 10. **Packaging:** the `PKGBUILD` and the README.
 
 ## 14. Assumptions to confirm
 
-1. Item size: Use 80 px icons, 14 px labels and 144 px spacing between item centers. Size controls remain deferred.
+1. Item size: Use 80 px icons, 14 px labels and 144 px spacing between item centers. Settings can change square page tiles from 80 to 240 px; icons scale to fit.
 2. Editing an installed app changes its name and icon, not what it launches.
 3. If an installed app is gone from the Installed apps list after a refresh, its item stays on its page. Launching it shows a banner such as "Couldn't start 'X': not found".
 

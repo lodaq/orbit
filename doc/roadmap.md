@@ -2,7 +2,7 @@
 
 Nothing in this file is in the MVP. The MVP is, on Arch Linux with Hyprland: pages, apps, folders, the dock (Recent and Pinned), Settings, shortcuts, and the icon picker.
 
-Features you have decided to build are in `PLANNED_FEATURES.md`. This file is only for ideas that are not decided yet.
+Features you have decided to build are in `planned-features.md`. This file is only for ideas that are not decided yet.
 
 ## Parked during design (suggested, not decided)
 

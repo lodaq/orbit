@@ -1,0 +1,396 @@
+# Orbit Desktop Launcher — Android-Style Grid, Folders, Pages, and Widgets
+
+**Implementation-ready interaction and UX specification for Codex**
+**Target platforms:** Windows and Arch Linux (desktop only)
+**Reference:** Existing Orbit desktop screenshot; Android launcher interaction recording; useful mechanics from the attached Claude analysis.
+**Scope:** User-facing behaviors, state rules, gestures, geometry, persistence, animations, and acceptance tests. Implement in the existing codebase; this is not a request for a new prototype.
+
+## 0. Non-negotiable principles
+
+1. **Keep Orbit's existing desktop UI**: top Orbit header/search, wide rounded workspace, page dots and Add Page control, and persistent bottom dock. Do not replace it with a portrait phone simulator, mobile status bar, mobile breakpoint, or fixed 3×4 layout.
+2. **A spatial grid, not a sortable list**: every top-level app, shortcut, folder, or widget has an explicit page and grid position. Empty cells are valid and persistent. Movement into an empty cell does not compact or shift other items.
+3. **Configurable sizing**: the user can change **grid cell size in the existing application Settings page**. The visual size of app cards, icons, folder cards, labels, gaps, and previews follows that setting. Calculate grid capacity from available *desktop workspace* dimensions; do not use separate mobile/tablet layouts.
+4. **Center = folder; edges = reorder**: when dragging an **app over another app**, the central zone of the target app is reserved for potential folder creation; the outer edge/insertion zones are reserved for reordering. These targets MUST have different hover states, timers, previews, and outcomes. No accidental folders.
+5. **Folders are first-class grid items**: drag app onto app to create; drag app onto folder to add; open, rename, reorder children, extract children, move folder, dissolve on one remaining child if enabled.
+6. **Widgets are first-class grid items**, with multi-cell footprints, configurable size in cells, a built-in widget catalog, and simple locally generated random text. No online data, accounts, or widget SDK needed in v1.
+7. **Pages are real separate grids**: smooth horizontal sliding, clickable page indicators, add/remove/reorder pages, edge-hover cross-page dragging, persistent shared dock.
+8. **The UI always previews the exact result before committing it**; preview must never mutate saved layout. A drop succeeds atomically or the item animates home.
+9. **Do not uninstall or delete underlying apps/files** when the user removes a launcher shortcut. Use 'Remove from Home' as the primary action. Treat actual OS uninstall as out of scope.
+
+## 1. Desktop surface and sizing
+
+### 1.1 Layout
+
+Retain the Orbit layout: header above; wide main home-screen workspace in the center; indicators beneath it; persistent dock below. The grid starts at the top-left of the workspace with deliberate padding and continues through the usable interior. The existing Orbit cards/visual theme remain recognizable.
+
+There is **no phone portrait canvas, Android status bar, mobile navbar, touch-only gesture, or phone-specific dimensions**. Support resizable windows and desktop monitors on Windows and Arch Linux, including different resolutions and display scaling. The underlying interaction model must not vary by OS.
+
+### 1.2 Settings: grid cell size
+
+Add a setting to Orbit's **existing Settings page**:
+
+- Label: `Home Screen > Grid Cell Size`.
+- Show slider and numeric value, with a live preview; offer `Reset to default`.
+- Initial suggested range: **80–176 logical CSS pixels**, step **8 px**, default approximately **112 px**; adjust default based on the existing Orbit card dimensions. Do not hardcode these numbers throughout the app.
+- This setting is the source of truth for one-cell app and folder sizing. App/folder outer tile, icon size, label font, corner radius, spacing and drag ghost should scale according to tokens derived from `cellSize` (within reasonable readability limits).
+- Widgets occupy **integer spans of these same cells** (e.g. 2×1 or 2×2), so they also change physical size when cell size changes.
+- Keep gaps/padding as separate design tokens. Do not confuse `cellSize` with the number of columns. Grid capacity derives from available workspace width/height, cell size and gaps.
+- A setting change must update both rendering and hit-testing/drag geometry. The preview and final drop cell may never disagree.
+
+Example calculations (illustrative, not rigid constants):
+
+```ts
+columns = Math.max(1, Math.floor((workspaceWidth - 2*padding + gap) / (cellSize + gap)));
+rows = Math.max(1, Math.floor((workspaceHeight - 2*padding + gap) / (cellSize + gap)));
+```
+
+When resizing Orbit or changing cell size, the **number of visible columns/rows can change**; these are desktop adjustments, not mobile breakpoints. Grid items must not simply overlap, vanish, or be clipped.
+
+### 1.3 Deterministic reflow when capacity changes
+
+Changing cell size might make some saved coordinates out of bounds or leave a widget too large. Reconcile the layout **transactionally**:
+
+1. Calculate the new grid geometry and occupancy.
+2. Keep each item on its current page and coordinate where it still fits without overlapping.
+3. Resolve displaced items in stable, documented order (original page order, then row/column, then ID) into the nearest available valid region, preferring the same page.
+4. Overflow to following pages if necessary; create additional pages if needed. Never delete items or silently alter folder membership.
+5. If a widget cannot fit on *any* page because its span exceeds the new row/column count, clamp its span to a supported minimum where possible; otherwise require a different cell size or provide a visible, recoverable layout warning. Never lose the widget.
+6. Present the proposed reflow in Settings before confirming disruptive changes when practical; cancelling must restore the previous setting and layout.
+7. Persist the chosen size and resolved coordinates. Undo can restore the previous settings/layout together.
+
+Never use implicit CSS grid auto-placement as the source of truth. Visual layout must reflect explicit model positions.
+
+## 2. Items and containers
+
+**Home-screen item types:** `app`, `shortcut`, `file`, `folder`, `widget`.
+
+**Containers:** one page grid, the dock, or a folder's ordered children. Each shortcut *instance* belongs to exactly one container. The same underlying source app may have multiple distinct shortcut instances only if explicitly added more than once.
+
+- **App/shortcut/file:** one-cell top-level tile with icon and label; click invokes existing Orbit action.
+- **Folder:** one-cell top-level tile with name and up to four mini-icons in a 2×2 preview. Children are ordered, not assigned outer grid coordinates.
+- **Widget:** generally multi-cell tile, content rendered inside it; it cannot be put in a folder or dock in v1.
+- **Add control:** the existing `Add` tile is launcher chrome or an action, not a normal user-owned app occupying an editable grid slot unless the app already intentionally models it that way.
+- **Dock:** stable across pages; separate ordered positions; support the existing number of dock entries and capacity based on its width. Do **not** force a three-icon Android dock.
+
+Top-level items should always store page ID, row, column, rowSpan, and columnSpan. App and folder spans default to 1×1. Widget spans use their widget definition and saved instance span.
+
+## 3. Pointer and keyboard gestures (desktop only)
+
+- **Single left click app**: open/launch. **Single left click folder**: open it. **Single click widget**: execute only its own supported action, if any; otherwise do nothing.
+- **Left pointer down + movement ≥ 6 px**: begin drag immediately, without a long press. A small movement below threshold is still a click.
+- **Left press and hold ~450 ms without moving**: optional Android-inspired icon lift with contextual menu; if movement begins, dismiss menu and continue the same drag. Keep this separate from the essential immediate desktop drag gesture.
+- **Right click**: Orbit-custom context menu; do not lift item. Prevent native browser context menu on launcher cards, but do not suppress OS menus outside the launcher.
+- **Pointer while dragging**: item follows pointer with exact original grab offset, `grabbing` cursor, elevated z-index, subtle 1.08–1.12 scale and shadow. Original location shows a ghost/outline.
+- **Release**: commit only if a valid target is armed. Invalid release animates back and does not modify state.
+- **Escape while dragging**: cancel, restore source layout, remove all previews and temporary pages.
+- **Horizontal trackpad gesture**: one horizontal page transition per deliberate gesture, not a page flip per wheel event. Ordinary vertical scrolling must not accidentally change pages.
+- **Page dots**: click navigates. **Keyboard**: Enter to open focused item, Shift+F10 for menu, Escape to close/cancel, PageUp/PageDown or context-appropriate left/right to change pages. Provide `Move to...` menu commands for keyboard accessibility.
+- **Drag on empty workspace background horizontally**: optional page-swipe behavior if it does not interfere with selection; not required for v1.
+- No touch-only handling, haptics, Android navigation-bar gestures, or mobile layout work is required.
+
+During a drag, pointer capture must keep it active across children, overlays and page transitions. Handle `pointercancel`, lost capture, window blur, and unmount safely; a release outside valid areas **cancels**, rather than committing to a stale last-valid cell.
+
+## 4. Drag state machine and previews
+
+Use explicit state, not scattered mouse handlers:
+
+```text
+IDLE -> PRESSED -> DRAGGING -> HOVER_PREVIEW -> DROP_RESOLUTION
+                     |              |                 |
+                     |              |                 +-> COMMIT -> ANIMATE -> IDLE
+                     |              +-> EDGE_PAGE_PENDING
+                     +-> CANCEL -> SNAP_BACK -> IDLE
+
+Additional submodes: EMPTY_CELL, REORDER_EDGE, APP_CENTER_FOLDER,
+EXISTING_FOLDER, WIDGET_PLACEMENT, WIDGET_RESIZE, DOCK_INSERT.
+```
+
+The dragged overlay is separate from the page so it stays under the cursor during page slide, folder closing, or reflow. Use transforms, requestAnimationFrame or the codebase's existing animation primitives; do not rerender/persist the entire layout on each pointermove.
+
+For each pointer movement:
+
+1. Convert pointer location to workspace-local coordinates; account for scroll/transform/scale.
+2. Identify active container (open folder, dock, page, edge zone, outside).
+3. Identify candidate target and intent **using both geometry and dwell/hysteresis**.
+4. Compute temporary preview from the **unchanged drag-start layout** (not from previous preview), preventing cumulative drift.
+5. Render placeholder(s) and neighboring movement; leave permanent data untouched.
+6. On pointerup, validate and atomically commit the currently armed preview or cancel.
+
+On moving to another target, clear the previous target's timer. Add a small hysteresis margin to prevent rapid switching between folder and reorder modes near boundaries.
+
+## 5. THE CRITICAL RULE: app center creates folder, edges reorder
+
+This rule is mandatory and takes precedence over simplistic 'drop on occupied cell' logic.
+
+### 5.1 Geometric zones
+
+For an **occupied app tile**, divide its interactive **icon region** (not the whole wide row/cell including the label) into:
+
+- **CENTER / MERGE ZONE:** centered inner region, initially approximately **50–60% of the icon's width and height**, configurable. The pointer or dragged icon's center must enter it. This area means: **'Put these two apps in a folder.'**
+- **OUTER EDGE / INSERTION ZONES:** remaining border region around the icon, plus well-defined left/right or before/after insertion lanes in the cell. This area means: **'Reorder the apps, do not merge.'**
+
+Use local pointer coordinates within the target icon bounds. Keep the dragged icon visually below/above pointer as appropriate, but decide the active target consistently (e.g. icon center anchor for cell and pointer position for fine-grained zone), without cursor grab offset causing surprising outcomes.
+
+### 5.2 Timers and previews
+
+- Pointer enters **center of another app**: start `folderIntentDwell` (~450–550 ms). Until armed, show a subtle *possible folder* highlight, **not** a reordering insertion placeholder on the same target.
+- Dwell completes while still centered: target app enlarges very slightly, translucent folder plate/outline appears around it; show a clear `Create folder` preview. On release now: folder is created.
+- Pointer moves into **edge zone**: cancel folder timer and merge preview **immediately** (with a slight hysteresis buffer); arm/preview **reordering**, possibly after `reorderDwell` (~250–350 ms). On release with reorder armed: reorder, **never create a folder**.
+- Pointer returns to center: cancel reorder intent and restart folder intent timer. Preview may not commit until one specific target is armed.
+- Quick passing across an icon's center must NOT make a folder. Releasing on an unarmed center target must not arbitrarily reorder into the target: cancel or return to the last clearly displayed valid preview according to a consistent policy; recommended **cancel on ambiguous unarmed center**.
+
+**Outcome table:**
+
+| Dragged item | Target | Active region | Result |
+|---|---|---|---|
+| App | empty cell | any | place app in empty cell |
+| App | other app | center, after dwell | create folder: `[targetApp, draggedApp]` |
+| App | other app | outer edge/insertion, after preview | reorder by sparse-grid shift |
+| App | existing folder | center, after dwell | append app to folder |
+| App | existing folder | edge | reorder/move around folder |
+| Folder | app or folder | any | move/reorder whole folder; never merge/nest |
+| Widget | app/folder/widget | any | place/reposition footprint if possible; never folder |
+| App/folder/widget | empty eligible region | any | direct placement, no neighbor motion |
+
+Use different visual shapes/colors for merge plate vs insertion outline so users understand the result without reading tooltips. The **center-vs-edges distinction must be automated-tested** at pixel/geometry level.
+
+## 6. Sparse-grid placement and occupied-cell reordering
+
+Grid coordinates are stable and may contain holes:
+
+```text
+BEFORE: [ A ][ B ][   ][ C ]
+Move B to empty cell 3:
+AFTER:  [ A ][   ][ B ][ C ]    (A and C did not move)
+```
+
+**One-cell reorder rule (adapted from the video analysis):** represent a page as row-major cell slots with holes, while storing actual coordinates in the data model. Remove the dragged item from its source slot **in the preview**, creating a hole. Hover target `T`:
+
+1. **Empty T:** place ghost at T; all other items stay fixed.
+2. **Occupied T, reorder edge armed:** prefer **push-forward**: shift occupant of T and consecutive row-major items forward by one slot, stopping at the first available hole after T. Crossing row boundaries is allowed.
+3. If no hole after T exists, **shift backward** through the nearest available hole before T, as long as a valid chain exists.
+4. Do not compact other holes. The shift is computed fresh from the drag-start snapshot, not recursively from prior preview positions.
+5. If no valid reflow fits, mark invalid and snap back on release; do not move or delete other items.
+6. With a drag from another page, an otherwise full destination page has no hole; reject unless a legal insertion/displacement strategy is explicitly supported.
+
+This rule is for **1×1 items**. Multi-cell widgets require footprint-aware occupancy resolution; do not treat them as four independent app icons. In v1, placing a widget into an occupied footprint can be rejected with a clear preview unless a deterministic relocation of *whole items* is possible. Widgets may never overlap other items.
+
+Preview animations should take about 180–250 ms. Commit exactly the previewed result. A grid position is an intentional location, not an automatically packed list index.
+
+## 7. Folders: complete lifecycle
+
+### 7.1 Create
+
+Drag **App A** over **App B's center**, keep inside until merge dwell arms, then release. Create a new folder at **B's target cell** with child order `[B, A]`. A's source cell becomes empty. Show merge animation: target scales/highlights, dragged icon shrinks toward it, folder icon settles in. Default label: `Folder` (renameable).
+
+### 7.2 Add to existing folder
+
+Drag app to folder **center** and dwell; highlight folder and show `Add to folder` preview. Release appends its instance to the folder; source position becomes empty. Mini preview updates (first four child icons, 2×2). Dragging over the folder's **edge** reorders the folder instead of inserting a child.
+
+### 7.3 Open and close
+
+Single-click folder to open an animated overlay anchored to the folder's screen position, with darkened/blurred backdrop, readable editable title and a compact grid of children. For desktop Orbit use a well-sized floating panel, not the video phone's full-screen scrim with fixed dp coordinates. Dismiss via backdrop click, Escape or close control. Reverse the transition on close. Dock remains mounted and visually behind the scrim.
+
+### 7.4 Reorder child apps
+
+Drag children within the open folder to insert into a new order. Siblings preview the reflow. Child ordering is compact/sequential, unlike sparse top-level pages. Press Escape to cancel and restore order.
+
+### 7.5 Extract app without breaking drag
+
+Start dragging a child within an open folder. Once it crosses the folder's defined exit boundary with intent to leave, **close/collapse the overlay without releasing pointer capture**. The same lifted icon continues to follow the cursor over the home screen, with active page targets. Releasing in a valid cell moves it from folder to page in one atomic operation. Cancelling restores it to its original folder position and reopens/restores the appropriate UI state if practical.
+
+### 7.6 Rename, dissolve, move
+
+- Click/edit folder title or choose `Rename` from context menu; Enter commits, Escape cancels. Unicode/Arabic labels are supported.
+- A folder with **one** child after extraction automatically dissolves: replace folder tile at its coordinate with remaining app. A folder with **zero** children disappears. Make this policy explicit and test it.
+- Drag a closed folder around the grid or across pages just like a 1×1 item. Contents remain intact. Nested folders are disabled in v1.
+- Removing a folder through the context menu must be explicit and safe; do not delete actual underlying apps. Offer `Unpack folder` into valid page cells where possible, or remove *shortcuts* with confirmation.
+
+## 8. Simple default widgets (new, required)
+
+### 8.1 Widget picker
+
+In the existing `Add` flow add `Widgets`, opening a small **Widget Gallery** with preview tiles showing name, example text and initial cell footprint. Widgets are local, built into Orbit and intentionally very simple for the first version. No API key, network call, calendar/weather integration, or widget marketplace.
+
+**Initial built-in widget types** (all use a text card and local arrays):
+
+| Widget | Visible content | Suggested default span |
+|---|---|---|
+| Random Quote | A short randomly selected quote/phrase | 2×2 |
+| Random Fact | A short fictional/sample or general fact string | 2×2 |
+| Random Word | A randomly selected word and optional one-line meaning | 2×1 |
+| Motivation | A randomly selected motivational sentence | 2×1 |
+| Random Number | A number plus a short label as plain text | 2×1 |
+| Custom Text (optional) | User-typed text; same rendering as other text cards | 2×2 |
+
+A smaller implementation can ship with `Random Text` alone plus a few selectable variants, provided the gallery already supports multiple widget definitions. For predefined text widgets, use a small local list of safe nonempty text snippets. Store the chosen text with each widget instance so it **does not randomly change during React rerenders, drag, page navigation, or restart**. A small `Refresh` action/button may choose another entry and persist it. Do not claim facts are dynamically updated.
+
+### 8.2 Widget placement
+
+Select a widget in the gallery -> enter grid placement mode -> show its multi-cell outline -> pointer movement snaps outline to valid aligned cells -> click/drop to commit. Or provide `Place automatically` using the first valid rectangle on current page, adding a new page if required. Escape cancels. Reject collisions and out-of-bounds footprints visibly.
+
+Widget size is expressed as `columnSpan × rowSpan` in grid **cells**, not absolute pixels. It scales when the user changes `Grid Cell Size` in Settings.
+
+### 8.3 Widget dragging and resizing
+
+- Drag by widget header/handle or by the card surface outside interactive content. Show a footprint-sized ghost, not a 1×1 app ghost.
+- Move to empty matching footprint without changing other items.
+- In `Edit layout` / `Resize` mode show a bottom-right resize handle; dragging it snaps to whole-cell spans, with min/max configured per widget type. Preview valid cells; overlapping/out-of-bounds resize is rejected (or resolved only by a clearly previewed transaction). Persist on release.
+- Ordinary text click should not unintentionally start drag; simple widget buttons, e.g. Refresh, remain clickable.
+- No widgets inside folders or dock for v1. No nested widgets or spanning across page boundaries.
+
+### 8.4 Visuals
+
+Use Orbit's dark/purple rounded-card styling. Text wraps, clips gracefully, and scales with available widget card area while remaining readable; larger widget spans reveal more text. The gallery thumbnail and placed widget should match. Widgets receive their own context menu: `Refresh text` (where supported), `Resize`, `Move to Page`, `Remove widget`.
+
+## 9. Pages, slider and cross-page dragging
+
+Each page is an independent sparse grid. Keep the existing dots, active indicator, and `+` create-page control. The dock and header remain fixed while only page content slides horizontally.
+
+- **Navigation:** click dots, horizontal trackpad swipe, appropriate keyboard shortcuts or existing arrow controls. Animate one page at a time (~250–350 ms), using gesture throttling and snapping. The user should never land halfway between pages.
+- **Add page:** `+` creates a blank page and optionally switches to it. Page overview/reorder can be a secondary feature.
+- **Remove page:** allow explicit removal when empty (always keep at least one), optionally clean up transient blank pages; do not automatically delete intentional empty pages without a defined user preference.
+- **Cross-page drag:** when carrying an item, hover within ~40–60 px of left/right workspace boundary for ~500–700 ms. Show an edge cue/countdown; then slide to neighbor page while the dragged item remains attached to the cursor. Repeat for multiple pages, with delay/reset to prevent accidental skipping. Drop on that page uses normal validation.
+- **Past last page:** show a temporary empty page on right-edge dwell. Only persist it if a valid drop succeeds. Cancelling leaves page count unchanged. Optionally support equivalent left-edge behavior if product requirements allow prepending pages.
+- **No ghost duplication:** source stays logically owned by origin until destination commits; do not create duplicate items during animation.
+- Page indicator updates when navigation completes. Avoid horizontally scrolling the entire app shell or persistent dock.
+
+## 10. Persistent bottom dock
+
+The existing Orbit dock is an independent persistent placement region shared by all pages. Its layout should reflect the current Orbit UI rather than a fixed three-icon phone dock.
+
+- Drag app/folder into dock: highlight dock and show a clear insertion gap. Other dock items shift in preview; commit order and source ownership atomically.
+- Drag dock item to page: show page cell target; move it out of dock on commit.
+- Drag inside dock: reorder with live insertion indicators; no accidental launcher click on release.
+- Dock capacity derives from visual width/slot size or a configured limit. If full, display invalid preview and reject, not replace an existing item.
+- Widgets are not allowed in dock. Existing Orbit special/system controls can remain pinned/non-draggable if they are deliberately not user-owned shortcuts.
+- If supporting duplicate shortcuts is desirable, make `Copy shortcut` an explicit action instead of implicitly duplicating on every dock drop.
+
+## 11. Context menus, app actions and adding items
+
+### Apps/files/shortcuts
+
+Single click performs the existing Orbit open action. Right click displays relevant custom menu (e.g. `Open`, `Move to Page`, `Add to Dock`, `Remove from Home`, `Details`, `Rename shortcut` where supported). If a source app advertises quick actions, display them above the core actions in a small panel. Long press may show the same menu and lift the icon, emulating the reference recording, but immediate mouse dragging remains essential.
+
+**Never implement 'Uninstall' by simply deleting a launcher icon.** Android's recorded popup shows `App Info / Uninstall`, but Orbit should distinguish shortcut removal from operating-system uninstall. For v1 use `Remove from Home`; optionally show `App Info` only if reliable metadata is available.
+
+### Add menu
+
+Preserve Orbit's current `Add` entry point. Add tabs or sections: `Apps`, `Websites/Shortcuts`, `Files`, `Folders` (explicit new empty folder if desired), and `Widgets`. Selecting an item lets the user choose an explicit free grid cell or an automatic valid placement. Opening the Add picker must not reorder the existing page by itself.
+
+### Outside and cancellation
+
+Escape closes menus/overlays or cancels active drag, in that order. An invalid drop outside Orbit workspace/dock/folder returns to the origin. Clicking blank wallpaper closes context menu/folder. App launch must not fire after a completed drag.
+
+## 12. Data model and invariants
+
+A suggested normalized model (adapt to the project's existing stack):
+
+```ts
+type ItemKind = 'app' | 'file' | 'shortcut' | 'folder' | 'widget';
+type Container =
+  | { kind: 'page'; pageId: string; row: number; col: number; rowSpan: number; colSpan: number }
+  | { kind: 'dock'; index: number }
+  | { kind: 'folder'; folderId: string; index: number };
+
+interface HomeItem {
+  id: string;                         // unique shortcut / widget INSTANCE ID
+  kind: ItemKind;
+  title: string;
+  icon?: string;
+  sourceId?: string;                   // optional app/file target ID
+  container: Container;                // exactly ONE location
+  children?: string[];                // for folders; ordered IDs
+  widget?: {
+    definitionId: string;              // e.g. 'random-quote'
+    text: string;                      // persistent sampled text
+    seed?: string;
+  };
+}
+
+interface HomePage { id: string; order: number; title?: string }
+interface LauncherSettings { gridCellSizePx: number; gridGapPx: number }
+interface LauncherState {
+  schemaVersion: number;
+  pages: HomePage[];
+  itemsById: Record<string, HomeItem>;
+  settings: LauncherSettings;
+  activePageId: string;
+}
+```
+
+Invariants:
+
+1. All item IDs unique; every item has exactly one location.
+2. A folder's children point to items whose `container.kind === 'folder'` and `folderId` matches; children do not also occupy page/dock slots.
+3. Page top-level occupied rectangles do not overlap and stay within bounds.
+4. App/folder = 1×1 in v1; widgets use legal integer spans; no widget inside folder/dock.
+5. Nested folders are forbidden; no cycles.
+6. Dock indices form a valid order and are capacity-limited.
+7. Page IDs and item references must exist.
+8. Every operation is transactional; the drag-start layout is a stable snapshot; previews are derived.
+9. Maintain separate user-facing shortcut instance IDs versus actual app/file targets.
+
+Save on **commit**, not on pointer motion; persist pages, active page, item positions, folder names/children, dock order, widget instances and text, settings. Include data version/migration and corrupted-state recovery. Use existing Orbit storage; do not impose localStorage if the codebase already has desktop storage/DB. Offer undo/redo for organization actions, including cell-size reflow if feasible.
+
+## 13. Animation, geometry and performance
+
+Suggested tuneable durations (not exact measurements):
+
+- Icon hover 100–140 ms; pressed 80 ms.
+- Lift 100–160 ms; scale ~1.08–1.12, shadow, label optionally hidden.
+- Neighbor reflow 180–250 ms.
+- Drop settle/snapback 150–260 ms spring.
+- Folder create 200–350 ms; open/close ~220–300 ms.
+- Page slide 250–350 ms.
+- Popup fade 120–160 ms.
+
+Show separate placeholders for empty-cell move, reorder insertion, center-folder merge, folder addition, dock insertion, and widget-size footprint. Do not rely solely on color to communicate state. Respect reduced-motion OS preferences where accessible.
+
+Use Pointer Events with capture rather than native HTML5 drag-and-drop, which does not provide the desired fine-grained cross-page and hover interactions. Reuse project libraries where they allow custom sensors/collision geometry/overlays; avoid an unnecessary rewrite. Prefer CSS transforms and throttled geometry reads to achieve 60 FPS on typical desktops. On window resize, settings change, folder close, or lost pointer capture, never leave an orphan drag overlay.
+
+### Desktop-specific edge cases
+
+- High-DPI display scaling and browser zoom, if using a browser shell.
+- Left-to-right grid coordinates must remain consistent even if labels are Arabic/RTL; RTL text must remain readable.
+- Search focus, header controls, dock, and widgets should not trigger page-swipe gestures accidentally.
+- Opening another window or losing app focus during drag must cancel safely.
+- Context menu should be clamped inside available workspace; no cut-off menus by edges.
+
+## 14. Acceptance tests for Codex
+
+Write automated tests for **pure layout functions** and interaction/e2e tests for pointer gestures. The following are mandatory:
+
+1. **Empty spot:** drag B `[A,B,_,C]` to index 2 -> `[A,_,B,C]`; A and C retain exact coordinates.
+2. **Reorder forward:** occupied edge target shifts only the contiguous chain to the first following hole; unaffected items retain coordinates.
+3. **Reorder backward:** if no hole follows, shift backward toward valid preceding hole; crossing row boundary works.
+4. **Preview purity:** hover A, then B, then A again -> preview matches first A preview, no cumulative drift; Escape restores exact initial layout.
+5. **Center-vs-edge (critical):** holding app over target app **center** and releasing after dwell creates `[target, dragged]` folder. Holding over **edge** and releasing reorders with no folder. Passing through center quickly creates no folder. Moving center -> edge cancels merge. Moving edge -> center cancels reorder and starts merge dwell.
+6. **Existing folder zones:** app centered over folder adds it; app at folder edge reorders the folder position instead. Folder-on-folder never nests.
+7. **Folder round trip:** create folder -> add third app -> open -> drag third app outside -> folder closes during same drag -> drop on empty cell -> folder still has two children.
+8. **Dissolution:** extract one of two folder children -> last child replaces folder in its original cell.
+9. **Cross-page:** dragged app remains attached while page slides; valid drop transfers ownership; cancel returns to source. Holding beyond last page and cancelling leaves no new page.
+10. **Dock:** reorder, move into and out of dock, reject full dock, no duplicate shortcut instances.
+11. **Settings size:** change cell size -> visually scale apps/folders and widgets; grid hit testing remains correct; overflow is reflowed safely; revert restores prior arrangement where practical.
+12. **Widgets:** gallery lists default types; choose Random Quote; place 2×2; text persists across rerenders/restart; refresh only changes the intended instance; move and resize snap to whole cells; collisions rejected; widget cannot merge into folder.
+13. **Persistence:** reload and get exact saved pages, holes, folder contents, dock, widget text/spans, and size setting.
+14. **Click vs drag:** small pointer movement opens app once; drag never accidentally opens app.
+15. **Safety:** Remove from Home never uninstalls app or deletes source file; invalid releases/blur/Escape never lose an instance.
+16. **No overlap:** for thousands of randomized legal moves, all state invariants hold.
+
+### Optional replay scenarios from the recording
+
+Use the attached Claude timeline as **reference test fixtures for 1×1 sparse-grid mechanics**, not as desktop layout requirements. Notable sequences: a forward shift reaching the first hole; moves into empty cells without neighbor motion; no-hole-after-target backward reflow; merge two apps into a folder; add a third; open and drag a child out while folder closes; move entire folder. Do not hardcode the video's 3×4 size, names, image pixels, or three-icon dock.
+
+## 15. Codex execution instructions / definition of done
+
+1. Inspect the **existing Orbit repository** first: identify Settings page, current card/grid rendering, paging/slider, dock, item-open actions, context menu, storage and framework. Implement in this architecture without changing the established look.
+2. Add central normalized launcher model and a pure, testable spatial grid engine. Integrate the Settings-driven cell size and safe geometry recalculation.
+3. Implement pointer drag state machine, empty placement, edge reorder, center-folder gesture and previews. **Do not call this done until the center-vs-edge tests pass.**
+4. Add folder creation, folder overlay, child reordering and continuous extraction.
+5. Add desktop page navigation, edge-hover cross-page move, temporary page creation, and dock operations.
+6. Add Widget Gallery, local random-text widget definitions, placement and grid-span resizing.
+7. Add persistence, migration, undo/redo where feasible, accessibility actions, animation polish, and automated acceptance tests.
+8. Demonstrate behavior in a running build. Report actual files changed, tests run, remaining limitations, and any differences from this spec.
+
+**Definition of done:** I can customize item size in Settings, drag any app/folder to an exact grid cell and leave holes, *create a folder from the center and reorder from the edges of another app*, manage folder contents without interrupted drag, slide between pages while carrying an item, rearrange the persistent dock, and choose/place/move/resize an elementary random-text widget. Every successful change survives a restart. The result feels like a desktop-friendly Android launcher inside Orbit, not a sortable card list or a phone emulator.

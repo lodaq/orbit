@@ -1,4 +1,10 @@
+# V2 authority
+
+The user approved `Orbit_Desktop_Launcher_UX_Spec_v2.md` on 2026-10-20 as authoritative wherever it conflicts with this document. Windows and Arch Linux, spatial grids, widgets, exclusive dock ownership, new UI terms, and the complete v2 build sequence are authorized. Existing visual artwork and nonconflicting performance and coding rules remain in force. The older build-step restriction does not apply to v2.
+
 # Orbit glossary
+
+For v2 desktop layout terms, including Grid Cell Size, Grid Position, Widget Gallery, widget footprints, placement preview, insertion edge, folder center, Move to Page and Remove from Home, follow `Orbit_Desktop_Launcher_UX_Spec_v2.md`. These terms are approved alongside the terms below.
 
 One word for one thing. If a word is not in this file, do not use it in the UI, the code or the docs.
 
@@ -48,7 +54,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Path** | The editable location of a file or directory on this computer. |
 | **File search path** | A folder searched recursively for files by Search anything. |
 | **Directory search path** | A folder whose immediate directories appear in Search anything. |
-| **Folder** | Holds apps. Opens like an iOS folder. Cannot contain other folders. Its tile shows a small preview of its apps. |
+| **Folder** | Holds launchable shortcuts: Apps, Websites, Files and Directories. Opens like an iOS folder. Cannot contain other folders. Its tile shows a small preview of its apps. |
 | **Page** | One screen of items, like a phone home screen page. Pages have no names. Maximum 9. Leaving an empty page does not remove it. |
 | **Page swipe** | Dragging an empty area of a page left or right to open the previous or next page. |
 | **Grid** | The rows and columns of tiles on a page or inside an open folder. |
@@ -97,7 +103,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | Term | Meaning |
 |---|---|
-| **Shortcut** | A key (or key combination) assigned to an action. Fixed, listed in `SHORTCUTS.md`. The only word used for this, in the UI, the code and the docs. |
+| **Shortcut** | A key (or key combination) assigned to an action. Defaults are listed in `shortcuts.md`; editable in Settings. The only word used for this, in the UI, the code and the docs. |
 | **Action** | Something a shortcut can do, such as "Open" or "Close the top layer". |
 | **Mouse gesture** | Wheel, Shift+wheel, right-click and drag. Not shortcuts. |
 
@@ -115,7 +121,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | Close (as the name of the action) | Close the top layer |
 | Color (on an app or folder) | Removed |
 | Customize | Removed |
-| Background image | Not in the MVP (see `PLANNED_FEATURES.md`) |
+| Background image | Not in the MVP (see `planned-features.md`) |
 
 ## Supplied UI terms
 
@@ -128,3 +134,18 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Back to desktop** | Footer hint for Esc. |
 
 | **Choose icon** | Opens the native file chooser for a saved icon image. |
+
+## Saved data
+
+| Term | Meaning |
+|---|---|
+| **Export data** | Save Orbit's data and icons to a backup file. |
+| **Import data** | Restore Orbit's data and icons from a validated backup, retaining the previous data. |
+| **Backup** | A versioned file containing Orbit's saved data and icons. |
+
+| **Shortcuts** | Settings tab for listing, recording, changing and deleting action bindings. |
+| **General** | Settings tab for pages, data and search paths. |
+| **Delete page** | Remove the current page after confirmation and keep its items on a neighboring page. |
+
+| **Page margin** | Equal space around each side of a page, adjustable in Settings. |
+| **Item size** | The square page tile width and height in pixels, adjustable in Settings. |

@@ -33,6 +33,16 @@ const ACTIONS: [(&str, &str, SystemAction); 11] = [
 ];
 
 enum Action {
+    Move(String, usize),
+    ReorderPage(i32),
+    Geometry(usize, usize),
+    Widget(usize),
+    ChangeWidget(String, bool, usize, usize),
+    TransferData(bool),
+    SaveAppearance(i32, i32, usize, usize),
+    DeletePage,
+    SaveShortcut(i32, String, String),
+    DeleteShortcut(i32, String),
     Page(usize),
     Search(String),
     FilterInstalled(String),
@@ -52,9 +62,7 @@ enum Action {
     CloseFolder,
     LaunchFolder(usize, usize),
     AddPage,
-    Drop(usize, usize, i32, i32, bool),
-    MoveFolderApp(usize, usize, usize),
-    ReorderFolderApp(usize, usize, usize),
+    Drop(String, usize, usize, String),
     AddPredefined(String, u64),
     AddInstalledApp(String, u64),
     RefreshInstalledApps(u64),
@@ -99,6 +107,7 @@ impl Action {
 pub fn connect(launcher: &Launcher) {
     let (send, receive) = mpsc::channel();
     let requests = Arc::new(RequestSequence::default());
+    crate::spatial::connect(launcher);
     callbacks(launcher, send, requests.clone());
     crate::icons::connect(launcher);
     let weak = launcher.as_weak();
@@ -107,8 +116,8 @@ pub fn connect(launcher: &Launcher) {
         let (recent, recent_banner) = recent::Recent::load();
         let (inventory, inventory_banner) = Inventory::load();
         let mut apps = Apps {
+            page: config.active_page,
             config,
-            page: 0,
             icons: HashMap::new(),
             open_folder: None,
             inventory,
@@ -153,22 +162,19 @@ pub fn connect(launcher: &Launcher) {
                     | Action::Delete(_)
                     | Action::AddPage
                     | Action::Drop(..)
-                    | Action::MoveFolderApp(..)
-                    | Action::ReorderFolderApp(..)
                     | Action::AddPredefined(..)
                     | Action::AddInstalledApp(..)
                     | Action::SaveSearchPath(..)
                     | Action::DeleteSearchPath(..)
             );
             let drag_drop = matches!(action, Action::Drop(..));
+            let save_shortcut = matches!(action, Action::SaveShortcut(..));
             let save_search_path = matches!(action, Action::SaveSearchPath(..));
             let reset_after_save = saving
                 && !matches!(
                     action,
                     Action::AddPage
                         | Action::Drop(..)
-                        | Action::MoveFolderApp(..)
-                        | Action::ReorderFolderApp(..)
                         | Action::SaveSearchPath(..)
                         | Action::DeleteSearchPath(..)
                 );
@@ -178,7 +184,9 @@ pub fn connect(launcher: &Launcher) {
             let page_only = matches!(action, Action::Page(_));
             let refreshing = matches!(action, Action::RefreshInstalledApps(_));
             let filtering = matches!(action, Action::FilterInstalled(_));
-            let result = apps.apply(action, &requests, &weak);
+            let result = apps
+                .apply(action, &requests, &weak)
+                .and_then(|()| crate::spatial::reconcile(&mut apps.config));
             if request.is_some_and(|request| !requests.is_current(request)) {
                 continue;
             }
@@ -204,6 +212,9 @@ pub fn connect(launcher: &Launcher) {
             if drag_drop && !success {
                 let _ = weak.upgrade_in_event_loop(|launcher| launcher.invoke_finish_drag());
             }
+            if save_shortcut && success {
+                let _ = weak.upgrade_in_event_loop(|launcher| launcher.invoke_shortcut_saved());
+            }
             if save_search_path && success {
                 let _ = weak.upgrade_in_event_loop(|launcher| {
                     launcher.invoke_finish_search_path_save();
@@ -220,6 +231,19 @@ pub fn connect(launcher: &Launcher) {
 }
 
 fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSequence>) {
+    let sender = send.clone();
+    launcher.on_save_appearance(move |margin, size, columns, rows| {
+        let _ = sender.send(Action::SaveAppearance(
+            margin,
+            size,
+            columns as usize,
+            rows as usize,
+        ));
+    });
+    let sender = send.clone();
+    launcher.on_transfer_data(move |import| {
+        let _ = sender.send(Action::TransferData(import));
+    });
     let sender = send.clone();
     launcher.on_first_letter(|name| crate::icons::first_letter(&name).into());
     launcher.on_valid_name(|name| add_item::valid_name(&name));
@@ -344,17 +368,53 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         let _ = sender.send(Action::Open(index as usize));
     });
     let sender = send.clone();
+    launcher.on_delete_page(move || {
+        let _ = sender.send(Action::DeletePage);
+    });
+    let sender = send.clone();
+    launcher.on_save_shortcut(move |action, existing, keys| {
+        let _ = sender.send(Action::SaveShortcut(action, existing.into(), keys.into()));
+    });
+    let sender = send.clone();
+    launcher.on_delete_shortcut(move |action, keys| {
+        let _ = sender.send(Action::DeleteShortcut(action, keys.into()));
+    });
+    let sender = send.clone();
     launcher.on_add_page(move || {
         let _ = sender.send(Action::AddPage);
     });
     let sender = send.clone();
-    launcher.on_drop_item(move |source, target, origin, page, make_folder| {
+    launcher.on_move_item(move |id, page| {
+        let _ = sender.send(Action::Move(id.into(), page as usize));
+    });
+    let sender = send.clone();
+    launcher.on_reorder_page(move |direction| {
+        let _ = sender.send(Action::ReorderPage(direction));
+    });
+    let sender = send.clone();
+    launcher.on_geometry(move |columns, rows| {
+        let _ = sender.send(Action::Geometry(columns as usize, rows as usize));
+    });
+    let sender = send.clone();
+    launcher.on_add_widget(move |variant| {
+        let _ = sender.send(Action::Widget(variant as usize));
+    });
+    let sender = send.clone();
+    launcher.on_widget_action(move |id, refresh, width, height| {
+        let _ = sender.send(Action::ChangeWidget(
+            id.into(),
+            refresh,
+            width as usize,
+            height as usize,
+        ));
+    });
+    let sender = send.clone();
+    launcher.on_drop_item(move |id, page, target, into| {
         let _ = sender.send(Action::Drop(
-            source as usize,
-            target as usize,
-            origin,
-            page,
-            make_folder,
+            id.into(),
+            page as usize,
+            target.max(0) as usize,
+            into.into(),
         ));
     });
     let sender = send.clone();
@@ -368,22 +428,6 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     let sender = send.clone();
     launcher.on_launch_folder_app(move |folder, app| {
         let _ = sender.send(Action::LaunchFolder(folder as usize, app as usize));
-    });
-    let sender = send.clone();
-    launcher.on_move_folder_app(move |folder, app, target| {
-        let _ = sender.send(Action::MoveFolderApp(
-            folder as usize,
-            app as usize,
-            target as usize,
-        ));
-    });
-    let sender = send.clone();
-    launcher.on_reorder_folder_app(move |folder, source, target| {
-        let _ = sender.send(Action::ReorderFolderApp(
-            folder as usize,
-            source as usize,
-            target as usize,
-        ));
     });
 }
 
@@ -403,7 +447,7 @@ impl Apps {
             };
             return Some(apps.get(folder_app as usize)?.id.clone());
         }
-        (!matches!(item, Item::Folder { .. })).then(|| item.id().into())
+        (!matches!(item, Item::Folder { .. } | Item::Widget { .. })).then(|| item.id().into())
     }
 
     fn load_icons(&mut self) -> Result<(), String> {
@@ -412,6 +456,7 @@ impl Apps {
         for page in &self.config.pages {
             for item in &page.items {
                 match item {
+                    Item::Widget { .. } => {}
                     Item::App(app) => icons.push((app.id.clone(), app.icon.clone())),
                     Item::Website { id, icon, .. } => icons.push((id.clone(), icon.clone())),
                     Item::Folder { apps, .. } => {
@@ -577,6 +622,8 @@ impl Apps {
             Action::Page(index) => {
                 if index < self.config.pages.len() && index != self.page {
                     self.page = index;
+                    self.config.active_page = index;
+                    self.config.save().map_err(|error| error.to_string())?;
                 }
                 Ok(())
             }
@@ -598,13 +645,144 @@ impl Apps {
             }
             Action::LaunchFolder(folder, index) => self.launch_folder_app(self.page, folder, index),
             Action::AddPage => self.add_page(),
-            Action::Drop(source, target, origin, page, make_folder) => {
-                self.drop_item(source, target, origin, page, make_folder)
+            Action::DeletePage => self.delete_page(),
+            Action::Move(id, page) => {
+                let rect = self
+                    .config
+                    .positions
+                    .get(&id)
+                    .copied()
+                    .unwrap_or(crate::spatial::Rect::cell(0, self.config.columns));
+                let occupied = crate::spatial::occupied(&self.config, page);
+                let target = (0..self.config.columns * self.config.rows)
+                    .find(|slot| {
+                        let candidate = crate::spatial::Rect {
+                            row: slot / self.config.columns,
+                            col: slot % self.config.columns,
+                            ..rect
+                        };
+                        candidate.fits(self.config.columns, self.config.rows)
+                            && !occupied
+                                .iter()
+                                .any(|(other, r)| *other != id && candidate.overlaps(*r))
+                    })
+                    .ok_or("Page is full")?;
+                self.drop_item(&id, page, target, "")
             }
-            Action::MoveFolderApp(folder, app, target) => self.move_folder_app(folder, app, target),
-            Action::ReorderFolderApp(folder, source, target) => {
-                self.reorder_folder_app(folder, source, target)
+            Action::ReorderPage(direction) => {
+                let destination = self.page as i32 + direction;
+                if destination < 0 || destination as usize >= self.config.pages.len() {
+                    return Ok(());
+                }
+                let mut config = self.config.clone();
+                config.pages.swap(self.page, destination as usize);
+                config.active_page = destination as usize;
+                config.save().map_err(|e| e.to_string())?;
+                self.config = config;
+                self.page = destination as usize;
+                Ok(())
             }
+            Action::Geometry(columns, rows) => {
+                if self.config.columns == columns && self.config.rows == rows {
+                    return Ok(());
+                }
+                let mut config = self.config.clone();
+                config.columns = columns.max(1);
+                config.rows = rows.max(1);
+                crate::spatial::reconcile(&mut config)?;
+                config.save().map_err(|e| e.to_string())?;
+                self.config = config;
+                Ok(())
+            }
+            Action::Widget(variant) => {
+                let id = new_id()?;
+                let text = crate::spatial::widget_text(variant, sample());
+                let mut config = self.config.clone();
+                config.positions.insert(
+                    id.clone(),
+                    crate::spatial::Rect {
+                        row: 0,
+                        col: 0,
+                        width: 2,
+                        height: if variant < 2 { 2 } else { 1 },
+                    },
+                );
+                config.pages[self.page].items.push(Item::Widget {
+                    id,
+                    name: crate::spatial::WIDGETS[variant.min(4)].into(),
+                    text,
+                    variant,
+                });
+                crate::spatial::reconcile(&mut config)?;
+                config.save().map_err(|e| e.to_string())?;
+                self.config = config;
+                Ok(())
+            }
+            Action::ChangeWidget(id, refresh, width, height) => {
+                let mut config = self.config.clone();
+                if refresh {
+                    for item in config.pages.iter_mut().flat_map(|page| &mut page.items) {
+                        if let Item::Widget {
+                            id: item_id,
+                            text,
+                            variant,
+                            ..
+                        } = item
+                            && *item_id == id
+                        {
+                            let mut next = crate::spatial::widget_text(*variant, sample());
+                            if next == *text {
+                                next = crate::spatial::widget_text(*variant, sample() + 1);
+                            }
+                            *text = next;
+                        }
+                    }
+                } else if let Some(rect) = config.positions.get(&id).copied() {
+                    let rect = crate::spatial::Rect {
+                        width: width.clamp(1, 4),
+                        height: height.clamp(1, 4),
+                        ..rect
+                    };
+                    let positions = crate::spatial::place(
+                        &crate::spatial::occupied(&config, self.page),
+                        &id,
+                        rect,
+                        config.columns,
+                        config.rows,
+                    )
+                    .ok_or("Widget does not fit here")?;
+                    config.positions.extend(positions);
+                }
+                config.save().map_err(|e| e.to_string())?;
+                self.config = config;
+                Ok(())
+            }
+            Action::SaveAppearance(margin, size, columns, rows) => {
+                let mut config = self.config.clone();
+                config.page_margin = margin.clamp(0, 64);
+                config.item_size = size.clamp(80, 240);
+                config.columns = columns.max(1);
+                config.rows = rows.max(1);
+                crate::spatial::reconcile(&mut config)?;
+                config.save().map_err(|error| error.to_string())?;
+                self.config = config;
+                Ok(())
+            }
+            Action::SaveShortcut(index, action, keys) => self.save_shortcut(index, action, keys),
+            Action::DeleteShortcut(action, keys) => {
+                let mut config = self.config.clone();
+                if let Some(index) = config
+                    .shortcuts
+                    .iter()
+                    .position(|binding| binding.action == action && binding.keys == keys)
+                {
+                    config.shortcuts.remove(index);
+                    config.save().map_err(|error| error.to_string())?;
+                    self.config = config;
+                }
+                Ok(())
+            }
+            Action::Drop(id, page, target, into) => self.drop_item(&id, page, target, &into),
             Action::AddPredefined(action, request) => {
                 self.add_system_action(&action, requests, request)
             }
@@ -616,6 +794,34 @@ impl Apps {
             Action::DeleteSearchPath(directory, index) => self.delete_search_path(directory, index),
             Action::SaveWebsite(index, name, url, request) => {
                 self.save_website(index, name, url, requests, request)
+            }
+            Action::TransferData(import) => {
+                let mut result = platform::transfer_data(import);
+                if import && matches!(&result, Ok(Some(_))) {
+                    self.config = config::load().0;
+                    self.recent = recent::Recent::load().0;
+                    self.inventory = Inventory::load().0;
+                    self.page = 0;
+                    self.open_folder = None;
+                    self.query.clear();
+                    self.installed_filter.clear();
+                    self.search_paths = None;
+                    self.icons.clear();
+                    if let Err(error) = self.load_icons() {
+                        result = Err(error);
+                    }
+                }
+                let status = match result {
+                    Ok(Some(status)) => status,
+                    Ok(None) => String::new(),
+                    Err(error) => error,
+                };
+                let _ = weak.upgrade_in_event_loop(move |launcher| {
+                    let _ = platform::restore_after_chooser(&launcher);
+                    launcher.set_data_status(status.into());
+                    launcher.set_data_busy(false);
+                });
+                Ok(())
             }
             Action::ChoosePath(directory, request) => {
                 let Some(path) = platform::choose_path(directory) else {
@@ -650,7 +856,7 @@ impl Apps {
             Item::File { name, path, .. } | Item::Directory { name, path, .. } => {
                 platform::open(path).map_err(|error| format!("Couldn't open '{}': {error}", name))
             }
-            Item::Folder { .. } => Ok(()),
+            Item::Folder { .. } | Item::Widget { .. } => Ok(()),
         }
     }
 
@@ -693,6 +899,9 @@ impl Apps {
                 platform::launch(&installed.command)
             }
             Launch::Action(action) => platform::launch_action(action),
+            Launch::Website(path) | Launch::File(path) | Launch::Directory(path) => {
+                platform::open(path)
+            }
         }
     }
 
@@ -988,7 +1197,7 @@ impl Apps {
             for (offset, app) in apps.iter().enumerate() {
                 config.pages[self.page]
                     .items
-                    .insert(index + offset, Item::App(app.clone()));
+                    .insert(index + offset, app.clone().into_item());
             }
         }
         config
@@ -1181,12 +1390,54 @@ impl Apps {
         Ok(())
     }
 
+    fn delete_page(&mut self) -> Result<(), String> {
+        if self.config.pages.len() == 1 {
+            return Ok(());
+        }
+        let mut config = self.config.clone();
+        let Some(destination) = config.remove_page(self.page) else {
+            return Ok(());
+        };
+        config
+            .save()
+            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
+        self.config = config;
+        self.page = destination;
+        self.open_folder = None;
+        Ok(())
+    }
+
+    fn save_shortcut(&mut self, action: i32, existing: String, keys: String) -> Result<(), String> {
+        let mut config = self.config.clone();
+        let binding = crate::shortcuts::Shortcut { action, keys };
+        if existing.is_empty() {
+            config.shortcuts.push(binding);
+        } else if let Some(current) = config
+            .shortcuts
+            .iter_mut()
+            .find(|entry| entry.action == action && entry.keys == existing)
+        {
+            *current = binding;
+        } else {
+            return Err("The shortcut changed before it could be saved.".into());
+        }
+        if !crate::shortcuts::valid(&config.shortcuts) {
+            return Err("Choose a shortcut that is not already used.".into());
+        }
+        config.save().map_err(|error| error.to_string())?;
+        self.config = config;
+        Ok(())
+    }
+
     fn add_page(&mut self) -> Result<(), String> {
         if self.config.pages.len() >= 9 {
             return Ok(());
         }
         let mut config = self.config.clone();
-        config.pages.push(crate::config::Page { items: Vec::new() });
+        config.pages.push(crate::config::Page {
+            id: crate::config::new_page_id(),
+            items: Vec::new(),
+        });
         config
             .save()
             .map_err(|error| format!("Couldn't save config.json: {error}"))?;
@@ -1197,138 +1448,42 @@ impl Apps {
 
     fn drop_item(
         &mut self,
-        source: usize,
+        id: &str,
+        page: usize,
         target: usize,
-        origin: i32,
-        destination: i32,
-        make_folder: bool,
+        into: &str,
     ) -> Result<(), String> {
-        let origin = if origin >= 0 {
-            origin as usize
-        } else {
-            self.page
-        };
-        if origin >= self.config.pages.len() {
-            return Ok(());
-        }
-        let items = &self.config.pages[origin].items;
-        if source >= items.len() {
-            return Ok(());
-        }
+        let keep_open = self
+            .open_folder
+            .and_then(|index| self.config.pages[self.page].items.get(index))
+            .is_some_and(|item| self.page == page && item.id() == into);
         let mut config = self.config.clone();
-        let destination = if destination >= 0 {
-            destination as usize
-        } else {
-            origin
-        };
-        if destination != origin {
-            if destination == config.pages.len() && config.pages.len() < 9 {
-                config.pages.push(crate::config::Page { items: Vec::new() });
-            }
-            if destination >= config.pages.len() {
-                return Ok(());
-            }
-            let item = config.pages[origin].items.remove(source);
-            let insertion = target.min(config.pages[destination].items.len());
-            config.pages[destination].items.insert(insertion, item);
-            config
-                .save()
-                .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-            self.config = config;
-            self.page = destination;
-            self.open_folder = None;
+        if !crate::item_drop::apply(&mut config, id, page, target, into, new_id()?) {
             return Ok(());
         }
-        if target > items.len() {
-            return Ok(());
-        }
-        if source == target {
-            return Ok(());
-        }
-        let items = &mut config.pages[origin].items;
-        let source_item = items.remove(source);
-        let insert_after = source < target;
-        let target = if source < target {
-            target.saturating_sub(1)
-        } else {
-            target
-        };
-        match (source_item, items.get_mut(target)) {
-            (Item::App(app), Some(Item::App(other))) if make_folder => {
-                let other = std::mem::replace(other, app.clone());
-                items[target] = Item::Folder {
-                    id: new_id()?,
-                    name: other.name.clone(),
-                    apps: vec![other, app],
-                };
-            }
-            (Item::App(app), Some(Item::Folder { apps, .. })) => apps.push(app),
-            (item, _) => items.insert((target + usize::from(insert_after)).min(items.len()), item),
-        }
+        config.active_page = page.min(config.pages.len() - 1);
         config
             .save()
             .map_err(|error| format!("Couldn't save config.json: {error}"))?;
         self.config = config;
-        Ok(())
-    }
-
-    fn move_folder_app(
-        &mut self,
-        folder: usize,
-        index: usize,
-        target: usize,
-    ) -> Result<(), String> {
-        let mut config = self.config.clone();
-        let removes_folder = matches!(
-            config.pages[self.page].items.get(folder),
-            Some(Item::Folder { apps, .. }) if apps.len() == 1
-        );
-        let Some(Item::Folder { apps, .. }) = config.pages[self.page].items.get_mut(folder) else {
-            return Ok(());
-        };
-        if index >= apps.len() {
-            return Ok(());
-        }
-        let app = apps.remove(index);
-        if removes_folder {
-            config.pages[self.page].items.remove(folder);
-        }
-        let items = &mut config.pages[self.page].items;
-        let target = target.min(items.len());
-        let target = target.saturating_sub(usize::from(removes_folder && target > folder));
-        items.insert(target.min(items.len()), Item::App(app));
-        config
-            .save()
-            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-        self.config = config;
-        self.open_folder = None;
-        Ok(())
-    }
-
-    fn reorder_folder_app(
-        &mut self,
-        folder: usize,
-        source: usize,
-        target: usize,
-    ) -> Result<(), String> {
-        let mut config = self.config.clone();
-        let Some(Item::Folder { apps, .. }) = config.pages[self.page].items.get_mut(folder) else {
-            return Ok(());
-        };
-        if source >= apps.len() || target >= apps.len() || source == target {
-            return Ok(());
-        }
-        let app = apps.remove(source);
-        apps.insert(target.min(apps.len()), app);
-        config
-            .save()
-            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-        self.config = config;
+        self.page = page.min(self.config.pages.len() - 1);
+        self.config.active_page = self.page;
+        self.open_folder = self.config.pages[page]
+            .items
+            .iter()
+            .position(|item| item.id() == into && matches!(item, Item::Folder { .. }))
+            .filter(|_| keep_open);
         Ok(())
     }
 
     fn tile(&self, item: &Item, page: usize, index: usize) -> Tile {
         let mut tile = Tile::new(item, &self.icons);
+        tile.rect = self
+            .config
+            .positions
+            .get(item.id())
+            .copied()
+            .unwrap_or(crate::spatial::Rect::cell(index, self.config.columns));
         tile.page = page as i32;
         tile.index = index as i32;
         tile.pinned = self.config.pinned.iter().any(|id| id == item.id());
@@ -1344,7 +1499,7 @@ impl Apps {
                 if let Item::Folder { apps, .. } = item
                     && let Some(folder_app) = apps.iter().position(|app| app.id == id)
                 {
-                    let mut tile = Tile::new(&Item::App(apps[folder_app].clone()), &self.icons);
+                    let mut tile = Tile::new(&apps[folder_app].clone().into_item(), &self.icons);
                     tile.page = page as i32;
                     tile.index = index as i32;
                     tile.folder_app_index = Some(folder_app as i32);
@@ -1370,6 +1525,9 @@ impl Apps {
                         .collect::<Vec<_>>()
                 })
         };
+        let previews: Vec<_> = (0..self.config.pages.len()).map(page_items).collect();
+        let margin = self.config.page_margin;
+        let size = self.config.item_size;
         let items = page_items(self.page);
         let previous = self.page.checked_sub(1).map(page_items).unwrap_or_default();
         let next = page_items(self.page + 1);
@@ -1492,6 +1650,19 @@ impl Apps {
                 )
             })
             .collect();
+        let shortcuts = self.config.shortcuts.clone();
+        let shortcut_groups = (0..12)
+            .map(|action| {
+                (
+                    action,
+                    shortcuts
+                        .iter()
+                        .filter(|binding| binding.action == action)
+                        .map(|binding| binding.keys.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
         let installed_status = self.inventory.status().to_string();
         let installed_apps_loaded = self.inventory.loaded();
         let installed_apps_match = !installed_apps.is_empty();
@@ -1505,7 +1676,7 @@ impl Apps {
                 name.clone(),
                 apps.iter()
                     .map(|app| {
-                        let item = Item::App(app.clone());
+                        let item = app.clone().into_item();
                         Tile::new(&item, &self.icons)
                     })
                     .collect::<Vec<_>>(),
@@ -1566,6 +1737,43 @@ impl Apps {
             );
             launcher
                 .set_installed_apps(std::rc::Rc::new(slint::VecModel::from(installed_apps)).into());
+            launcher.set_page_margin(margin);
+            launcher.set_item_size(size);
+            launcher.set_page_previews(
+                std::rc::Rc::new(slint::VecModel::from(
+                    previews
+                        .into_iter()
+                        .map(|items| crate::PageItems {
+                            items: std::rc::Rc::new(slint::VecModel::from(
+                                items.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
+                            ))
+                            .into(),
+                        })
+                        .collect::<Vec<_>>(),
+                ))
+                .into(),
+            );
+            launcher.set_shortcuts(crate::shortcuts::model(shortcuts));
+            launcher.set_shortcut_groups(
+                std::rc::Rc::new(slint::VecModel::from(
+                    shortcut_groups
+                        .into_iter()
+                        .map(|(action, keys)| crate::ShortcutGroup {
+                            action,
+                            entries: std::rc::Rc::new(slint::VecModel::from(
+                                keys.into_iter()
+                                    .map(|keys| crate::ShortcutEntry {
+                                        action,
+                                        keys: keys.into(),
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ))
+                            .into(),
+                        })
+                        .collect::<Vec<_>>(),
+                ))
+                .into(),
+            );
             launcher.set_installed_status(installed_status.into());
             launcher.set_installed_apps_loaded(installed_apps_loaded);
             launcher.set_installed_apps_match(installed_apps_match);
@@ -1606,6 +1814,12 @@ fn set_page_items(
     launcher.set_previous_items(model(previous));
     launcher.set_next_items(model(next));
     launcher.set_current_page(page);
+    launcher.set_page_names(slint::ModelRc::new(slint::VecModel::from(
+        (0..count)
+            .map(|index| format!("Page {}", index + 1).into())
+            .chain((count < 9).then(|| "New page".into()))
+            .collect::<Vec<slint::SharedString>>(),
+    )));
     launcher.set_page_count(count);
     launcher.invoke_finish_drag();
 }
@@ -1771,6 +1985,9 @@ fn search_path_result(path: PathBuf, directory: bool) -> SearchPathResult {
 // Pixel buffers can cross threads; Slint images stay on the interface thread.
 #[derive(Default)]
 struct Tile {
+    rect: crate::spatial::Rect,
+    widget: bool,
+    widget_text: String,
     id: String,
     page: i32,
     index: i32,
@@ -1806,6 +2023,10 @@ impl Tile {
             ..Self::default()
         };
         match item {
+            Item::Widget { text, .. } => {
+                tile.widget = true;
+                tile.widget_text = text.clone();
+            }
             Item::App(app) => {
                 tile.app = true;
                 if let Launch::Command(command) = &app.launch {
@@ -1846,7 +2067,7 @@ impl Tile {
             Item::Website { icon, .. } | Item::File { icon, .. } | Item::Directory { icon, .. } => {
                 Some(icon)
             }
-            Item::Folder { .. } => None,
+            Item::Folder { .. } | Item::Widget { .. } => None,
         };
         if let Some(icon) = icon {
             tile.icon_value = serde_json::to_string(icon).unwrap_or_default();
@@ -1874,6 +2095,12 @@ impl Tile {
     fn into_slint(self) -> AppTile {
         let icon_present = self.icon.is_some();
         AppTile {
+            row: self.rect.row as i32,
+            col: self.rect.col as i32,
+            span_x: self.rect.width.max(1) as i32,
+            span_y: self.rect.height.max(1) as i32,
+            widget: self.widget,
+            widget_text: self.widget_text.into(),
             id: self.id.into(),
             page: self.page,
             index: self.index,
@@ -1941,6 +2168,7 @@ mod tests {
             inventory: Inventory::default(),
             installed_filter: String::new(),
             query: String::new(),
+            search_paths: None,
             recent: recent::Recent::default(),
         };
 
@@ -1957,4 +2185,11 @@ mod tests {
         assert_eq!(tile.folder_app_index, Some(0));
         assert!(tile.pinned);
     }
+}
+
+fn sample() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
 }

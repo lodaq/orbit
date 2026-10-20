@@ -1,10 +1,20 @@
+#[path = "add-item.rs"]
 mod add_item;
 mod apps;
 mod config;
 mod daemon;
 mod icons;
+#[path = "item-drop.rs"]
+mod item_drop;
+#[cfg(not(windows))]
+mod platform;
+#[cfg(windows)]
+#[path = "platform-windows.rs"]
 mod platform;
 mod recent;
+mod shortcuts;
+mod spatial;
+mod storage;
 
 slint::include_modules!();
 

@@ -1,4 +1,5 @@
 use crate::config::{InstalledApp, SystemAction};
+pub use crate::storage::*;
 use slint::ComponentHandle;
 use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
 use std::cell::Cell;
@@ -14,10 +15,10 @@ use std::process::{Command, Stdio};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use winit::event::{ElementState, WindowEvent};
-use winit::keyboard::{Key, NamedKey};
 
 fn directory() -> io::Result<PathBuf> {
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+    let runtime = std::env::var_os("ORBIT_RUNTIME_DIRECTORY")
+        .or_else(|| std::env::var_os("XDG_RUNTIME_DIR"))
         .ok_or_else(|| io::Error::other("XDG_RUNTIME_DIR is not set"))?;
     let path = PathBuf::from(runtime).join("orbit");
     fs::DirBuilder::new()
@@ -25,112 +26,6 @@ fn directory() -> io::Result<PathBuf> {
         .mode(0o700)
         .create(&path)?;
     Ok(path)
-}
-
-fn config_path() -> io::Result<PathBuf> {
-    let directory = match std::env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()) {
-        Some(path) => PathBuf::from(path),
-        None => PathBuf::from(
-            std::env::var_os("HOME").ok_or_else(|| io::Error::other("HOME is not set"))?,
-        )
-        .join(".config"),
-    };
-    Ok(directory.join("orbit").join("config.json"))
-}
-
-pub fn read_config() -> io::Result<Option<Vec<u8>>> {
-    match fs::read(config_path()?) {
-        Ok(text) => Ok(Some(text)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-pub fn backup_config() -> io::Result<()> {
-    let path = config_path()?;
-    fs::rename(&path, path.with_extension("json.bad"))
-}
-
-pub fn write_config(data: &[u8]) -> io::Result<()> {
-    let path = config_path()?;
-    fs::create_dir_all(path.parent().expect("config has a directory"))?;
-    let temporary = path.with_extension("json.tmp");
-    let result = (|| {
-        let mut file = File::create(&temporary)?;
-        file.write_all(data)?;
-        file.sync_all()?;
-        fs::rename(&temporary, &path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
-}
-
-fn recent_path() -> io::Result<PathBuf> {
-    Ok(config_path()?.with_file_name("recent.json"))
-}
-
-pub fn read_recent() -> io::Result<Option<Vec<u8>>> {
-    match fs::read(recent_path()?) {
-        Ok(data) => Ok(Some(data)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-pub fn backup_recent() -> io::Result<()> {
-    let path = recent_path()?;
-    fs::rename(&path, path.with_extension("json.bad"))
-}
-
-pub fn write_recent(data: &[u8]) -> io::Result<()> {
-    let path = recent_path()?;
-    fs::create_dir_all(path.parent().expect("recent has a directory"))?;
-    let temporary = path.with_extension("json.tmp");
-    let result = (|| {
-        let mut file = File::create(&temporary)?;
-        file.write_all(data)?;
-        file.sync_all()?;
-        fs::rename(&temporary, &path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
-}
-
-fn installed_apps_path() -> io::Result<PathBuf> {
-    Ok(config_path()?.with_file_name("installed-apps.json"))
-}
-
-pub fn read_installed_apps() -> io::Result<Option<Vec<u8>>> {
-    match fs::read(installed_apps_path()?) {
-        Ok(data) => Ok(Some(data)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-pub fn backup_installed_apps() -> io::Result<()> {
-    let path = installed_apps_path()?;
-    fs::rename(&path, path.with_extension("json.bad"))
-}
-
-pub fn write_installed_apps(data: &[u8]) -> io::Result<()> {
-    let path = installed_apps_path()?;
-    fs::create_dir_all(path.parent().expect("installed apps have a directory"))?;
-    let temporary = path.with_extension("json.tmp");
-    let result = (|| {
-        let mut file = File::create(&temporary)?;
-        file.write_all(data)?;
-        file.sync_all()?;
-        fs::rename(&temporary, &path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
 }
 
 pub fn scan_installed_apps() -> io::Result<Vec<InstalledApp>> {
@@ -310,253 +205,6 @@ fn cache_installed_icon(id: &str, source: &Path) -> io::Result<crate::config::Ic
     Ok(crate::config::Icon::File(name))
 }
 
-fn icons_directory() -> io::Result<PathBuf> {
-    let directory = config_path()?
-        .parent()
-        .expect("config has a directory")
-        .join("icons");
-    fs::create_dir_all(&directory)?;
-    Ok(directory)
-}
-
-pub fn icon_path(name: &str) -> io::Result<PathBuf> {
-    Ok(icons_directory()?.join(name))
-}
-
-pub fn read_icon(name: &str) -> io::Result<Vec<u8>> {
-    fs::read(icon_path(name)?)
-}
-
-pub fn write_icon(name: &str, data: &[u8]) -> io::Result<()> {
-    let path = icon_path(name)?;
-    let temporary = path.with_extension("tmp");
-    let result = (|| {
-        let mut file = File::create(&temporary)?;
-        file.write_all(data)?;
-        file.sync_all()?;
-        fs::rename(&temporary, &path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
-}
-
-pub fn remove_icon(name: &str) {
-    if let Ok(path) = icon_path(name) {
-        let _ = fs::remove_file(path);
-    }
-}
-
-pub fn fetch_icon(url: &str) -> Option<(String, Vec<u8>)> {
-    let (scheme, address) = url.split_once("://")?;
-    let host = address.split(['/', '?', '#']).next()?;
-    if host.is_empty()
-        || !host
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b".-:".contains(&byte))
-    {
-        return None;
-    }
-    if let Some((_, page)) = fetch_url(url, "html")
-        && let Some(icon) = icon_link(&page, scheme, host)
-        && let Some(image) = fetch_url(&icon, "")
-    {
-        return Some(image);
-    }
-    for extension in ["svg", "png", "jpg", "ico"] {
-        let address = format!("{scheme}://{host}/favicon.{extension}");
-        if let Some(image) = fetch_url(&address, extension) {
-            return Some(image);
-        }
-    }
-    fetch_url(
-        &format!("https://www.google.com/s2/favicons?domain_url={host}&sz=128"),
-        "png",
-    )
-}
-
-fn fetch_url(address: &str, extension: &str) -> Option<(String, Vec<u8>)> {
-    let output = Command::new("curl")
-        .args([
-            "--fail",
-            "--location",
-            "--silent",
-            "--show-error",
-            "--proto",
-            "=http,https",
-            "--proto-redir",
-            "=http,https",
-            "--max-time",
-            "4",
-            "--max-filesize",
-            "2097152",
-            address,
-        ])
-        .output()
-        .ok()?;
-    (output.status.success() && is_icon(&output.stdout, extension))
-        .then_some((extension.into(), output.stdout))
-}
-
-fn icon_link(html: &[u8], scheme: &str, host: &str) -> Option<String> {
-    let html = std::str::from_utf8(html).ok()?;
-    let mut remaining = html;
-    while let Some(start) = remaining.to_ascii_lowercase().find("<link") {
-        remaining = &remaining[start..];
-        let end = remaining.find('>')?;
-        let tag = &remaining[..end];
-        remaining = &remaining[end + 1..];
-        let Some(rel) = attribute(tag, "rel") else {
-            continue;
-        };
-        if !rel
-            .split_ascii_whitespace()
-            .any(|word| word.eq_ignore_ascii_case("icon"))
-        {
-            continue;
-        }
-        let Some(href) = attribute(tag, "href") else {
-            continue;
-        };
-        let address = if href.starts_with("https://") || href.starts_with("http://") {
-            href.to_string()
-        } else if let Some(path) = href.strip_prefix("//") {
-            format!("{scheme}://{path}")
-        } else if href.starts_with('/') {
-            format!("{scheme}://{host}{href}")
-        } else {
-            format!("{scheme}://{host}/{href}")
-        };
-        return Some(address);
-    }
-    None
-}
-
-fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
-    let bytes = tag.as_bytes();
-    let mut offset = 5;
-    while offset < bytes.len() {
-        while offset < bytes.len() && (bytes[offset].is_ascii_whitespace() || bytes[offset] == b'/')
-        {
-            offset += 1;
-        }
-        let start = offset;
-        while offset < bytes.len() && !bytes[offset].is_ascii_whitespace() && bytes[offset] != b'='
-        {
-            offset += 1;
-        }
-        if start == offset {
-            break;
-        }
-        let key = &tag[start..offset];
-        while offset < bytes.len() && bytes[offset].is_ascii_whitespace() {
-            offset += 1;
-        }
-        if offset == bytes.len() || bytes[offset] != b'=' {
-            continue;
-        }
-        offset += 1;
-        while offset < bytes.len() && bytes[offset].is_ascii_whitespace() {
-            offset += 1;
-        }
-        if offset == bytes.len() {
-            break;
-        }
-        let quote = matches!(bytes[offset], b'"' | b'\'').then_some(bytes[offset]);
-        if quote.is_some() {
-            offset += 1;
-        }
-        let start = offset;
-        while offset < bytes.len()
-            && quote.map_or(!bytes[offset].is_ascii_whitespace(), |quote| {
-                bytes[offset] != quote
-            })
-        {
-            offset += 1;
-        }
-        let value = &tag[start..offset];
-        if quote.is_some() && offset < bytes.len() {
-            offset += 1;
-        }
-        if key.eq_ignore_ascii_case(name) {
-            return Some(value);
-        }
-    }
-    None
-}
-
-#[cfg(test)]
-mod icon_tests {
-    use super::icon_link;
-
-    #[test]
-    fn reads_site_icon_with_attributes_in_either_order() {
-        assert_eq!(
-            icon_link(
-                br#"<link rel="stylesheet" href="x.css"><link href="/brand.png" sizes="64x64" rel="icon">"#,
-                "https",
-                "example.com",
-            ),
-            Some("https://example.com/brand.png".into()),
-        );
-    }
-
-    #[test]
-    fn reads_shortcut_icon_rel_tokens() {
-        assert_eq!(
-            icon_link(
-                br#"<link rel="shortcut icon" href="/favicon.png">"#,
-                "https",
-                "example.com",
-            ),
-            Some("https://example.com/favicon.png".into()),
-        );
-    }
-
-    #[test]
-    fn reads_absolute_site_icon_url() {
-        assert_eq!(
-            icon_link(
-                br#"<link rel="icon" href="https://icons.example.com/brand.png">"#,
-                "https",
-                "example.com",
-            ),
-            Some("https://icons.example.com/brand.png".into()),
-        );
-    }
-}
-
-pub fn choose_path(directory: bool) -> Option<PathBuf> {
-    let dialog = rfd::FileDialog::new();
-    if directory {
-        dialog.pick_folder()
-    } else {
-        dialog.pick_file()
-    }
-}
-
-fn is_icon(data: &[u8], extension: &str) -> bool {
-    match extension {
-        "svg" => {
-            let data = data.trim_ascii_start();
-            data.starts_with(b"<svg") || data.starts_with(b"<?xml")
-        }
-        "png" => data.starts_with(b"\x89PNG\r\n\x1a\n"),
-        "jpg" => data.starts_with(b"\xff\xd8\xff"),
-        "ico" => data.starts_with(&[0, 0, 1, 0]),
-        "html" => data.starts_with(b"<!DOCTYPE html") || data.starts_with(b"<html"),
-        "" => {
-            data.starts_with(b"<svg")
-                || data.starts_with(b"<?xml")
-                || data.starts_with(b"\x89PNG\r\n\x1a\n")
-                || data.starts_with(b"\xff\xd8\xff")
-                || data.starts_with(&[0, 0, 1, 0])
-        }
-        _ => false,
-    }
-}
-
 pub fn listen() -> io::Result<Option<(File, UnixListener)>> {
     let path = directory()?;
     let lock = OpenOptions::new()
@@ -663,6 +311,65 @@ fn hyprland(command: &str) -> io::Result<String> {
     Ok(reply)
 }
 
+pub struct DataChooserGuard(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for DataChooserGuard {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+pub fn float_data_chooser(title: &str) -> DataChooserGuard {
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopped = stop.clone();
+    let title = title.to_owned();
+    std::thread::spawn(move || {
+        let mut placed = String::new();
+        while !stopped.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Ok(clients) = hyprland("j/clients")
+                && let Ok(clients) = serde_json::from_str::<Vec<serde_json::Value>>(&clients)
+            {
+                let fullscreen = clients.iter().any(|client| {
+                    client["pid"].as_u64() == Some(std::process::id().into())
+                        && client["fullscreen"].as_u64() == Some(2)
+                });
+                if let Some(client) = clients.iter().find(|client| {
+                    client["class"] == "xdg-desktop-portal-gtk" && client["title"] == title
+                }) && let Some(address) = client["address"].as_str()
+                {
+                    let window = format!("address:{address}");
+                    let new_window = placed != address;
+                    if new_window {
+                        let _ = hyprland(&format!(
+                            "dispatch hl.dsp.window.float({{action = \"set\", window = \"{window}\"}})"
+                        ));
+                        let _ = hyprland(&format!(
+                            "dispatch hl.dsp.window.resize({{x = 1100, y = 760, window = \"{window}\"}})"
+                        ));
+                        let _ = hyprland(&format!(
+                            "dispatch hl.dsp.window.center({{window = \"{window}\"}})"
+                        ));
+                        placed = address.to_owned();
+                    }
+                    // Portal mapping and focus changes can each clear fullscreen.
+                    if !fullscreen || new_window {
+                        let _ = fullscreen_launcher();
+                        let _ = hyprland(&format!(
+                            "dispatch hl.dsp.window.alter_zorder({{mode = \"top\", window = \"{window}\"}})"
+                        ));
+                        let _ =
+                            hyprland(&format!("dispatch hl.dsp.focus({{window = \"{window}\"}})"));
+                    }
+                } else if !fullscreen {
+                    let _ = fullscreen_launcher();
+                }
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    });
+    DataChooserGuard(stop)
+}
+
 fn cursor_monitor() -> Result<String, Box<dyn std::error::Error>> {
     let cursor: serde_json::Value = serde_json::from_str(&hyprland("j/cursorpos")?)?;
     let monitors: Vec<serde_json::Value> = serde_json::from_str(&hyprland("j/monitors")?)?;
@@ -705,8 +412,9 @@ pub fn show_or_hide(
     }
     launcher.invoke_reset_launcher();
     if launcher.window().is_visible() {
-        fullscreen(launcher.window(), monitor);
+        // The resident window stays fullscreen; requesting it again closes the special workspace.
         restore(monitor)?;
+        fullscreen_launcher()?;
         launcher.set_monitor_name("".into());
         focus_after_show(launcher);
     } else {
@@ -729,7 +437,7 @@ fn restore(name: &str) -> Result<(), Box<dyn std::error::Error>> {
             let name = monitor["specialWorkspace"]["name"]
                 .as_str()
                 .ok_or("missing workspace")?;
-            (serde_json::to_string(name)?, format!("special:{name}"))
+            (serde_json::to_string(name)?, name.to_owned())
         } else {
             let name = monitor["activeWorkspace"]["id"]
                 .as_i64()
@@ -770,12 +478,31 @@ pub fn hide(launcher: &crate::Launcher) -> Result<(), Box<dyn std::error::Error>
 
 pub fn restore_after_chooser(launcher: &crate::Launcher) -> Result<(), Box<dyn std::error::Error>> {
     let monitor = cursor_monitor()?;
-    fullscreen(launcher.window(), &monitor);
     restore(&monitor)?;
+    fullscreen_launcher()?;
     launcher.set_launcher_visible(true);
     launcher.window().request_redraw();
     focus_after_show(launcher);
     Ok(())
+}
+
+fn fullscreen_launcher() -> io::Result<()> {
+    let clients: Vec<serde_json::Value> = serde_json::from_str(&hyprland("j/clients")?)?;
+    if clients.iter().any(|client| {
+        client["pid"].as_u64() == Some(std::process::id().into())
+            && client["fullscreen"].as_u64() == Some(2)
+    }) {
+        return Ok(());
+    }
+    let reply = hyprland(&format!(
+        "dispatch hl.dsp.window.fullscreen({{mode = \"fullscreen\", action = \"toggle\", window = \"pid:{}\"}})",
+        std::process::id()
+    ))?;
+    if reply.trim() == "ok" {
+        Ok(())
+    } else {
+        Err(io::Error::other(reply))
+    }
 }
 
 fn dispatch(command: &str, legacy: &str) -> io::Result<()> {
@@ -826,7 +553,9 @@ fn focus_after_show(launcher: &crate::Launcher) {
             if let Err(error) = focus_launcher() {
                 eprintln!("orbit: {error}");
             }
-            launcher.invoke_focus_search();
+            if !launcher.get_settings() {
+                launcher.invoke_focus_search();
+            }
         }
     });
 }
@@ -835,7 +564,7 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
     let weak = launcher.as_weak();
     let focus_generation = Rc::new(Cell::new(0_u64));
     let mut fullscreen_monitor = String::new();
-    let mut control = false;
+    let mut modifiers = winit::keyboard::ModifiersState::empty();
     launcher
         .window()
         .on_winit_window_event(move |window, event| {
@@ -846,57 +575,43 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
                 && !launcher.get_monitor_name().is_empty()
             {
                 let monitor = launcher.get_monitor_name().to_string();
-                if fullscreen_monitor != monitor {
-                    fullscreen(window, &monitor);
-                    fullscreen_monitor = monitor.clone();
-                }
                 // The redraw path is the single place that restores the resident window.
                 if let Err(error) = restore(&monitor) {
                     eprintln!("orbit: {error}");
+                }
+                if fullscreen_monitor != monitor {
+                    fullscreen(window, &monitor);
+                    if let Err(error) = fullscreen_launcher() {
+                        eprintln!("orbit: {error}");
+                    }
+                    fullscreen_monitor = monitor.clone();
                 }
                 launcher.set_monitor_name("".into());
                 focus_after_show(&launcher);
             }
             match event {
-                WindowEvent::ModifiersChanged(modifiers) => {
-                    control = modifiers.state().control_key();
+                WindowEvent::ModifiersChanged(state) => {
+                    modifiers = state.state();
                 }
                 WindowEvent::KeyboardInput { event, .. }
-                    if event.state == ElementState::Pressed
-                        && control
-                        && event.logical_key == Key::Character("k".into()) =>
+                    if event.state == ElementState::Pressed =>
                 {
-                    launcher.invoke_focus_search();
-                    return EventResult::PreventDefault;
-                }
-                WindowEvent::KeyboardInput { event, .. }
-                    if event.state == ElementState::Pressed
-                        && matches!(
-                            event.logical_key,
-                            Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight)
-                        ) =>
-                {
-                    // Text fields consume arrows; page keys run only when no field has focus.
-                    if !launcher.get_search_focused() {
-                        launcher.invoke_page_key(
-                            if event.logical_key == Key::Named(NamedKey::ArrowLeft) {
-                                -1
-                            } else {
-                                1
-                            },
-                        );
+                    if crate::shortcuts::handle(&launcher, &event.logical_key, modifiers) {
+                        return EventResult::PreventDefault;
                     }
                 }
                 WindowEvent::Focused(active) => {
                     let generation = focus_generation.get().wrapping_add(1);
                     focus_generation.set(generation);
                     if !active {
+                        launcher.invoke_cancel_pointer();
                         let focus_generation = focus_generation.clone();
                         let weak = weak.clone();
                         slint::Timer::single_shot(Duration::from_millis(120), move || {
                             if focus_generation.get() == generation
                                 && let Some(launcher) = weak.upgrade()
                                 && launcher.get_launcher_visible()
+                                && !launcher.get_data_busy()
                                 && !launcher.get_icon_busy()
                                 && launcher.get_sheet_operation() != "choosing"
                                 && let Err(error) = self::hide(&launcher)
@@ -905,13 +620,6 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
                             }
                         });
                     }
-                }
-                WindowEvent::KeyboardInput { event, .. }
-                    if event.state == ElementState::Pressed
-                        && event.logical_key == Key::Named(NamedKey::Escape) =>
-                {
-                    launcher.invoke_close_top_layer();
-                    return EventResult::PreventDefault;
                 }
                 _ => (),
             }
@@ -978,33 +686,4 @@ fn detached(command: &mut Command) -> io::Result<()> {
         let _ = child.wait();
     });
     Ok(())
-}
-
-pub fn choose_icon() -> Option<PathBuf> {
-    rfd::FileDialog::new()
-        .set_title("Choose icon")
-        .add_filter("Icon", &["png", "jpg", "jpeg", "svg", "ico"])
-        .pick_file()
-}
-
-pub fn read_chosen_icon(value: &str) -> Result<(String, Vec<u8>), String> {
-    use std::hash::{Hash, Hasher};
-    let path = PathBuf::from(value);
-    let data = if path.is_absolute() {
-        fs::read(&path)
-    } else {
-        read_icon(value)
-    }
-    .map_err(|_| "Couldn't read icon")?;
-    let extension = path
-        .extension()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("")
-        .to_lowercase();
-    if !matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "svg" | "ico") {
-        return Err("Choose a PNG, JPEG, SVG or ICO icon.".into());
-    }
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    data.hash(&mut hash);
-    Ok((format!("chosen-{:x}.{extension}", hash.finish()), data))
 }
