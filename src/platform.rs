@@ -422,6 +422,7 @@ pub fn show_or_hide(
         launcher.window().show()?;
     }
     launcher.set_launcher_visible(true);
+    crate::toast::on_window_shown(launcher);
     launcher.window().request_redraw();
     Ok(())
 }
@@ -472,6 +473,7 @@ pub fn hide(launcher: &crate::Launcher) -> Result<(), Box<dyn std::error::Error>
             ),
         )?;
         launcher.set_launcher_visible(false);
+        crate::toast::on_window_hidden(launcher);
     }
     Ok(())
 }
@@ -481,6 +483,7 @@ pub fn restore_after_chooser(launcher: &crate::Launcher) -> Result<(), Box<dyn s
     restore(&monitor)?;
     fullscreen_launcher()?;
     launcher.set_launcher_visible(true);
+    crate::toast::on_window_shown(launcher);
     launcher.window().request_redraw();
     focus_after_show(launcher);
     Ok(())
@@ -634,6 +637,21 @@ pub fn launch(text: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub fn launch_shell_action(script: &str, argument: &str) -> Result<(), Box<dyn std::error::Error>> {
+    detached(&mut shell_action_command(script, argument))?;
+    Ok(())
+}
+
+fn shell_action_command(script: &str, argument: &str) -> Command {
+    let mut command = Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg(script)
+        .arg("orbit-action")
+        .arg(argument);
+    command
+}
+
 pub fn launch_action(action: &SystemAction) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         SystemAction::LockScreen => detached(Command::new("loginctl").arg("lock-session"))?,
@@ -686,4 +704,47 @@ fn detached(command: &mut Command) -> io::Result<()> {
         let _ = child.wait();
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod shell_action_tests {
+    use super::*;
+
+    #[test]
+    fn shell_action_query_is_one_literal_argument() {
+        let marker = std::env::temp_dir().join(format!(
+            "orbit-shell-argument-{}.marker",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&marker);
+        let argument = format!("$(touch '{}'); 'quoted' 雪", marker.display());
+        let output = shell_action_command("printf '%s' \"$1\"", &argument)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), argument);
+        assert!(!marker.exists(), "query text was interpreted as shell code");
+    }
+}
+
+pub fn play_completion_sound() {
+    let Ok(path) = config_path().map(|p| p.with_file_name("task-complete.wav")) else {
+        return;
+    };
+    if !path.exists()
+        && std::fs::write(&path, include_bytes!("../ui/assets/task-complete.wav")).is_err()
+    {
+        return;
+    }
+    for player in ["pw-play", "paplay", "aplay"] {
+        if Command::new(player)
+            .arg(&path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+        {
+            return;
+        }
+    }
 }

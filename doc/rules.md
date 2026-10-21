@@ -43,11 +43,14 @@ Correct first, then simple, then minimal, then fast. The exception is the hot pa
 - The target is Arch Linux with Hyprland. Nothing else. Do not build anything for Windows (see `planned-features.md`).
 - Code that talks to the OS (socket, window, `.desktop` files, icon themes) lives in one small module, so another OS can be added later. No `#[cfg]` and no abstraction for other OSes now.
 - The interface is Slint with embedded Inter and the exact visual design in `doc/orbit-ui`; see SPEC section 10.
+- New and updated UI follows `doc/design-system.md`: use shared `Theme` tokens for repeated visual values and shared controls for repeated patterns. Keep Orbit's approved appearance and migrate existing UI as it is touched.
 - No Apple or Mac-only apps in default content, examples, tests or docs. The look is Apple-style. The apps are not.
 - Orbit starts empty: no default pages, apps or folders.
 - Saved files are written atomically (write a temporary file, then rename it). A missing file starts empty without a banner. A damaged file is renamed to `<name>.bad`, Orbit starts empty and shows a banner. A damaged file never crashes Orbit and is never overwritten.
 - Launch apps directly, with no shell, and detached, so they survive a daemon restart. If the launch fails, stay open and show a banner.
+- User-authored shell Actions are the explicit exception: pass the query as a distinct process argument (for POSIX shell, `$1`), never interpolate it into script text. Built-in URL and TickTick Actions must not invoke a shell.
 - Orbit is mouse first. Every action must work with the mouse. Shortcut defaults are listed in `shortcuts.md`; users can manage action bindings in Settings. Handle them in one place and save them with the config. Ctrl+K focuses Search anything by default.
+- Use Toast for action results and problems that are not tied to a visible field. Keep Banner text beside the field or form that needs correction. Background work reports through `toast` on the UI thread.
 - `Orbit_Desktop_Launcher_UX_Spec_v2.md` is authoritative for desktop UX and build order. Existing `spec.md`, `glossary.md` and `shortcuts.md` provide compatible project rules and Orbit behavior. If the code and the docs disagree, ask. Do not guess. When a decision changes, update the doc in the same change.
 
 Project filenames use kebab-case. Keep tool-required names such as `Cargo.toml`, `Cargo.lock` and `AGENTS.md`, and upstream license filenames. Rust module identifiers keep Rust syntax; a path attribute maps a kebab-case filename when needed.

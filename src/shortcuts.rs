@@ -138,7 +138,7 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
                 return false;
             }
         }
-        6 if launcher.get_search_navigation() => launcher.invoke_activate_search_selection(),
+        6 if launcher.get_search_navigation() => launcher.invoke_run_activated_prefix(),
         6 if launcher.get_grid_navigation() => launcher.invoke_activate_grid(),
         6..=8 => {
             let text = match action {

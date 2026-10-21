@@ -1,12 +1,18 @@
 # Orbit design system
 
-The launcher reference remains authoritative for pages and the dock. The Slint atlas and three PNGs in `add-item/` define sheets and controls. The atlas is a static gallery, not application code. Its colors are implemented in `ui/theme.slint`; shared controls live in `ui/controls.slint`.
+The launcher reference remains authoritative for pages and the dock. The Slint atlas and three PNGs in `add-item/` define sheets and controls. The atlas is a static gallery, not application code. `ui/theme.slint` is the source of truth for colors, spacing, typography and common geometry; shared controls live in `ui/controls.slint`.
+
+## Tokens and components
+
+Use `Theme` tokens for repeated colors, spacing, type sizes, control sizes, radii and borders. The spacing scale is 4, 8, 12, 16, 24, 40 and 48 px. Type roles are hint (12 px), control (13 px), body (14 px) and title (20 px). Common sizes include 40 px controls, 52 px result rows, 88 px multiline fields, 48 px previews, 8 px control corners and 16 px sheet corners. Add a token when a visual value is repeated or defines a shared role; keep one-off layout geometry local when it depends on content or available space.
+
+Build repeated buttons and labeled fields from the shared controls. When a visual or interaction pattern is needed a second time, add it to `ui/controls.slint` and use it consistently. Keep each control's selected, hovered, disabled, error and keyboard-focus states distinct. New and updated UI follows these rules; migrate existing UI as it is touched rather than restyling the whole launcher at once.
 
 ## Foundations
 
 Use embedded Inter. Titles are 20 px semibold, body and inputs 14 px, buttons and labels 13 px, hints and status 12 px. Primary text is #EFF0FF, secondary #9EA8C8. Sheets are #181D35, fields #14192E, hover #222942, borders #39415F, selected controls #303962, primary actions #6975E8 and focus #B6BEFF. Errors use #FFB0B8 on #392633. Backdrops use #060814B8. Never combine white panels with dark controls.
 
-Use 4, 8, 12, 16, 24, 40 and 48 px spacing. Labels sit 6 px above their fields. Sheets have 16 px corners and inset; controls have 8 px corners. Borders are 1 px; keyboard focus rings are 2 px. Buttons and inputs are at least 40 px high; result rows are 52 px; previews are 48 px.
+Labels sit 6 px above their fields. Borders are 1 px; keyboard focus rings are 2 px. Buttons and inputs are at least 40 px high.
 
 ## Sheets and controls
 
@@ -20,12 +26,14 @@ Installed apps rows show their cached system icons. Missing system artwork uses 
 
 Open folders use the sheet colors, border and 16 px corners and padding. Their 20 px title sits above a scrolling grid with 16 px gaps. Each app has a 64 px icon, an 8 px gap before its 20 px label area, and an inset hover surface. The panel fits its rows up to the available screen height.
 
-Add item opens from the Add tile. Selecting an Action or Installed app adds immediately; forms save explicitly. Refresh is manual. Filtering uses cached entries. Errors stay with the relevant field or operation and preserve drafts. Changing an icon uses a draft; Cancel discards it. Backdrop and Esc close the top layer. Showing and hiding Orbit remain instant.
+Add item opens from the empty-space Context menu. Pages have no Add tile. The menu stays within the window, closes with Escape or an outside click, and clears on page changes or hiding Orbit. Selecting an Action or Installed app adds immediately; forms save explicitly. Refresh is manual. Filtering uses cached entries. Errors stay with the relevant field or operation and preserve drafts. Changing an icon uses a draft; Cancel discards it. Backdrop and Esc close the top layer. Showing and hiding Orbit remain instant.
 
 Use the keys in shortcuts.md. The atlas's extra key proposals do not change Orbit's shortcuts. Do not implement the deferred Glyph picker as part of visual work.
 
 ## Review
 
-Compare the real launcher against the supplied gallery: readable text on every panel, natural field spacing, full-width inputs, unclipped icons, visible Cancel and Delete actions, and no hidden controls intercepting input. Verify by opening Add from its tile and Edit/Delete from a real item's Context menu, including cancelling without changing saved data.
+Compare the real launcher against the supplied gallery: readable text on every panel, natural field spacing, full-width inputs, unclipped icons, visible Cancel and Delete actions, and no hidden controls intercepting input. Verify by opening Add item from the empty-space Context menu and Edit/Delete from a real item's Context menu, including cancelling without changing saved data.
 
 The Icon picker uses Letter, SVG, disabled URL and Choose icon tabs. Letter accepts one or two visible characters including emojis; SVG uses a labeled field; Choose icon opens the native file chooser. Save applies the draft, Cancel discards it. Custom command is the first and default App source. File and Directory sheets show Path, then Choose file or Choose directory, then a vertically centered Icon preview and Change icon control. Save is at the bottom right. Edit app also centers its Icon preview with Change icon.
+
+Toasts use compact raised cards with a small status icon, stacked at the bottom right with 24 px outer space and 8 px gaps. Confirmations and information dismiss after 3 seconds, warnings after 5 seconds and errors after 7 seconds, including while hovered. Clicking a Toast dismisses it immediately.

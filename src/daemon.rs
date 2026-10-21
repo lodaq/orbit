@@ -7,6 +7,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     platform::init()?;
     let launcher = Launcher::new()?;
+    crate::toast::init(&launcher);
     apps::connect(&launcher);
     let weak = launcher.as_weak();
     launcher.on_hide_launcher(move || {

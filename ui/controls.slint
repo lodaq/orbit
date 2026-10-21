@@ -10,42 +10,42 @@ export component AddOption inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> full-width;
     in property <length> available-width: 460px;
-    in property <length> option-width: 96px;
+    in property <length> option-width: Theme.control-option-width;
     callback clicked;
     private property <bool> hovered: hit-area.has-hover;
     private property <bool> focused: keyboard-focus.has-focus;
     width: full-width ? available-width : option-width;
-    height: full-width ? 52px : 40px;
+    height: full-width ? Theme.control-row-height : Theme.control-height;
     accessible-role: button;
     accessible-label: label;
     accessible-enabled: enabled;
     accessible-checked: selected;
     forward-focus: keyboard-focus;
-    border-radius: 8px;
-    border-width: focused ? 2px : 1px;
+    border-radius: Theme.radius-control;
+    border-width: focused ? Theme.focus-width : Theme.border-width;
     border-color: focused ? Theme.focus : (selected ? Theme.primary : Theme.border);
     opacity: enabled ? 1 : 0.45;
     background: destructive ? Theme.error-background : primary ? Theme.primary : (selected ? Theme.selection : (hovered ? Theme.raised : Theme.field));
-    if icon-present: Image { x: 12px; y: (parent.height - 32px) / 2; width: 32px; height: 32px; source: root.icon; image-fit: contain; }
+    if icon-present: Image { x: Theme.space-3; y: (parent.height - Theme.icon-control-size) / 2; width: Theme.icon-control-size; height: Theme.icon-control-size; source: root.icon; image-fit: contain; }
     option-label := Text {
-        x: root.icon-present ? 56px : 12px;
-        width: parent.width - self.x - (root.trailing == "" ? 12px : 72px);
+        x: root.icon-present ? Theme.space-3 + Theme.icon-control-size + Theme.space-3 : Theme.space-3;
+        width: parent.width - self.x - (root.trailing == "" ? Theme.space-3 : 72px);
         height: parent.height;
         text: root.label;
-        color: root.destructive ? Theme.error : root.primary ? #FFFFFF : Theme.text;
-        font-size: 13px;
+        color: root.destructive ? Theme.error : root.primary ? Theme.on-primary : Theme.text;
+        font-size: Theme.type-control;
         font-weight: root.selected || root.primary ? 600 : 500;
         horizontal-alignment: root.full-width || root.trailing != "" ? left : center;
         vertical-alignment: center;
         overflow: elide;
     }
     if trailing != "": Text {
-        x: parent.width - self.width - 12px;
+        x: parent.width - self.width - Theme.space-3;
         width: 72px;
         height: parent.height;
         text: root.trailing;
-        color: root.primary ? #FFFFFF : Theme.secondary;
-        font-size: 12px;
+        color: root.primary ? Theme.on-primary : Theme.secondary;
+        font-size: Theme.type-hint;
         horizontal-alignment: right;
         vertical-alignment: center;
     }
@@ -74,9 +74,10 @@ export component AddField inherits VerticalLayout {
     in-out property <string> text;
     in property <bool> enabled: true;
     in property <bool> multiline;
+    in property <bool> secret;
     callback accepted;
     callback edited;
-    spacing: 6px;
+    spacing: Theme.space-2;
     alignment: start;
     horizontal-stretch: 1;
     forward-focus: input-field;
@@ -84,24 +85,25 @@ export component AddField inherits VerticalLayout {
     Text {
         text: root.label;
         color: Theme.text;
-        font-size: 13px;
+        font-size: Theme.type-control;
         font-weight: 500;
     }
     Rectangle {
-        height: root.multiline ? 88px : 40px;
+        height: root.multiline ? Theme.field-multiline-height : Theme.control-height;
         horizontal-stretch: 1;
-        border-radius: 8px;
+        border-radius: Theme.radius-control;
         background: Theme.field;
-        border-width: input-field.has-focus ? 2px : 1px;
+        border-width: input-field.has-focus ? Theme.focus-width : Theme.border-width;
         border-color: root.error != "" ? Theme.error : input-field.has-focus ? Theme.focus : Theme.border;
-        Text { x: 12px; y: 10px; width: parent.width - 24px; visible: root.text == ""; text: root.placeholder; color: Theme.secondary; font-size: 14px; }
+        Text { x: Theme.space-3; y: Theme.space-2; width: parent.width - 2 * Theme.space-3; visible: root.text == ""; text: root.placeholder; color: Theme.secondary; font-size: Theme.type-body; }
         input-field := TextInput {
-            x: 12px; y: 10px; width: parent.width - 24px; height: parent.height - 20px;
+            x: Theme.space-3; y: Theme.space-2; width: parent.width - 2 * Theme.space-3; height: parent.height - 2 * Theme.space-2;
             text <=> root.text;
             enabled: root.enabled;
             single-line: !root.multiline;
+            input-type: root.secret ? InputType.password : InputType.text;
             color: Theme.text;
-            font-size: 14px;
+            font-size: Theme.type-body;
             selection-background-color: Theme.selection;
             selection-foreground-color: Theme.text;
             edited => { root.edited(); }
@@ -118,7 +120,7 @@ export component AddField inherits VerticalLayout {
     if error != "": Text {
         text: "! " + root.error;
         color: Theme.error;
-        font-size: 12px;
+        font-size: Theme.type-hint;
     }
 }
 

@@ -8,7 +8,7 @@ Orbit is mouse first. Settings → Shortcuts lists Orbit bindings and lets you a
 
 ## Launcher
 
-The launcher opens with Search anything focused. Ctrl+K focuses it again and Enter opens its selected result. Esc clears search before hiding the launcher. Grid arrows move between spatial neighbors, Enter opens the focused item, Shift+F10 opens its Context menu, and PageUp/PageDown switches pages.
+The launcher opens with Search anything focused. Ctrl+K focuses it again and Enter opens its selected result; with no results, Enter searches the text in Brave. Esc clears search before hiding the launcher. Grid arrows move between spatial neighbors, Enter opens the focused item, Shift+F10 opens its Context menu, and PageUp/PageDown switches pages.
 
 | Action | Shortcut |
 |---|---|
@@ -16,7 +16,7 @@ The launcher opens with Search anything focused. Ctrl+K focuses it again and Ent
 | Move focus down | `↓` |
 | Move focus up | `↑` |
 | Move right in search results / Next page outside search | `→` |
-| Open (launch an app, open a Website, File or Directory, open a Folder, activate the Add tile) | `Enter` |
+| Open (launch an app, open a Website, File or Directory, open a Folder) | `Enter` |
 | Close the top layer (picker, then sheet or alert, then open folder, then launcher; on Settings, go back) | `Esc` |
 
 Actions with no default binding can also be assigned: Open Settings, Add page and Delete page. Deleting the final binding disables an Orbit action’s shortcut; its mouse control remains available.
@@ -39,6 +39,10 @@ Actions with no default binding can also be assigned: Open Settings, Add page an
 
 ## Desktop navigation
 
+Type a Prefix Token followed by Tab or Space to activate it. The Prefix name appears as a badge and search results are hidden until the Prefix is cleared. Enter sends the remaining text to its Action. For a TickTick task, type `t`, press Tab or Space, then enter `Buy milk !today !high #home ~Buy` and press Enter. `!today` sets today's due date; `!high`, `!medium`, `!low` and `!none` set priority; `#tag` adds a tag; `~` and `^` select a list. Put a multiword list name at the end, for example `~hall of fame`. Leading emoji may be omitted when the readable name identifies one list. Omit the list to use Inbox. Task creation updates the widget immediately, then confirms the save or rolls back with a specific error.
+
+Search engines: `:br` Brave, `:g` Google, `:d` DuckDuckGo, `:q` Qwant, `:b` Bing, `:sp` Startpage and `:e` Ecosia. Other site-search Tokens are `g` or `ل` for ChatGPT, `c` or `ؤ` for Claude, `gh` for GitHub, `m` for Google Maps, `i` or `ه` for Image Search, `p` or `ح` for Perplexity, `w` or `ص` for Wikipedia, `ف` for Arabic-to-English Translate, `tr` for English-to-Arabic Translate, and `y` or `غ` for YouTube. Type a Token, press Space or Tab, enter the query, then press Enter.
+
 - `←`, `→`, `↑`, `↓`: move focus to the nearest item in that direction.
 - `Enter`: open the focused item.
 - `Shift+F10`: open its Context menu.
@@ -50,7 +54,7 @@ Actions with no default binding can also be assigned: Open Settings, Add page an
 | Mouse | Result |
 |---|---|
 | Click an item | Launch an app, open a Website, File or Directory, or open a Folder |
-| Click the Add tile | Open the Add item sheet |
+| Right-click empty page space → Add item | Open the Add item sheet |
 | Click a System action | Add it as an App |
 | Click an installed app | Add it to the current page |
 | Choose a file or directory in its Add item sheet | Fill Path; Save adds an item named after the path |

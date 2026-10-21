@@ -36,7 +36,11 @@ pub fn apply(
             .positions
             .get(id)
             .copied()
-            .unwrap_or(crate::spatial::Rect::cell(0, next.columns));
+            .unwrap_or(crate::spatial::Rect {
+                width: crate::spatial::item_span(1, next.item_size),
+                height: crate::spatial::item_span(1, next.item_size),
+                ..crate::spatial::Rect::cell(0, next.columns)
+            });
         rect.row = target / next.columns;
         rect.col = target % next.columns;
         let Some(mut positions) = crate::spatial::place(
@@ -251,6 +255,20 @@ mod tests {
                 items: vec![app("d")],
             },
         ];
+        for page in &config.pages {
+            for (index, item) in page.items.iter().enumerate() {
+                let pitch = crate::spatial::cell_pitch(config.item_size);
+                config.positions.insert(
+                    item.id().into(),
+                    crate::spatial::Rect {
+                        col: index * pitch,
+                        row: 0,
+                        width: pitch,
+                        height: pitch,
+                    },
+                );
+            }
+        }
         config
     }
     fn ids(config: &Config, page: usize) -> Vec<&str> {
@@ -264,10 +282,14 @@ mod tests {
         items.into_iter().map(Item::id).collect()
     }
     #[test]
-    fn reorder_both_directions_and_end() {
+    fn occupied_drop_is_rejected_and_empty_move_preserves_neighbors() {
         let mut c = config();
-        assert!(apply(&mut c, "a", 0, 2, "", "f".into()));
-        assert_eq!(ids(&c, 0), ["b", "a", "c"]);
+        let initial = serde_json::to_string(&c).unwrap();
+        assert!(!apply(&mut c, "a", 0, 288, "", "f".into()));
+        assert_eq!(serde_json::to_string(&c).unwrap(), initial);
+        assert!(apply(&mut c, "a", 0, 432, "", "f".into()));
+        assert_eq!(c.positions["b"].col, 144);
+        assert_eq!(c.positions["c"].col, 288);
         assert!(apply(&mut c, "a", 0, 0, "", "f".into()));
         assert_eq!(ids(&c, 0), ["a", "b", "c"]);
         assert!(!apply(&mut c, "a", 0, 0, "", "f".into()));
@@ -275,10 +297,10 @@ mod tests {
     #[test]
     fn move_first_to_last_and_back() {
         let mut c = config();
-        apply(&mut c, "a", 2, 1, "", "f".into());
+        apply(&mut c, "a", 2, 144, "", "f".into());
         assert_eq!(ids(&c, 0), ["b", "c"]);
         assert_eq!(ids(&c, 2), ["d", "a"]);
-        apply(&mut c, "a", 0, 1, "", "f".into());
+        apply(&mut c, "a", 0, 0, "", "f".into());
         assert_eq!(ids(&c, 0), ["a", "b", "c"]);
     }
     #[test]
@@ -302,8 +324,8 @@ mod tests {
         let mut c = config();
         apply(&mut c, "a", 0, 0, "b", "f".into());
         c.pinned.push("f".into());
-        apply(&mut c, "a", 2, 0, "", "unused".into());
-        apply(&mut c, "b", 2, 0, "", "unused".into());
+        assert!(apply(&mut c, "a", 2, 144, "", "unused".into()));
+        assert!(apply(&mut c, "b", 2, 288, "", "unused".into()));
         assert_eq!(ids(&c, 0), ["c"]);
         assert!(c.pinned.is_empty());
     }
@@ -330,7 +352,7 @@ mod tests {
         let mut c = config();
         apply(&mut c, "a", 0, 0, "b", "f".into());
         assert!(!apply(&mut c, "f", 2, 0, "d", "unused".into()));
-        assert!(apply(&mut c, "f", 2, 1, "", "unused".into()));
+        assert!(apply(&mut c, "f", 2, 144, "", "unused".into()));
         assert_eq!(ids(&c, 2), ["d", "f"]);
     }
     #[test]
@@ -401,7 +423,7 @@ mod tests {
                 "unused".into()
             ));
             assert!(apply(&mut c, "a", 1, 0, "", "unused".into()));
-            assert!(apply(&mut c, "b", 1, 1, "", "unused".into()));
+            assert!(apply(&mut c, "b", 1, 144, "", "unused".into()));
             assert!(c.pages[0].items.contains(&shortcut));
             assert_eq!(c.positions[shortcut.id()], rect);
             assert!(c.valid());

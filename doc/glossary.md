@@ -4,7 +4,7 @@ The user approved `Orbit_Desktop_Launcher_UX_Spec_v2.md` on 2026-10-20 as author
 
 # Orbit glossary
 
-For v2 desktop layout terms, including Grid Cell Size, Grid Position, Widget Gallery, widget footprints, placement preview, insertion edge, folder center, Move to Page and Remove from Home, follow `Orbit_Desktop_Launcher_UX_Spec_v2.md`. These terms are approved alongside the terms below.
+For v2 desktop layout terms, including Item Size, Grid Position, Widget Gallery, widget footprints, placement preview, insertion edge, folder center, Move to Page and Remove from Home, follow `Orbit_Desktop_Launcher_UX_Spec_v2.md`. These terms are approved alongside the terms below.
 
 One word for one thing. If a word is not in this file, do not use it in the UI, the code or the docs.
 
@@ -58,9 +58,9 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Page** | One screen of items, like a phone home screen page. Pages have no names. Maximum 9. Leaving an empty page does not remove it. |
 | **Page swipe** | Dragging an empty area of a page left or right to open the previous or next page. |
 | **Grid** | The rows and columns of tiles on a page or inside an open folder. |
-| **Tile** | The rounded square that shows one item (an app, website, file, directory or folder) or the Add tile. |
+| **Tile** | The rounded square that shows one item (an app, website, file, directory or folder). |
 | **Page dots** | The row of dots that shows which page is open, with a + control to add a page. |
-| **Add tile** | The "+" tile at the end of a page. Opens the Add item sheet. |
+| **Add item** | The command in the empty-page-space Context menu that opens the Add item sheet. New items use automatic free-space placement. |
 
 ## The dock
 
@@ -86,7 +86,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | Term | Meaning |
 |---|---|
-| **Context menu** | The small menu that appears when you right-click an item: Edit, Pin (or Unpin), Delete. |
+| **Context menu** | The small menu that appears when you right-click an item or empty page space. Empty space offers Add item; items offer their own actions. |
 | **Sheet** | A form that appears over the launcher with a dimmed backdrop behind it: Add item, Edit app, Edit website, Edit file, Edit directory or Edit folder. (Developers also call these *modals*. In Orbit they are always called sheets.) |
 | **Alert** | A small confirmation box with two buttons. Used for Delete. |
 | **Panel** | The rounded box that holds the content of a sheet, an alert, the Icon picker or an open folder. |
@@ -98,6 +98,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Tooltip** | The name shown when you hover or focus a dock icon. |
 | **Filter box** | The small text field at the top of the Icon picker and of the Installed apps list. It narrows the list as you type. Search anything searches page items, System actions, the cached Installed apps list and configured file and directory search paths. |
 | **Banner** | A short inline error, for example when a launch fails. The launcher stays open. |
+| **Toast** | A short floating message that confirms an action or reports a problem, then closes automatically. |
 
 ## Keys and mouse
 
@@ -128,6 +129,15 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | Term | Meaning |
 |---|---|
 | **Search anything** | Searches saved page items, System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Ctrl+K focuses the field. |
+| **Prefix** | A named Search anything rule with a Token and selected Action. Tab or Space activates a matching Token; Enter sends the remaining search text to its Action. |
+| **Token** | The text that activates a Prefix in Search anything. |
+| **Action** | A named reusable command that receives a Prefix query. Actions include built-in site searches, TickTick task creation, and user shell scripts. |
+| **Action description** | Text in Settings that explains what an Action does and how to use it. |
+| **Shell Action** | An Action that runs a user-provided shell script. It receives Search anything text as a separate argument, available as `$1` on Arch Linux and `$OrbitQuery` on Windows. |
+| **URL Action** | An Action that opens a URL after replacing `%s` with safely encoded Search anything text. |
+| **TickTick Action** | An Action that creates a TickTick task from the title, due date, priority, tags and list selectors in Search anything text. |
+| **Prefixes** | Settings tab for creating, editing and selecting Prefix Actions. |
+| **Actions** | Settings tab for creating and editing reusable Actions. |
 | **No items found** | Empty search results. |
 | **Add page** | Creates an empty page from Settings or the + beside the page dots. |
 | **Switch pages** | Footer hint for Left and Right. |

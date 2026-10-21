@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import { AddOption, AddField } from "controls.slint";
 import "fonts/inter.ttf";
-import { Button, LineEdit, Palette, ComboBox, SpinBox, Slider } from "std-widgets.slint";
+import { Button, LineEdit, TextEdit, Palette, ComboBox, SpinBox, Slider } from "std-widgets.slint";
 
 export struct ShortcutEntry { action: int, keys: string }
 export struct ShortcutGroup { action: int, entries: [ShortcutEntry] }
@@ -13,7 +13,9 @@ export struct FolderPreview {
 }
 
 export struct AppTile {
-    row: int, col: int, span-x: int, span-y: int, widget: bool, widget-text: string,
+    row: int, col: int, span-x: int, span-y: int, widget: bool, widget-text: string, widget-min: int, widget-max: int, ticktick: bool, ticktick-next: bool,
+    ticktick-project-id: string,
+    min-span-x: int, min-span-y: int, max-span-x: int, max-span-y: int,
     text-icon: bool,
     id: string,
     name: string,
@@ -51,6 +53,59 @@ export struct InstalledAppTile {
 export struct ActionChoice {
     id: string,
     name: string,
+}
+export struct UserActionChoice { id: string, name: string, kind: string, source: string, tokens: string, description: string, referenced: bool }
+export struct PrefixChoice { id: string, name: string, token: string, action-id: string, action-name: string }
+export struct PrefixMatch { action-id: string, name: string, query: string, query-length: int, badge-width: int }
+
+export struct TickTickProject { id: string, name: string }
+export struct TickTickTask { id: string, project-id: string, list: string, title: string, content: string, desc: string, created-time: string, due: string, due-date: string, day: int, done: bool, priority: int, tags: string }
+export struct ToastItem { id: int, level: int, message: string, pulse: int }
+
+component ToastCard inherits Rectangle {
+    in property <ToastItem> item;
+    in property <length> available-width;
+    in property <int> pulse;
+    callback dismissed(int);
+    in-out property <bool> appeared: false;
+    property <color> status-color: item.level == 3 ? Theme.error : item.level == 2 ? Theme.warning : item.level == 1 ? Theme.success : Theme.focus;
+    init => { self.appeared = true; toast-timer.restart(); }
+    width: min(320px, available-width);
+    height: Theme.control-row-height;
+    background: Theme.raised;
+    border-width: Theme.border-width;
+    border-color: Theme.border;
+    border-radius: Theme.radius-control;
+    opacity: appeared ? 1 : 0;
+    animate opacity { duration: 180ms; }
+    changed item => { toast-timer.restart(); }
+    changed pulse => { toast-timer.restart(); }
+    Rectangle {
+        x: Theme.space-4; y: (parent.height - self.height) / 2;
+        width: Theme.space-6; height: Theme.space-6;
+        border-radius: self.width / 2;
+        background: root.status-color.with-alpha(0.12);
+        Text {
+            text: root.item.level == 1 ? "✓" : root.item.level == 0 ? "i" : "!";
+            color: root.status-color; font-size: Theme.type-body;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+    }
+    Text {
+        x: Theme.space-4 + Theme.space-6 + Theme.space-3;
+        y: Theme.space-2; width: parent.width - self.x - Theme.space-4;
+        height: parent.height - 2 * Theme.space-2;
+        text: root.item.message; color: Theme.text; font-size: Theme.type-control;
+        wrap: word-wrap; overflow: elide; vertical-alignment: center;
+    }
+    TouchArea {
+        clicked => { root.dismissed(root.item.id); }
+    }
+    toast-timer := Timer {
+        interval: root.item.level == 3 ? 7000ms : root.item.level == 2 ? 5000ms : 3000ms;
+        running: true;
+        triggered => { root.dismissed(root.item.id); }
+    }
 }
 
 component ItemIcon inherits Rectangle {
@@ -103,16 +158,29 @@ component ItemIcon inherits Rectangle {
 component PageTile inherits Rectangle {
     in property <[AppTile]> items;
     in property <int> index;
+    in property <[TickTickTask]> ticktick-tasks;
+    in property <string> ticktick-list-name;
+    in property <string> ticktick-status;
+    in property <bool> ticktick-connected;
+    in property <bool> ticktick-refreshing;
+    in property <bool> ticktick-error;
+    in property <bool> ticktick-pulse;
+    in property <int> ticktick-next-completion-sequence;
+    private property <bool> ticktick-next-completion-flash;
+    private property <bool> ticktick-focus-pulse;
     in property <bool> hovered;
     in property <bool> folder-preview: false;
     in property <AppTile> drag-preview-item;
     width: 128px;
     height: 128px;
-    background: hovered ? #ffffff16 : #51405f99;
-    border-radius: min(self.width,self.height) * 0.15625;
-    border-width: 1px;
-    border-color: index < items.length ? #a6b1ed33 : transparent;
-    if index == items.length || !items[index].widget: Rectangle {
+    background: hovered ? #ffffff16 : transparent;
+    border-radius: index < items.length && items[index].widget ? 16px : min(self.width,self.height) * 0.15625;
+    border-width: 0px;
+    border-color: transparent;
+    changed ticktick-next-completion-sequence => { if ticktick-next-completion-sequence > 0 { ticktick-next-completion-flash = true; completion-flash-timer.restart(); } }
+    completion-flash-timer := Timer { running: root.ticktick-next-completion-flash; interval: 420ms; triggered => { root.ticktick-next-completion-flash = false; } }
+    focus-pulse-timer := Timer { running: index < items.length && items[index].ticktick-next; interval: 900ms; triggered => { root.ticktick-focus-pulse = !root.ticktick-focus-pulse; } }
+    if index < items.length && !items[index].widget: Rectangle {
         x: (parent.width - self.width) / 2; y: parent.height * 0.09;
         width: min(parent.width * 0.625, parent.height - 44px); height: self.width;
         border-radius: 20px;
@@ -127,15 +195,84 @@ component PageTile inherits Rectangle {
         if index < items.length && folder-preview && items[index].folder: ItemIcon {
             x: parent.width - 30px; y: parent.height - 30px; width: 28px; height: 28px; item: drag-preview-item;
         }
-        if index == items.length: Image { width: parent.width; height: parent.height; source: @image-url("assets/add.svg"); }
     }
-    if index < items.length && items[index].widget: Text { x: parent.width - 20px; y: parent.height - 22px; text: "◢"; color: #a8b3ff; font-size: 16px; }
-    if index < items.length && items[index].widget: Text { x: 16px; y: 12px; width: parent.width - 32px; height: parent.height - 48px; text: items[index].widget-text; color: #e0e3f4; font-size: 16px; wrap: word-wrap; vertical-alignment: center; }
-    Text {
+    if index < items.length && items[index].widget: Text { x: parent.width - 24px; y: parent.height - 24px; width: 20px; height: 20px; text: "◢"; color: #a8b3ff; font-size: 16px; horizontal-alignment: center; vertical-alignment: center; }
+    if index < items.length && items[index].widget && !items[index].ticktick: Text { x: 16px; y: 12px; width: parent.width - 32px; height: parent.height - 48px; text: items[index].widget-text; color: #e0e3f4; font-size: 16px; wrap: word-wrap; vertical-alignment: center; }
+    if index < items.length && items[index].ticktick && !items[index].ticktick-next: Rectangle {
+        x: 12px; y: 8px; width: parent.width - 24px; height: parent.height - 16px;
+        background: transparent;
+        Text { x: 0px; y: 0px; width: parent.width - 110px; height: 28px; text: ticktick-list-name + " ▾"; color: #f0f1f5; font-size: 15px; font-weight: 600; vertical-alignment: center; overflow: elide; }
+        Text { x: parent.width - 62px; y: 0px; width: 28px; height: 28px; text: "+"; color: #f0f1f5; font-size: 24px; horizontal-alignment: center; vertical-alignment: center; }
+        Rectangle { x: parent.width - 31px; y: 5px; width: 1px; height: 18px; background: #ffffff28; }
+        Text { x: parent.width - 27px; y: 0px; width: 26px; height: 28px; text: "⋮"; color: #d4d6de; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; }
+        Rectangle { y: 32px; width: parent.width; height: 1px; background: #ffffff1a; }
+        if !ticktick-refreshing && ticktick-tasks.length == 0: Text {
+            x: 2px; y: 44px; width: parent.width - 4px; height: parent.height - 52px;
+            text: ticktick-error ? ticktick-status : !ticktick-connected ? "Connect TickTick in Settings" : "No tasks in this list";
+            color: #bcbfc9; font-size: 13px; wrap: word-wrap; vertical-alignment: top;
+        }
+        for row in 3: Rectangle {
+            visible: ticktick-refreshing && 82px + row * 36px < parent.height;
+            x: 2px; y: 48px + row * 36px; width: parent.width * (row == 1 ? 0.62 : 0.84); height: 16px;
+            border-radius: 4px; background: #a8b3ff; opacity: ticktick-pulse ? 0.18 : 0.08;
+            animate opacity { duration: 350ms; }
+        }
+        for task[row] in ticktick-tasks: Rectangle {
+            visible: !ticktick-refreshing;
+            y: 36px + row * 36px; width: parent.width; height: 36px;
+            Rectangle { y: 35px; width: parent.width; height: 1px; background: #ffffff14; }
+            Rectangle { x: 2px; y: 10px; width: 15px; height: 15px; border-radius: 2px; border-width: 1px; border-color: task.done ? #8a9af1 : #9b9da8; background: task.done ? #8a9af1 : transparent; }
+            if task.done: Text { x: 3px; y: 8px; width: 13px; height: 18px; text: "✓"; color: #1a1d29; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+            Text { x: 27px; y: 1px; width: parent.width - 101px; height: 33px; text: task.title; color: task.done ? #9699a5 : #eaebf0; font-size: 13px; overflow: elide; vertical-alignment: center; }
+            if task.due != "": Text { x: parent.width - 72px; y: 1px; width: 70px; height: 33px; text: task.due; color: #a8aab5; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+        }
+    }
+    if index < items.length && items[index].ticktick-next: Rectangle {
+        x: 8px; y: 4px; width: parent.width - 16px; height: parent.height - 8px;
+        border-radius: 19px; border-width: 5px; border-color: #8292ff;
+        background: transparent; opacity: root.ticktick-focus-pulse ? 0.18 : 0.06;
+        animate opacity { duration: 700ms; easing: ease-in-out; }
+    }
+    if index < items.length && items[index].ticktick-next: Rectangle {
+        x: 12px; y: 8px; width: parent.width - 24px; height: parent.height - 16px;
+        background: root.ticktick-focus-pulse ? #303e66 : #222d50;
+        border-radius: 14px; border-width: root.ticktick-focus-pulse ? 3px : 2px; border-color: root.ticktick-focus-pulse ? #a8b3ff : #6975e8;
+        animate background { duration: 700ms; easing: ease-in-out; }
+        animate border-color { duration: 700ms; easing: ease-in-out; }
+        animate border-width { duration: 700ms; easing: ease-in-out; }
+        Text { x: 8px; y: 0px; width: parent.width - 16px; height: 28px; text: "✦  YOUR FOCUS — START HERE  ✦"; color: #eff0ff; font-size: 16px; font-weight: 700; vertical-alignment: center; horizontal-alignment: center; }
+        Rectangle { x: 8px; y: 32px; width: parent.width - 16px; height: 1px; background: #a8b3ff70; }
+        if ticktick-refreshing: Rectangle {
+            x: 2px; y: 45px; width: parent.width * 0.7; height: 16px;
+            border-radius: 4px; background: #a8b3ff; opacity: ticktick-pulse ? 0.18 : 0.08;
+            animate opacity { duration: 350ms; }
+        }
+        if !ticktick-refreshing && ticktick-tasks.length == 0: Text {
+            x: 2px; y: 42px; width: parent.width - 4px; height: parent.height - 46px;
+            text: ticktick-error ? ticktick-status : !ticktick-connected ? "Connect TickTick to choose your focus" : "Choose one task. Make it happen.";
+            color: #eff0ff; font-size: 14px; font-weight: 600; wrap: word-wrap; vertical-alignment: center; horizontal-alignment: center;
+        }
+        if !ticktick-refreshing && ticktick-tasks.length > 0: Rectangle {
+            y: 36px; width: parent.width; height: parent.height - 36px;
+            Rectangle { x: 8px; y: (parent.height - 18px) / 2; width: 18px; height: 18px; border-radius: 5px; border-width: 2px; border-color: #b6beff; background: transparent; }
+            Text { x: 36px; y: 0px; width: parent.width - 48px; height: parent.height; text: ticktick-tasks[0].title; color: #ffffff; font-size: 16px; font-weight: 700; overflow: elide; vertical-alignment: center; }
+        }
+        Rectangle {
+            x: parent.width / 2 - self.width / 2; y: parent.height / 2 - self.height / 2;
+            width: ticktick-next-completion-flash ? parent.width * 0.92 : 0px;
+            height: ticktick-next-completion-flash ? parent.height * 0.72 : 0px;
+            border-radius: parent.height / 2;
+            background: #64df9a; opacity: ticktick-next-completion-flash ? 0.14 : 0;
+            animate width { duration: 300ms; easing: ease-out; }
+            animate height { duration: 300ms; easing: ease-out; }
+            animate opacity { duration: 420ms; easing: ease-out; }
+        }
+    }
+    if index < items.length && !items[index].ticktick: Text {
         y: parent.height - 28px;
         width: parent.width;
         height: 24px;
-        text: index == items.length ? "Add" : folder-preview ? (items[index].folder ? "Add to folder" : "Create folder") : items[index].name;
+        text: folder-preview ? (items[index].folder ? "Add to folder" : "Create folder") : items[index].name;
         color: #e0e3f4;
         font-size: min(18px,max(12px,min(parent.width,parent.height) * 0.109375));
         horizontal-alignment: center;
@@ -173,21 +310,29 @@ component DockTile inherits Rectangle {
 }
 
 export component Launcher inherits Window {
-    pure callback center-zone(float,float,float,bool) -> bool;
+    pure callback folder-target([AppTile],AppTile,int,int,int) -> int;
     pure callback hit-cell([AppTile],int,int) -> int;
-    pure callback free-cell([AppTile],int,int) -> int;
     pure callback preview-valid([AppTile],string,int,int,int,int,int) -> bool;
-    pure callback preview-cells([AppTile],string,int,int,int,int,int) -> [AppTile];
     in property <[string]> page-names;
     callback move-item(string,int);
     callback reorder-page(int);
     private property <string> move-id;
     private property <int> move-page;
     callback geometry(int,int);
-    callback add-widget(int);
-    callback widget-action(string,bool,int,int);
+    callback add-widget(int,int);
+    callback duplicate-widget(string);
+    callback widget-action(string,int,int);
+    private property <int> placing-widget: -1;
+    private property <int> widget-placement-target: -1;
+    private property <int> placing-width: 2 * root.item-size + 16;
+    private property <int> placing-height: 2 * root.item-size + 16;
+    private property <bool> widget-placement-valid: root.widget-placement-target >= 0
+        && root.preview-valid(root.items,"@widget-preview",root.widget-placement-target,root.placing-width,root.placing-height,grid.columns,grid.rows);
     private property <int> known-columns: 0;
     private property <int> known-rows: 0;
+    // The saved grid size, so a first frame with a default window size is ignored.
+    in property <int> saved-columns: 0;
+    in property <int> saved-rows: 0;
     private property <bool> reorder-ready;
     private property <int> reorder-target: -1;
     private property <length> grab-x;
@@ -195,7 +340,7 @@ export component Launcher inherits Window {
     private property <int> focused-item: 0;
     private property <bool> keyboard-grid;
     private property <int> dock-source-index: -1;
-    out property <bool> grid-navigation: page-focus.has-focus && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker;
+    out property <bool> grid-navigation: page-focus.has-focus && !root.page-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open;
     pure callback next-grid-item([AppTile],int,int) -> int;
     callback move-grid(int);
     move-grid(direction) => { root.keyboard-grid = true; root.focused-item = root.next-grid-item(root.items,root.focused-item,direction); }
@@ -207,6 +352,8 @@ export component Launcher inherits Window {
     snap-timer := Timer { interval: 210ms; triggered => { root.snapping = false; self.stop(); } }
     animate drag-x { duration: root.snapping ? 200ms : 0ms; easing: ease-out; }
     animate drag-y { duration: root.snapping ? 200ms : 0ms; easing: ease-out; }
+    private property <float> drag-scale: 1;
+    animate drag-scale { duration: 160ms; easing: ease-out; }
     private property <bool> drag-slide-animate;
     private property <float> drag-slide: 1;
     private property <int> drag-slide-direction;
@@ -220,10 +367,21 @@ export component Launcher inherits Window {
     private property <bool> on-dock: root.dragging && root.drag-y >= dock.absolute-position.y && root.drag-y <= dock.absolute-position.y + dock.height && root.drag-x >= dock.x && root.drag-x <= dock.x + dock.width;
     private property <int> dock-target: min(root.dock-items.length,max(0,floor((root.drag-x - dock.x) / dock.slot-width) - root.recent-items.length));
     private property <bool> placement-valid: root.drop-target >= 0 && root.preview-valid(root.drag-items,root.drag-item.id,root.drop-target,root.drag-item.span-x,root.drag-item.span-y,grid.columns,grid.rows);
+    function update-widget-placement(x: length, y: length) {
+        let col = floor((x - grid.absolute-position.x) / grid.tile-size);
+        let row = floor((y - grid.absolute-position.y) / grid.tile-size);
+        if col < 0 || row < 0 || col >= grid.columns || row >= grid.rows { root.widget-placement-target = -1; return; }
+        root.widget-placement-target = row * grid.columns + col;
+    }
     geometry-timer := Timer {
         interval: 200ms; running: true;
         triggered => {
-            if root.launcher-visible && !root.settings && !root.dragging && !root.busy && (root.known-columns != grid.columns || root.known-rows != grid.rows) {
+            // The first frames report the default window size, so a grid that is
+            // smaller than the saved one is not a real resize and is ignored.
+            if root.launcher-visible && !root.settings && !root.dragging && !root.busy
+                && (root.known-columns != grid.columns || root.known-rows != grid.rows)
+                && (root.known-columns != 0
+                    || (grid.columns >= root.saved-columns && grid.rows >= root.saved-rows)) {
                 root.known-columns = grid.columns; root.known-rows = grid.rows;
                 root.geometry(grid.columns,grid.rows);
             }
@@ -252,6 +410,61 @@ export component Launcher inherits Window {
     in-out property <string> search-text;
     in-out property <bool> settings;
     private property <bool> shortcuts-tab;
+    private property <int> settings-tab;
+    in property <[UserActionChoice]> user-actions;
+    in property <[PrefixChoice]> prefixes;
+    in property <[string]> action-names;
+    private property <string> action-id-draft;
+    private property <string> action-name-draft;
+    private property <string> action-kind-draft: "Shell";
+    private property <string> action-source-draft;
+    private property <string> action-description-draft;
+    private property <string> action-tokens-draft;
+    private property <bool> action-used;
+    private property <bool> action-editor-open;
+    private property <int> action-columns: max(1, floor((root.width - 160px) / 300px));
+    private property <string> prefix-id-draft;
+    private property <string> prefix-name-draft;
+    private property <string> prefix-token-draft;
+    private property <string> prefix-action-draft;
+    private property <int> prefix-action-index;
+    private property <int> action-kind-index;
+    private property <[string]> action-kinds: ["Shell", "URL", "TickTick"];
+    out property <string> activated-prefix-name;
+    private property <string> activated-prefix-id;
+    private property <length> activated-prefix-width: 78px;
+    callback save-user-action(string, string, string, string, string, string);
+    callback delete-user-action(string);
+    callback action-saved();
+    callback save-prefix(string, string, string, string);
+    callback delete-prefix(string);
+    callback run-prefix(string, string);
+    action-saved => { root.action-editor-open = false; root.action-id-draft = ""; }
+    pure callback match-prefix(string) -> PrefixMatch;
+    pure callback action-index-for-id(string) -> int;
+    function activate-prefix() {
+        let matched = root.match-prefix(root.search-text);
+        let has-match = matched.action-id != "";
+        root.activated-prefix-id = matched.action-id;
+        root.activated-prefix-name = matched.name;
+        root.activated-prefix-width = min(132px, max(52px, matched.badge-width * 1px));
+        if has-match {
+            root.search-text = matched.query;
+            root.search(root.search-text);
+            root.search-selection = 0;
+            root.search-offset = 0px;
+            search-input.focus();
+            search-input.set-selection-offsets(matched.query-length, matched.query-length);
+        }
+    }
+    callback run-activated-prefix();
+    run-activated-prefix => {
+        if root.busy { return; }
+        if root.activated-prefix-id != "" {
+            root.busy = true;
+            root.run-prefix(root.activated-prefix-id, root.search-text);
+        } else { root.activate-search-selection(); }
+    }
     in property <[ShortcutEntry]> shortcuts;
     in property <[ShortcutGroup]> shortcut-groups;
     in property <[PageItems]> page-previews;
@@ -264,6 +477,8 @@ export component Launcher inherits Window {
         else { root.item-size = root.saved-size; root.page-margin = root.saved-margin; }
     }
     callback save-appearance(int, int, int, int);
+    callback appearance-saved(int,int);
+    appearance-saved(margin,size) => { root.saved-margin = margin; root.saved-size = size; }
     in-out property <bool> shortcut-recording;
     in-out property <string> shortcut-draft;
     private property <bool> shortcut-editor;
@@ -283,15 +498,19 @@ export component Launcher inherits Window {
     private property <int> search-selection;
     private property <length> search-offset;
     private property <int> search-columns: max(1, floor(min(1316px, root.width - 96px) / 160px));
-    out property <bool> search-navigation: root.search-text != "" && !root.settings && !root.sheet && !root.folder-open && !root.picker && !root.alert;
+    out property <bool> search-navigation: root.search-text != "" && !root.settings && !root.sheet && !root.folder-open && !root.picker && !root.alert && !root.ticktick-open;
     callback move-search-selection(int);
     callback activate-search-selection();
     activate-search-selection => {
         if root.search-selection >= 0 && root.search-selection < root.search-results.length && !root.busy {
             root.busy = true;
             root.open-result(root.search-results[root.search-selection].page, root.search-results[root.search-selection].index);
+        } else if root.search-results.length == 0 && root.search-text != "" && !root.busy {
+            root.busy = true;
+            root.search-web(root.search-text);
         }
     }
+    callback search-web(string);
     move-search-selection(direction) => {
         if root.search-results.length == 0 { return; }
         let column = mod(root.search-selection, root.search-columns);
@@ -329,6 +548,89 @@ export component Launcher inherits Window {
 
     in property <[InstalledAppTile]> installed-apps;
     in property <[ActionChoice]> actions;
+    in property <[TickTickProject]> ticktick-projects;
+    in property <[string]> ticktick-project-names;
+    in property <[TickTickTask]> ticktick-tasks;
+    in property <[TickTickProject]> ticktick-views;
+    in-out property <bool> ticktick-loading;
+    in-out property <bool> ticktick-refreshing;
+    in-out property <bool> ticktick-error;
+    private property <bool> ticktick-pulse;
+    private property <int> ticktick-next-completion-sequence;
+    in property <[ToastItem]> toast-items;
+    callback dismiss-toast(int);
+    Timer { interval: 400ms; running: root.ticktick-loading; triggered => { root.ticktick-pulse = !root.ticktick-pulse; } }
+    callback reset-ticktick-scroll();
+    reset-ticktick-scroll => { root.ticktick-scroll-row = 0; }
+    pure callback ticktick-list-index([TickTickProject], string) -> int;
+    pure callback ticktick-list-name([TickTickProject], string) -> string;
+    pure callback ticktick-task-count([TickTickTask], string, bool) -> int;
+    pure callback ticktick-visible-tasks([TickTickTask], string, bool, int, int) -> [TickTickTask];
+    in-out property <bool> ticktick-open;
+    in-out property <string> ticktick-status;
+    in-out property <bool> ticktick-connected;
+    in-out property <string> ticktick-form-error;
+    private property <bool> ticktick-create;
+    private property <bool> ticktick-show-completed;
+    private property <string> ticktick-scroll-widget-id;
+    private property <int> ticktick-scroll-row;
+    private property <string> ticktick-popup-widget-id;
+    private property <bool> ticktick-popup-options;
+    private property <int> ticktick-list-page;
+    private property <length> ticktick-popup-x;
+    private property <length> ticktick-popup-y;
+    private property <bool> ticktick-control-pressed;
+    private property <string> ticktick-token-draft;
+    private property <int> ticktick-project-index;
+    private property <string> ticktick-edit-id;
+    private property <string> ticktick-edit-project;
+    private property <string> ticktick-delete-id;
+    private property <string> ticktick-delete-project;
+    private property <string> ticktick-title;
+    private property <string> ticktick-content;
+    private property <string> ticktick-desc;
+    private property <string> ticktick-due-date;
+    private property <string> ticktick-tags;
+    private property <int> ticktick-priority;
+    private property <bool> ticktick-confirm-delete;
+    callback save-ticktick-token(string);
+    callback remove-ticktick-token();
+    callback load-ticktick();
+    callback refresh-ticktick-list(string);
+    callback save-ticktick-task(string,string,string,string,string,string,int,string,string);
+    callback delete-ticktick-task(string,string);
+    callback complete-ticktick-task(string,string);
+    callback reopen-ticktick-task(string,string);
+    callback select-ticktick-list(string,string);
+    callback ticktick-selected-project(string) -> string;
+    pure function ticktick-priority-value(index: int) -> int { return index == 3 ? 5 : index == 2 ? 3 : index == 1 ? 1 : 0; }
+    function open-ticktick-create(project-id: string) {
+        if root.ticktick-loading { return; }
+        root.ticktick-confirm-delete = false;
+        root.ticktick-create = true;
+        root.ticktick-edit-id = "";
+        root.ticktick-edit-project = "";
+        root.ticktick-title = "";
+        root.ticktick-content = ""; root.ticktick-desc = "";
+        root.ticktick-due-date = ""; root.ticktick-tags = ""; root.ticktick-priority = 0;
+        root.ticktick-form-error = "";
+        root.ticktick-project-index = root.ticktick-list-index(root.ticktick-projects,project-id);
+        root.ticktick-open = true;
+    }
+    function open-ticktick-details(task: TickTickTask) {
+        if root.ticktick-loading { return; }
+        root.ticktick-confirm-delete = false;
+        root.ticktick-create = false;
+        root.ticktick-edit-id = task.id;
+        root.ticktick-edit-project = task.project-id;
+        // The List control starts on the task's own list, so saving without a change keeps it.
+        root.ticktick-project-index = root.ticktick-list-index(root.ticktick-projects,task.project-id);
+        root.ticktick-title = task.title;
+        root.ticktick-content = task.content; root.ticktick-desc = task.desc;
+        root.ticktick-due-date = task.due-date; root.ticktick-tags = task.tags; root.ticktick-priority = task.priority == 5 ? 3 : task.priority == 3 ? 2 : task.priority == 1 ? 1 : 0;
+        root.ticktick-form-error = "";
+        root.ticktick-open = true;
+    }
     in property <string> installed-status;
     in property <bool> installed-apps-loaded;
     in property <bool> installed-apps-match;
@@ -342,6 +644,9 @@ export component Launcher inherits Window {
     private property <bool> alert;
     in-out property <bool> picker;
     private property <int> context-index: -1;
+    private property <bool> page-context;
+    changed current-page => { root.page-context = false; }
+    changed launcher-visible => { if !root.launcher-visible { root.page-context = false; } }
     private property <string> dock-context;
     private property <string> context-id;
     private property <int> editing: -1;
@@ -411,7 +716,7 @@ export component Launcher inherits Window {
     private property <bool> merge-ready;
     private property <int> edge-direction;
     private property <[AppTile]> drag-items: root.drag-page >= 0 && root.drag-page < root.page-previews.length ? root.page-previews[root.drag-page].items : [];
-    private property <bool> drag-on-page: root.dragging && (!root.drag-from-folder || root.drag-outside-folder);
+    private property <bool> drag-on-page: root.dragging && !root.resizing && (!root.drag-from-folder || root.drag-outside-folder);
     callback save-app(int, string, string, string);
     callback add-system-action(string);
     callback add-installed-app(string);
@@ -452,7 +757,11 @@ export component Launcher inherits Window {
     }
     merge-timer := Timer {
         interval: 500ms;
-        triggered => { root.merge-ready = root.dragging && root.merge-target >= 0; self.stop(); }
+        triggered => {
+            root.merge-ready = root.dragging && root.merge-target >= 0;
+            if root.merge-ready { root.drag-scale = 0.84; }
+            self.stop();
+        }
     }
     edge-timer := Timer {
         interval: 600ms;
@@ -494,6 +803,8 @@ export component Launcher inherits Window {
     }
     function close-folder-view() {
         root.folder-open = false;
+        root.ticktick-open = false;
+        root.ticktick-confirm-delete = false;
         root.folder-closing = !root.drag-outside-folder;
         if root.folder-closing { folder-close-timer.start(); }
         root.close-folder();
@@ -501,6 +812,7 @@ export component Launcher inherits Window {
     function clear-merge() {
         root.merge-target = -1;
         root.merge-ready = false;
+        root.drag-scale = root.dragging ? 1.08 : 1;
         merge-timer.stop();
     }
     function cancel-drag() {
@@ -510,8 +822,9 @@ export component Launcher inherits Window {
         edge-timer.stop();
         root.clear-merge();
         reorder-timer.stop(); root.reorder-ready = false; root.reorder-target = -1;
-        root.drag-from-dock = false; root.resizing = false;
+        root.drag-from-dock = false; root.resizing = false; root.ticktick-control-pressed = false;
         root.dragging = false;
+        root.drag-scale = 1;
         root.drag-index = -1;
         root.drag-page = -1;
         root.drop-target = -1;
@@ -532,35 +845,36 @@ export component Launcher inherits Window {
         root.drag-y = y;
         if index >= 0 && index < (folder ? root.folder-items.length : root.items.length) {
             root.drag-item = folder ? root.folder-items[index] : root.items[index];
-            root.grab-x = folder ? root.item-size * 0.5px : x - grid.absolute-position.x - root.drag-item.col * grid.tile-size - (grid.tile-size - root.item-size * 1px) / 2;
-            root.grab-y = folder ? root.item-size * 0.5px : y - grid.absolute-position.y - root.drag-item.row * grid.tile-size - (grid.tile-size - root.item-size * 1px) / 2;
+            root.grab-x = folder ? root.item-size * 0.5px : x - grid.absolute-position.x - root.drag-item.col * grid.tile-size - 8px;
+            root.grab-y = folder ? root.item-size * 0.5px : y - grid.absolute-position.y - root.drag-item.row * grid.tile-size - 8px;
         }
     }
     function update-drop() {
         if !root.drag-on-page { return; }
         let x = root.drag-x - grid.absolute-position.x;
         let y = root.drag-y - grid.absolute-position.y;
-        let column = floor(x / grid.tile-size);
-        let row = floor(y / grid.tile-size);
-        let in-page = column >= 0 && column < grid.columns && row >= 0 && row < grid.rows;
-        let slot = in-page ? row * grid.columns + column : -1;
-        let target = root.hit-cell(root.drag-items,column,row);
+        let column = floor((x - root.grab-x - 8px) / grid.tile-size);
+        let row = floor((y - root.grab-y - 8px) / grid.tile-size);
+        let hover-column = floor(x / grid.tile-size);
+        let hover-row = floor(y / grid.tile-size);
+        let candidate-in-page = column >= 0 && column < grid.columns && row >= 0 && row < grid.rows;
+        let pointer-in-page = hover-column >= 0 && hover-column < grid.columns && hover-row >= 0 && hover-row < grid.rows;
+        let slot = candidate-in-page ? row * grid.columns + column : -1;
+        let target = root.hit-cell(root.drag-items,hover-column,hover-row);
         root.drop-target = slot;
-        let icon-size = min(root.item-size * 0.625px, root.item-size * 1px - 44px);
-        let icon-x = column * grid.tile-size + (grid.tile-size - icon-size) / 2;
-        let icon-y = row * grid.tile-size + (grid.tile-size - root.item-size * 1px) / 2 + root.item-size * 0.09px;
-        let can-merge = in-page && !root.drag-item.folder && !root.drag-item.widget && target >= 0
-            && root.drag-items[target].id != root.drag-item.id
-            && !root.drag-items[target].widget
-            && root.center-zone((x - icon-x) / 1px,(y - icon-y) / 1px,icon-size / 1px,root.merge-target == target);
+        let folder-target = pointer-in-page && !root.on-dock
+            ? root.folder-target(root.drag-items,root.drag-item,column,row,root.merge-target) : -1;
+        let can-merge = folder-target >= 0;
         if can-merge {
             reorder-timer.stop(); root.reorder-ready = false; root.reorder-target = -1;
-            if root.merge-target != target { root.clear-merge(); root.merge-target = target; merge-timer.start(); }
+            if root.merge-target != folder-target { root.clear-merge(); root.merge-target = folder-target; merge-timer.start(); }
         } else {
             root.clear-merge();
-            if root.reorder-target != slot {
-                reorder-timer.stop(); root.reorder-ready = false; root.reorder-target = slot;
-                if slot >= 0 { if target < 0 || root.drag-items[target].id == root.drag-item.id { root.reorder-ready = true; } else { reorder-timer.start(); } }
+            let reorder-key = target >= 0 && root.drag-items[target].id != root.drag-item.id ? target : -1;
+            if reorder-key < 0 { root.reorder-ready = slot >= 0; }
+            if root.reorder-target != reorder-key {
+                reorder-timer.stop(); root.reorder-ready = false; root.reorder-target = reorder-key;
+                if reorder-key < 0 { root.reorder-ready = slot >= 0; } else { reorder-timer.start(); }
             }
         }
     }
@@ -568,10 +882,17 @@ export component Launcher inherits Window {
         if root.drag-index < 0 || root.drop-pending { return; }
         root.drag-x = x;
         root.drag-y = y;
+        if root.ticktick-control-pressed {
+            if sqrt((x - root.drag-start-x)*(x - root.drag-start-x)/1px/1px + (y - root.drag-start-y)*(y - root.drag-start-y)/1px/1px) < 8 { return; }
+            root.ticktick-control-pressed = false;
+            root.dragging = true;
+            root.drag-scale = 1.08;
+        }
         if root.resizing {
             root.dragging = true;
-            root.resize-width = min(4,max(1,ceil((x - grid.absolute-position.x) / grid.tile-size) - root.drag-item.col));
-            root.resize-height = min(4,max(1,ceil((y - grid.absolute-position.y) / grid.tile-size) - root.drag-item.row));
+            root.drag-scale = 1.08;
+            root.resize-width = min(min(root.drag-item.max-span-x,grid.columns - root.drag-item.col),max(root.drag-item.min-span-x,floor(root.drag-item.span-x + (x - root.drag-start-x) / 1px)));
+            root.resize-height = min(min(root.drag-item.max-span-y,grid.rows - root.drag-item.row),max(root.drag-item.min-span-y,floor(root.drag-item.span-y + (y - root.drag-start-y) / 1px)));
             return;
         }
         if !root.dragging {
@@ -601,7 +922,13 @@ export component Launcher inherits Window {
         merge-timer.stop();
         if root.drag-index < 0 { return; }
         if root.resizing {
-            if root.resize-valid { root.busy = true; root.widget-action(root.drag-item.id,false,root.resize-width,root.resize-height); }
+            if root.resize-valid && (root.resize-width != root.drag-item.span-x || root.resize-height != root.drag-item.span-y) { root.busy = true; root.widget-action(root.drag-item.id,root.resize-width,root.resize-height); }
+            root.cancel-drag(); return;
+        }
+        if root.ticktick-control-pressed {
+            if abs(root.drag-x - root.drag-start-x) < 8px && abs(root.drag-y - root.drag-start-y) < 8px {
+                root.handle-ticktick-click(root.drag-index,root.drag-start-x,root.drag-start-y);
+            }
             root.cancel-drag(); return;
         }
         if root.dragging {
@@ -626,7 +953,8 @@ export component Launcher inherits Window {
         } else if root.drag-from-folder {
             root.busy = true;
             root.launch-folder-app(root.folder-index, root.drag-index);
-        } else if root.drag-index == root.items.length { root.add-item("App"); }
+        }
+        else if root.items[root.drag-index].ticktick { }
         else if root.items[root.drag-index].widget { }
         else if root.items[root.drag-index].folder {
             root.folder-index = root.drag-index;
@@ -635,20 +963,90 @@ export component Launcher inherits Window {
         } else { root.busy = true; root.open-item(root.drag-index); }
         root.cancel-drag();
     }
+    function handle-ticktick-click(index: int, x: length, y: length) {
+        if index < 0 || index >= root.items.length || !root.items[index].ticktick { return; }
+        let item = root.items[index];
+        let tile-x = grid.absolute-position.x + item.col * grid.tile-size + 8px;
+        let tile-y = grid.absolute-position.y + item.row * grid.tile-size + 8px;
+        let local-x = x - tile-x;
+        let local-y = y - tile-y;
+        let tile-width = item.span-x * grid.tile-size - 16px;
+        let tile-height = item.span-y * grid.tile-size - 16px;
+        if item.ticktick-next {
+            if local-y >= 36px {
+                let first = root.ticktick-visible-tasks(root.ticktick-tasks,"@today",false,0,1);
+                if first.length == 0 { return; }
+                // The checkbox completes the task; the title opens it for editing.
+                if local-x >= 0px && local-x < 24px {
+                    if !root.ticktick-loading {
+                        root.complete-ticktick-task(first[0].id,first[0].project-id);
+                        root.ticktick-next-completion-sequence += 1;
+                    }
+                } else {
+                    root.open-ticktick-details(first[0]);
+                }
+            }
+            return;
+        }
+        if local-y < 42px {
+            if local-x >= tile-width - 46px {
+                root.ticktick-popup-options = true;
+                root.ticktick-popup-x = min(tile-x + tile-width - 196px,root.width - 212px);
+            } else if local-x >= tile-width - 80px {
+                root.open-ticktick-create(item.ticktick-project-id);
+                return;
+            } else {
+                root.ticktick-popup-options = false;
+                root.ticktick-list-page = 0;
+                root.ticktick-popup-x = min(tile-x,root.width - 212px);
+            }
+            root.ticktick-popup-y = min(tile-y + 38px,root.height - 300px);
+            root.ticktick-popup-widget-id = root.items[index].id;
+            return;
+        }
+        let task-row = floor((local-y - 44px) / 36px);
+        let offset = root.ticktick-scroll-widget-id == item.id ? root.ticktick-scroll-row : 0;
+        let visible = root.ticktick-visible-tasks(root.ticktick-tasks,item.ticktick-project-id,root.ticktick-show-completed,offset,max(0,floor((tile-height - 52px) / 36px)));
+        if local-y >= 44px && task-row >= 0 && task-row < visible.length {
+            if local-x >= 10px && local-x <= 39px {
+                if root.ticktick-loading { return; }
+                if visible[task-row].done { root.reopen-ticktick-task(visible[task-row].id,visible[task-row].project-id); }
+                else { root.complete-ticktick-task(visible[task-row].id,visible[task-row].project-id); }
+            } else { root.open-ticktick-details(visible[task-row]); }
+        }
+    }
+    function scroll-ticktick(x: length, y: length, delta: length) -> bool {
+        let index = root.page-item-at(x,y);
+        if index < 0 || index >= root.items.length || !root.items[index].ticktick { return false; }
+        let item = root.items[index];
+        if item.ticktick-next { return false; }
+        if root.ticktick-scroll-widget-id != item.id {
+            root.ticktick-scroll-widget-id = root.items[index].id;
+            root.ticktick-scroll-row = 0;
+        }
+        let count = root.ticktick-task-count(root.ticktick-tasks,item.ticktick-project-id,root.ticktick-show-completed);
+        let visible = max(0,floor((item.span-y * grid.tile-size - 68px) / 36px));
+        root.ticktick-scroll-row = min(max(0,count - visible),max(0,root.ticktick-scroll-row + (delta < 0px ? 1 : -1)));
+        return true;
+    }
     function page-item-at(x: length, y: length) -> int {
         let dx = x - grid.absolute-position.x;
         let dy = y - grid.absolute-position.y;
-        let inset = (grid.tile-size - root.item-size * 1px) / 2;
-        let slot = floor(dy / grid.tile-size) * grid.columns + floor(dx / grid.tile-size);
         if dx < 0px || dx >= grid.width || dy < 0px || dy >= grid.height { return -1; }
         let index = root.hit-cell(root.items,floor(dx / grid.tile-size),floor(dy / grid.tile-size));
-        if index >= 0 && root.items[index].widget { return index; }
-        if mod(dx,grid.tile-size) < inset || mod(dx,grid.tile-size) > grid.tile-size - inset || mod(dy,grid.tile-size) < inset || mod(dy,grid.tile-size) > grid.tile-size - inset { return -1; }
-        return index >= 0 ? index : slot == root.free-cell(root.items,grid.columns,grid.rows) ? root.items.length : -1;
+        if index >= 0 {
+            let local-x = dx - root.items[index].col * grid.tile-size;
+            let local-y = dy - root.items[index].row * grid.tile-size;
+            return local-x >= 8px && local-x < root.items[index].span-x * grid.tile-size - 8px
+                && local-y >= 8px && local-y < root.items[index].span-y * grid.tile-size - 8px ? index : -1;
+        }
+        return -1;
     }
     page-focus := FocusScope { width: 0px; height: 0px; }
     finish-drag => { if root.drop-pending { root.cancel-drag(); } }
     reset-launcher => {
+        root.page-context = false;
+        root.placing-widget = -1; root.widget-placement-target = -1;
         if root.folder-open { root.close-folder(); }
         root.page-dragging = false;
         root.page-swipe-pressed = false;
@@ -662,6 +1060,8 @@ export component Launcher inherits Window {
         transition-timer.stop();
         page.content-x = 0px;
         root.search-text = "";
+        root.activated-prefix-id = "";
+        root.activated-prefix-name = "";
         root.settings = false;
         root.shortcuts-tab = false;
         root.shortcut-editor = false;
@@ -687,7 +1087,11 @@ export component Launcher inherits Window {
         search-input.focus();
     }
     close-top-layer => {
+        if root.page-context { root.page-context = false; return; }
         if root.move-id != "" { root.move-id = ""; return; }
+        if root.ticktick-confirm-delete { root.ticktick-confirm-delete = false; return; }
+        if root.ticktick-open { root.ticktick-open = false; root.ticktick-edit-id = ""; return; }
+        if root.placing-widget >= 0 { root.placing-widget = -1; root.widget-placement-target = -1; return; }
         if root.page-delete-confirm { root.page-delete-confirm = false; }
         else if root.shortcut-editor { root.shortcut-editor = false; root.shortcut-recording = false; }
         else if root.drag-index >= 0 { root.cancel-drag(); }
@@ -705,7 +1109,8 @@ export component Launcher inherits Window {
         else if root.folder-open { root.close-folder-view(); }
         else if root.settings && root.search-path-editor { root.search-path-editor = false; }
         else if root.settings { root.settings = false; search-input.focus(); }
-        else if root.search-text != "" { root.search-text = ""; page-focus.focus(); }
+        else if root.activated-prefix-id != "" { root.search-text = ""; root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); page-focus.focus(); }
+        else if root.search-text != "" { root.search-text = ""; root.search(""); page-focus.focus(); }
         else { root.hide-launcher(); }
     }
     function edit-app(index: int) {
@@ -739,6 +1144,7 @@ export component Launcher inherits Window {
 
     }
     function add-item(kind: string) {
+        root.page-context = false;
         sheet-scroll.content-x = 0px; sheet-scroll.content-y = 0px;
         root.icon-preview-present = false; root.icon-letter = "";
         if root.sheet {
@@ -854,6 +1260,7 @@ export component Launcher inherits Window {
     callback open-page(int);
     callback hide-launcher();
     function change-page(index: int) {
+        root.page-context = false;
         if !root.busy && !root.transitioning && index >= 0 && index < root.page-count && index != root.current-page {
             root.transition-items = root.items;
             root.transition-direction = index > root.current-page ? 1 : -1;
@@ -907,16 +1314,30 @@ export component Launcher inherits Window {
     Image { width: root.width; height: root.height; source: @image-url("assets/background.svg"); image-fit: fill; }
     Image { x: 48px; y: 40px; width: 90px; height: 32px; source: @image-url("assets/orbit.svg"); }
     Rectangle {
-        x: (root.width - self.width) / 2; y: 34px; width: min(360px, root.width - 440px); height: 44px;
+        x: (root.width - self.width) / 2; y: 34px; width: min(560px, root.width - 440px); height: 44px;
         background: #ffffff04; border-color: #a6b1ed26; border-width: 1px; border-radius: 12px;
         Image { x: 16px; y: 13px; width: 18px; height: 18px; source: @image-url("assets/search.svg"); }
-        Text { x: 45px; y: 0px; height: parent.height; text: root.search-text == "" ? "Search anything" : ""; color: #a7adc7; font-size: 13px; vertical-alignment: center; }
+        Text { x: root.activated-prefix-name == "" ? 45px : 53px + root.activated-prefix-width; y: 0px; height: parent.height; text: root.search-text == "" ? "Search anything" : ""; color: #a7adc7; font-size: 13px; vertical-alignment: center; }
         search-input := TextInput {
-            x: 45px; y: 0px; width: parent.width - 109px; height: parent.height;
+            x: root.activated-prefix-name == "" ? 45px : 53px + root.activated-prefix-width;
+            y: 0px; width: parent.width - 109px - (root.activated-prefix-name == "" ? 0px : root.activated-prefix-width + 8px); height: parent.height;
             text <=> root.search-text; color: #e0e4f5; font-size: 13px; vertical-alignment: center;
             single-line: true;
             edited => { root.search-selection = 0; root.search-offset = 0px; root.search(self.text); }
-            accepted => { if self.text != "" { root.activate-search-selection(); } }
+            accepted => { if self.text != "" || root.activated-prefix-id != "" { root.run-activated-prefix(); } }
+            key-pressed(event) => {
+                if event.text == Key.Tab { if root.activated-prefix-id == "" { root.activate-prefix(); } accept; }
+                else if event.text == Key.Space && root.activated-prefix-id == "" {
+                    let matched = root.match-prefix(root.search-text);
+                    if matched.action-id != "" { root.activate-prefix(); accept; } else { reject; }
+                }
+                else { reject; }
+            }
+        }
+        if root.activated-prefix-name != "": Rectangle {
+            x: 45px; y: 8px; width: root.activated-prefix-width; height: 28px;
+            background: #a8b3ff20; border-width: 1px; border-color: #a8b3ff70; border-radius: 7px;
+            prefix-badge-label := Text { x: 6px; width: parent.width - 12px; height: parent.height; text: root.activated-prefix-name; accessible-label: root.activated-prefix-name; color: #cbd2ff; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
         }
         Rectangle { x: parent.width - 58px; y: 14px; width: 1px; height: 16px; background: #a6b1ed26; }
         Text { x: parent.width - 45px; height: parent.height; text: "Ctrl K"; color: #7881a4; font-size: 11px; vertical-alignment: center; }
@@ -953,19 +1374,19 @@ export component Launcher inherits Window {
                 width: page.width - root.page-margin * 2px;
                 property <[AppTile]> preview-items: root.transitioning ? root.transition-items
                     : (root.page-drag-offset < 0px ? root.next-items : root.previous-items);
-                property <int> columns: max(1, floor(self.width / (root.item-size * 1px + 16px)));
-                property <length> tile-size: root.item-size * 1px + 16px;
+                property <int> columns: max(1, floor(self.width / 1px));
+                property <length> tile-size: 1px;
                 property <int> rows: max(1,floor((page.height - root.page-margin * 2px) / self.tile-size));
-                height: max(page.height - root.page-margin * 2px, ceil((self.preview-items.length + 1) / self.columns) * self.tile-size);
-                border-width: 1px;
-                border-color: #a6b1ed33;
+                height: max(page.height - root.page-margin * 2px, ceil((self.preview-items.length) / self.columns) * self.tile-size);
+                border-width: 0px;
+                border-color: transparent;
                 border-radius: 24px;
-                background: #324d6b88;
-                for index in preview.preview-items.length + 1: PageTile {
-                    property <int> position: index < preview.preview-items.length ? preview.preview-items[index].row * preview.columns + preview.preview-items[index].col : root.free-cell(preview.preview-items,preview.columns,preview.rows);
-                    visible: self.position >= 0 && (index == preview.preview-items.length || !preview.preview-items[index].pinned);
-                    x: mod(self.position, preview.columns) * preview.tile-size + (preview.tile-size - root.item-size * 1px) / 2;
-                    y: floor(self.position / preview.columns) * preview.tile-size + (preview.tile-size - root.item-size * 1px) / 2;
+                background: #324d6b1A;
+                for index in preview.preview-items.length: PageTile {
+                    property <int> position: preview.preview-items[index].row * preview.columns + preview.preview-items[index].col;
+                    visible: self.position >= 0 && !preview.preview-items[index].pinned;
+                    x: mod(self.position, preview.columns) * preview.tile-size + 8px;
+                    y: floor(self.position / preview.columns) * preview.tile-size + 8px;
                     width: root.item-size * 1px; height: self.width;
                     items: preview.preview-items;
                     index: index;
@@ -979,37 +1400,47 @@ export component Launcher inherits Window {
                     : root.page-drag-offset);
                 y: root.page-margin * 1px;
                 width: page.width - root.page-margin * 2px;
-                property <[AppTile]> display-items: root.drag-on-page ? (root.reorder-ready && root.merge-target < 0 && !root.on-dock ? root.preview-cells(root.drag-items,root.drag-item.id,root.drop-target,root.drag-item.span-x,root.drag-item.span-y,self.columns,self.rows) : root.drag-items) : root.transitioning ? root.transition-incoming-items : root.items;
-                property <int> columns: max(1, floor(self.width / (root.item-size * 1px + 16px)));
-                property <length> tile-size: root.item-size * 1px + 16px;
+                property <[AppTile]> display-items: root.drag-on-page ? root.drag-items : root.transitioning ? root.transition-incoming-items : root.items;
+                property <int> columns: max(1, floor(self.width / 1px));
+                property <length> tile-size: 1px;
                 property <int> rows: max(1,floor((page.height - root.page-margin * 2px) / self.tile-size));
                 opacity: root.page-dragging || root.transitioning ? 0.88 : 1;
                 animate opacity { duration: 100ms; easing: ease-out; }
-                height: self.rows * self.tile-size;
-                border-width: 1px;
-                border-color: #a6b1ed33;
+                height: max(page.height - root.page-margin * 2px, self.rows * self.tile-size);
+                border-width: 0px;
+                border-color: transparent;
                 border-radius: 24px;
-                background: #324d6b88;
-                for index in grid.display-items.length + 1: PageTile {
+                background: #324d6b1A;
+                for index in grid.display-items.length: PageTile {
                     property <bool> source-here: root.dragging && index < grid.display-items.length && grid.display-items[index].id == root.drag-item.id;
-                    property <int> position: index < grid.display-items.length ? grid.display-items[index].row * grid.columns + grid.display-items[index].col : root.free-cell(grid.display-items,grid.columns,grid.rows);
-                    visible: self.position >= 0 && (index == grid.display-items.length || !grid.display-items[index].pinned);
-                    x: mod(self.position, grid.columns) * grid.tile-size + (grid.tile-size - root.item-size * 1px) / 2;
-                    y: floor(self.position / grid.columns) * grid.tile-size + (grid.tile-size - root.item-size * 1px) / 2;
+                    property <int> position: grid.display-items[index].row * grid.columns + grid.display-items[index].col;
+                    visible: self.position >= 0 && !grid.display-items[index].pinned;
+                    x: mod(self.position, grid.columns) * grid.tile-size + 8px;
+                    y: floor(self.position / grid.columns) * grid.tile-size + 8px;
                     width: index < grid.display-items.length ? grid.display-items[index].span-x * grid.tile-size - 16px : root.item-size * 1px;
                     height: index < grid.display-items.length ? grid.display-items[index].span-y * grid.tile-size - 16px : root.item-size * 1px;
                     opacity: self.source-here ? 0.2 : 1;
                     items: grid.display-items; index: index;
+                    ticktick-tasks: index < grid.display-items.length && grid.display-items[index].ticktick
+                        ? root.ticktick-visible-tasks(root.ticktick-tasks,grid.display-items[index].ticktick-next ? "@today" : grid.display-items[index].ticktick-project-id,grid.display-items[index].ticktick-next ? false : root.ticktick-show-completed,
+                            !grid.display-items[index].ticktick-next && root.ticktick-scroll-widget-id == grid.display-items[index].id ? root.ticktick-scroll-row : 0,
+                            grid.display-items[index].ticktick-next ? 1 : max(0,floor((self.height - 52px) / 36px))) : [];
+                    ticktick-next-completion-sequence: root.ticktick-next-completion-sequence;
+                    ticktick-list-name: index < grid.display-items.length && grid.display-items[index].ticktick && !grid.display-items[index].ticktick-next
+                        ? root.ticktick-list-name(root.ticktick-projects,grid.display-items[index].ticktick-project-id) : "";
+                    ticktick-status: root.ticktick-status; ticktick-connected: root.ticktick-connected; ticktick-refreshing: root.ticktick-refreshing; ticktick-error: root.ticktick-error; ticktick-pulse: root.ticktick-pulse;
                     folder-preview: root.drag-on-page && root.merge-ready && root.merge-target == index;
                     drag-preview-item: root.drag-item;
-                    hovered: root.drag-on-page ? root.merge-target == index : page-input.has-hover && root.page-item-at(page-input.absolute-position.x + page-input.mouse-x, page-input.absolute-position.y + page-input.mouse-y) == index;
-                    border-width: root.keyboard-grid && root.focused-item == index ? 2px : 1px;
-                    border-color: (root.keyboard-grid && root.focused-item == index) || (root.drag-on-page && root.merge-target == index) ? #a8b3ff : #a6b1ed33;
+                    hovered: (root.keyboard-grid && root.focused-item == index) || (root.drag-on-page ? root.merge-target == index : page-input.has-hover && root.page-item-at(page-input.absolute-position.x + page-input.mouse-x, page-input.absolute-position.y + page-input.mouse-y) == index);
+                    border-width: 0px;
+                    border-color: transparent;
+                    animate border-width { duration: 180ms; easing: ease-out; }
+                    animate border-color { duration: 180ms; easing: ease-out; }
                     animate x { duration: root.dragging ? 200ms : 0ms; easing: ease-out; }
                     animate y { duration: root.dragging ? 200ms : 0ms; easing: ease-out; }
                 }
             }
-            if root.drag-on-page && root.merge-target < 0 && !root.on-dock && root.drop-target >= 0: Rectangle {
+            if root.drag-on-page && !root.resizing && root.merge-target < 0 && !root.on-dock && root.drop-target >= 0: Rectangle {
                 x: grid.x + mod(root.drop-target,grid.columns) * grid.tile-size + 8px;
                 y: grid.y + floor(root.drop-target/grid.columns) * grid.tile-size + 8px;
                 width: root.drag-item.span-x * grid.tile-size - 16px; height: root.drag-item.span-y * grid.tile-size - 16px;
@@ -1017,15 +1448,35 @@ export component Launcher inherits Window {
                 border-color: root.placement-valid && root.reorder-ready ? #71ddcf : #ee9a8b;
                 background: root.placement-valid && root.reorder-ready ? #71ddcf18 : #ee9a8b18;
             }
+            if root.placing-widget >= 0 && root.widget-placement-target >= 0: Rectangle {
+                x: grid.x + mod(root.widget-placement-target,grid.columns) * grid.tile-size + 8px;
+                y: grid.y + floor(root.widget-placement-target/grid.columns) * grid.tile-size + 8px;
+                width: root.placing-width * grid.tile-size - 16px;
+                height: root.placing-height * grid.tile-size - 16px;
+                border-width: 3px; border-radius: 12px;
+                border-color: root.widget-placement-valid ? #71ddcf : #ee9a8b;
+                background: root.widget-placement-valid ? #71ddcf30 : #ee9a8b30;
+            }
+            if root.placing-widget >= 0 && !root.widget-placement-valid: Text {
+                x: grid.x; y: grid.y + grid.height + 8px;
+                text: "Not enough free space"; color: #ee9a8b; font-size: 14px;
+            }
             page-input := TouchArea {
                 y: -page.content-y;
                 width: page.width; height: page.height;
-                enabled: !root.busy && !root.transitioning && !root.folder-open && !root.sheet && !root.alert && !root.picker && !root.settings;
-                scroll-event(event) => { return root.dragging ? accept : root.scroll-page(event); }
+                enabled: !root.busy && !root.transitioning && !root.folder-open && !root.sheet && !root.alert && !root.picker && !root.settings && !root.ticktick-open && root.ticktick-popup-widget-id == "";
+                scroll-event(event) => {
+                    if root.dragging { return accept; }
+                    if !event.modifiers.shift && root.scroll-ticktick(self.absolute-position.x + self.mouse-x,self.absolute-position.y + self.mouse-y,event.delta-y) { return accept; }
+                    return root.scroll-page(event);
+                }
                 pointer-event(event) => {
                     let x = self.absolute-position.x + self.mouse-x;
                     let y = self.absolute-position.y + self.mouse-y;
                     if event.kind == PointerEventKind.down {
+                        if root.placing-widget >= 0 {
+                            root.update-widget-placement(x,y);
+                        } else {
                         let index = root.page-item-at(x, y);
                         if event.button == PointerEventButton.left {
                             root.keyboard-grid = false; root.focused-item = index;
@@ -1033,25 +1484,52 @@ export component Launcher inherits Window {
                             if index >= 0 && index < root.items.length && root.items[index].widget {
                                 let right = grid.absolute-position.x + (root.items[index].col + root.items[index].span-x) * grid.tile-size - 8px;
                                 let bottom = grid.absolute-position.y + (root.items[index].row + root.items[index].span-y) * grid.tile-size - 8px;
-                                root.resizing = x > right - 24px && y > bottom - 24px;
+                                root.resizing = x >= right - 32px && x <= right + 8px && y >= bottom - 32px && y <= bottom + 8px;
                                 root.resize-width = root.items[index].span-x; root.resize-height = root.items[index].span-y;
+                                if root.items[index].ticktick && !root.resizing {
+                                    let tile-y = grid.absolute-position.y + root.items[index].row * grid.tile-size + 8px;
+                                    let row = floor((y - tile-y - 44px) / 36px);
+                                    let offset = root.ticktick-scroll-widget-id == root.items[index].id ? root.ticktick-scroll-row : 0;
+                                    let shown = root.ticktick-visible-tasks(root.ticktick-tasks,root.items[index].ticktick-project-id,root.ticktick-show-completed,offset,max(0,floor((root.items[index].span-y * grid.tile-size - 68px) / 36px)));
+                                    let local-x = x - (grid.absolute-position.x + root.items[index].col * grid.tile-size + 8px);
+                                    let tile-width = root.items[index].span-x * grid.tile-size - 16px;
+                                    let header-control = y - tile-y < 42px && (local-x < tile-width - 112px || local-x >= tile-width - 80px);
+                                    // The focus task row is a control too:
+                                    // the checkbox completes it and the title opens it.
+                                    root.ticktick-control-pressed = root.items[index].ticktick-next
+                                        ? (y - tile-y >= 36px && y - tile-y < root.items[index].span-y * grid.tile-size - 8px)
+                                        : header-control || (y - tile-y >= 44px && row >= 0 && row < shown.length);
+                                }
                             }
                             root.page-swipe-pressed = index < 0;
                             root.page-swipe-start = x;
                             page-focus.focus();
                         }
-                        if event.button == PointerEventButton.right && index >= 0 && index < root.items.length {
-                            root.dock-context = ""; root.context-index = index; root.context-x = x; root.context-y = y;
+                        if event.button == PointerEventButton.right && !root.dragging {
+                            if root.page-context || root.context-index >= 0 || root.dock-context != "" {
+                                root.page-context = false; root.context-index = -1; root.dock-context = ""; root.context-id = "";
+                            } else {
+                                root.page-context = index < 0;
+                                root.dock-context = ""; root.context-index = index; root.context-x = x; root.context-y = y;
+                            }
+                            page-focus.focus();
+                        }
                         }
                     }
                     if event.kind == PointerEventKind.move {
-                        if root.page-swipe-pressed { root.move-page-swipe(x); } else { root.move-drag(x, y); }
+                        if root.placing-widget >= 0 { root.update-widget-placement(x,y); }
+                        else if root.page-swipe-pressed { root.move-page-swipe(x); } else { root.move-drag(x, y); }
                     }
                     if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
-                        if root.page-swipe-pressed { root.end-page-swipe(); } else { root.end-drag(); }
+                        if root.placing-widget >= 0 {
+                            root.update-widget-placement(x,y);
+                            if root.widget-placement-valid { root.busy = true; root.add-widget(root.placing-widget,root.widget-placement-target); }
+                            root.placing-widget = -1; root.widget-placement-target = -1;
+                        } else if root.page-swipe-pressed { root.move-page-swipe(x); root.end-page-swipe(); }
+                        else { root.move-drag(x,y); root.end-drag(); }
                     }
                     if event.kind == PointerEventKind.cancel {
-                        root.cancel-drag(); root.page-swipe-pressed = false; root.page-dragging = false; root.page-drag-offset = 0px;
+                        root.cancel-drag(); root.placing-widget = -1; root.widget-placement-target = -1; root.page-swipe-pressed = false; root.page-dragging = false; root.page-drag-offset = 0px;
                     }
                 }
             }
@@ -1123,7 +1601,7 @@ export component Launcher inherits Window {
     }
     Image { x: 48px; y: root.height - 22px; width: 105px; height: 15px; source: @image-url("assets/page-hint.svg"); }
     Image { x: root.width - 160px; y: root.height - 21px; width: 112px; height: 13px; source: @image-url("assets/close-hint.svg"); }
-    if root.search-text != "" && !root.settings: Flickable {
+    if root.search-text != "" && !root.settings && root.activated-prefix-id == "": Flickable {
         x: (root.width - self.width) / 2; y: 104px; width: min(1316px, root.width - 96px); height: root.height - 238px;
         content-y <=> root.search-offset;
         content-height: max(self.height, ceil(root.search-results.length / root.search-columns) * 164px);
@@ -1158,17 +1636,28 @@ export component Launcher inherits Window {
             }
             HorizontalLayout {
                 spacing: 8px;
-                AddOption { label: "General"; selected: !root.shortcuts-tab; clicked => { root.shortcuts-tab = false; root.shortcut-recording = false; } }
-                AddOption { label: "Shortcuts"; selected: root.shortcuts-tab; clicked => { root.shortcuts-tab = true; } }
+                AddOption { label: "General"; selected: root.settings-tab == 0; clicked => { root.settings-tab = 0; root.shortcuts-tab = false; root.shortcut-recording = false; } }
+                AddOption { label: "Shortcuts"; selected: root.settings-tab == 1; clicked => { root.settings-tab = 1; root.shortcuts-tab = true; } }
+                AddOption { label: "Prefixes"; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; root.shortcuts-tab = false; } }
+                AddOption { label: "Actions"; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; root.shortcuts-tab = false; } }
             }
-            if root.page-count > 1 && !root.shortcuts-tab: HorizontalLayout {
+            if root.page-count > 1 && root.settings-tab == 0: HorizontalLayout {
                 AddOption { label: "Move page left"; option-width: 150px; enabled: root.current-page > 0; clicked => { root.busy = true; root.reorder-page(-1); } }
                 AddOption { label: "Move page right"; option-width: 150px; enabled: root.current-page + 1 < root.page-count; clicked => { root.busy = true; root.reorder-page(1); } }
             }
             if root.banner != "": Text { text: root.banner; color: Theme.error; wrap: word-wrap; }
-            if !root.shortcuts-tab: VerticalLayout {
+            if root.settings-tab == 0: VerticalLayout {
             horizontal-stretch: 1; vertical-stretch: 1;
             spacing: 16px;
+            Text { text: "TickTick account"; color: #e0e3f4; font-size: 16px; }
+            AddField { label: "Personal API token"; placeholder: "Paste a replacement token"; text <=> root.ticktick-token-draft; secret: true; }
+            HorizontalLayout {
+                spacing: 8px;
+                AddOption { label: "Connect TickTick"; option-width: 160px; primary: true; enabled: !root.ticktick-loading && root.ticktick-token-draft != ""; clicked => { root.save-ticktick-token(root.ticktick-token-draft); root.ticktick-token-draft = ""; } }
+                AddOption { label: "Disconnect"; option-width: 112px; destructive: true; enabled: !root.ticktick-loading && root.ticktick-connected; clicked => { root.remove-ticktick-token(); } }
+                Text { text: root.ticktick-connected ? "Connected" : "Not connected"; color: Theme.secondary; vertical-alignment: center; }
+            }
+            Text { text: root.ticktick-status; color: Theme.secondary; wrap: word-wrap; font-size: 12px; }
             HorizontalLayout {
                 spacing: 10px;
                 AddOption { label: "Delete page"; option-width: 132px; destructive: true; enabled: root.page-count > 1 && !root.busy; clicked => { root.confirm-delete-page(); } }
@@ -1182,11 +1671,11 @@ export component Launcher inherits Window {
                 spacing: 12px;
                 Text { text: "Page margin (px)"; color: Theme.text; vertical-alignment: center; }
                 SpinBox { minimum: 0; maximum: 64; value <=> root.page-margin; }
-                Text { text: "Home Screen > Grid Cell Size"; color: Theme.text; vertical-alignment: center; }
-                Slider { minimum: 80; maximum: 240; value: root.item-size; changed(value) => { root.item-size = round(value / 8) * 8; } }
+                Text { text: "Home Screen > Item Size"; color: Theme.text; vertical-alignment: center; }
+                Slider { minimum: 80; maximum: 176; value: root.item-size; changed => { root.item-size = round(self.value / 8) * 8; } }
                 Text { text: root.item-size + " px"; color: Theme.text; }
                 AddOption { label: "Reset to default"; option-width: 144px; clicked => { root.item-size = 128; } }
-                AddOption { label: "Save"; enabled: !root.busy; clicked => { root.busy = true; root.saved-size = root.item-size; root.saved-margin = root.page-margin; root.save-appearance(root.page-margin, root.item-size,grid.columns,grid.rows); } }
+                AddOption { label: "Save"; enabled: !root.busy; clicked => { root.busy = true; root.save-appearance(root.page-margin, root.item-size,grid.columns,grid.rows); } }
                 Rectangle { horizontal-stretch: 1; }
             }
             HorizontalLayout {
@@ -1237,7 +1726,7 @@ export component Launcher inherits Window {
                 }
             }
             }
-            if root.shortcuts-tab: VerticalLayout {
+            if root.settings-tab == 1: VerticalLayout {
                 spacing: 16px;
                 Text { text: "Choose an action, then record its shortcut. Changes are saved automatically."; color: Theme.secondary; font-size: 13px; }
                 Flickable {
@@ -1273,8 +1762,199 @@ export component Launcher inherits Window {
                 }
                 AddOption { label: "Add shortcut"; option-width: 144px; enabled: !root.busy; clicked => { root.shortcut-delete-action = -1; root.shortcut-action = 0; root.shortcut-existing = ""; root.shortcut-draft = ""; root.shortcut-editor = true; } }
             }
+            if root.settings-tab == 2: VerticalLayout {
+                spacing: 12px;
+                Text { text: "Each Action can have several Tokens. Edit them together, or add a separate Prefix below."; color: Theme.secondary; wrap: word-wrap; }
+                Flickable {
+                    vertical-stretch: 1; content-height: max(self.height, root.user-actions.length * 52px); content-width: self.width;
+                    for action[index] in root.user-actions: HorizontalLayout {
+                        y: index * 52px; height: 44px; spacing: 8px;
+                        Text { width: 180px; text: action.name; color: Theme.text; vertical-alignment: center; }
+                        Text { horizontal-stretch: 1; text: action.tokens == "" ? "No Tokens" : action.tokens; color: #a8b3ff; vertical-alignment: center; overflow: elide; }
+                        AddOption { label: "Edit Tokens"; option-width: 112px; enabled: !root.busy; clicked => {
+                            root.action-id-draft = action.id; root.action-name-draft = action.name; root.action-kind-draft = action.kind;
+                            root.action-source-draft = action.source; root.action-description-draft = action.description;
+                            root.action-tokens-draft = action.tokens; root.action-used = action.referenced;
+                            root.action-editor-open = true; root.settings-tab = 3;
+                        } }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    AddField { label: "Name"; placeholder: "YouTube"; text <=> root.prefix-name-draft; }
+                    AddField { label: "Token"; placeholder: "y"; text <=> root.prefix-token-draft; }
+                    ComboBox { model: root.action-names; current-index <=> root.prefix-action-index; }
+                }
+                HorizontalLayout {
+                    AddOption { label: "New Prefix"; clicked => { root.prefix-id-draft = ""; root.prefix-name-draft = ""; root.prefix-token-draft = ""; root.prefix-action-index = 0; } }
+                    AddOption { label: "Save Prefix"; primary: true; enabled: !root.busy && root.prefix-name-draft != "" && root.prefix-token-draft != "" && root.user-actions.length > 0; clicked => { root.busy = true; root.save-prefix(root.prefix-id-draft, root.prefix-name-draft, root.prefix-token-draft, root.user-actions[root.prefix-action-index].id); } }
+                }
+            }
+            if root.settings-tab == 3: VerticalLayout {
+                vertical-stretch: 1; spacing: 12px;
+                if !root.action-editor-open: HorizontalLayout {
+                    Text { text: "Choose an Action to edit it, or create a new one."; color: Theme.secondary; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    AddOption { label: "New Action"; option-width: 132px; primary: true; enabled: !root.busy; clicked => { root.action-id-draft = ""; root.action-name-draft = ""; root.action-kind-draft = "Shell"; root.action-source-draft = ""; root.action-description-draft = ""; root.action-tokens-draft = ""; root.action-used = false; root.action-editor-open = true; } }
+                }
+                if !root.action-editor-open: Flickable {
+                    vertical-stretch: 1; content-height: max(self.height, ceil(root.user-actions.length / root.action-columns) * 160px); content-width: self.width;
+                    for action[index] in root.user-actions: Rectangle {
+                        x: mod(index, root.action-columns) * ((parent.width - (root.action-columns - 1) * 12px) / root.action-columns + 12px);
+                        y: floor(index / root.action-columns) * 160px;
+                        width: (parent.width - (root.action-columns - 1) * 12px) / root.action-columns;
+                        height: 148px;
+                        background: action-card.has-hover ? Theme.raised : Theme.field;
+                        border-width: action-card.has-hover ? 2px : 1px;
+                        border-color: action-card.has-hover ? Theme.focus : Theme.border;
+                        border-radius: 12px;
+                        Text { x: 14px; y: 10px; width: parent.width - 28px; height: 42px; text: action.name; color: Theme.text; font-size: 15px; font-weight: 600; wrap: word-wrap; vertical-alignment: center; }
+                        Text { x: 14px; y: 54px; width: parent.width - 28px; height: 18px; text: action.kind; color: #a8b3ff; font-size: 11px; font-weight: 600; }
+                        Text { x: 14px; y: 73px; width: parent.width - 28px; height: 18px; text: action.tokens == "" ? "" : "Tokens · " + action.tokens; color: #a8b3ff; font-size: 11px; overflow: elide; }
+                        Text { x: 14px; y: 94px; width: parent.width - 28px; height: 44px; text: action.description; color: Theme.secondary; font-size: 11px; wrap: word-wrap; overflow: elide; }
+                        action-card := TouchArea {
+                            accessible-role: button; accessible-label: "Edit " + action.name;
+                            clicked => { root.action-id-draft = action.id; root.action-name-draft = action.name; root.action-kind-draft = action.kind; root.action-source-draft = action.source; root.action-description-draft = action.description; root.action-tokens-draft = action.tokens; root.action-used = action.referenced; root.action-editor-open = true; }
+                        }
+                    }
+                }
+                if root.action-editor-open: VerticalLayout {
+                    vertical-stretch: 1; spacing: 8px;
+                    Rectangle { vertical-stretch: 1; }
+                    HorizontalLayout {
+                        vertical-stretch: 1;
+                        Rectangle { horizontal-stretch: 1; }
+                        Rectangle {
+                            width: min(760px, parent.width - 32px);
+                            height: max(220px, min(root.height - 400px, 560px));
+                            background: Theme.sheet; border-width: 1px; border-color: Theme.border; border-radius: 16px;
+                            VerticalLayout {
+                                padding: 18px; spacing: 8px;
+                                HorizontalLayout {
+                                    Text { text: root.action-id-draft == "" ? "New Action" : "Edit Action"; color: Theme.text; font-size: 20px; vertical-alignment: center; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Flickable {
+                                    vertical-stretch: 1;
+                                    content-width: self.width;
+                                    content-height: action-fields.preferred-height;
+                                    action-fields := VerticalLayout {
+                                        width: parent.width; spacing: 10px;
+                                        AddField { label: "Name"; placeholder: "My action"; text <=> root.action-name-draft; }
+                                        AddField { label: "Description"; placeholder: "Explain what this Action does and how to use it"; text <=> root.action-description-draft; multiline: true; }
+                                        AddField { label: "Tokens · separate with commas"; placeholder: "g, ل"; text <=> root.action-tokens-draft; }
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            AddOption { label: "Shell"; selected: root.action-kind-draft == "Shell"; clicked => { if root.action-kind-draft != "Shell" { root.action-kind-draft = "Shell"; root.action-source-draft = ""; } } }
+                                            AddOption { label: "URL"; selected: root.action-kind-draft == "URL"; clicked => { if root.action-kind-draft != "URL" { root.action-kind-draft = "URL"; root.action-source-draft = ""; } } }
+                                            AddOption { label: "TickTick"; selected: root.action-kind-draft == "TickTick"; clicked => { if root.action-kind-draft != "TickTick" { root.action-kind-draft = "TickTick"; root.action-source-draft = ""; } } }
+                                        }
+                                        if root.action-kind-draft == "URL": AddField { label: "URL template · use %s for Search anything"; placeholder: "https://example.com/?q=%s"; text <=> root.action-source-draft; }
+                                        if root.action-kind-draft == "Shell": AddField { label: "Shell script · argument: $1 on Arch Linux, $OrbitQuery on Windows"; placeholder: "Write a script that reads the search argument"; text <=> root.action-source-draft; multiline: true; }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    AddOption { label: "Cancel"; option-width: 100px; enabled: !root.busy; clicked => { root.action-editor-open = false; } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    if root.action-id-draft != "": AddOption { label: "Delete"; option-width: 100px; destructive: true; enabled: !root.busy && !root.action-used; clicked => { root.busy = true; root.delete-user-action(root.action-id-draft); } }
+                                    AddOption { label: "Save Action"; option-width: 132px; primary: true; enabled: !root.busy && root.action-name-draft != "" && (root.action-kind-draft == "TickTick" || root.action-source-draft != ""); clicked => { root.busy = true; root.save-user-action(root.action-id-draft, root.action-name-draft, root.action-kind-draft, root.action-source-draft, root.action-description-draft, root.action-tokens-draft); } }
+                                }
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                }
+            }
             HorizontalLayout {
                 AddOption { label: "Back"; option-width: 96px; clicked => { root.search-path-editor = false; root.settings = false; } }
+            }
+        }
+    }
+
+    if root.ticktick-popup-widget-id != "": Rectangle {
+        width: root.width; height: root.height; background: transparent;
+        TouchArea { clicked => { root.ticktick-popup-widget-id = ""; } }
+        Rectangle {
+            x: root.ticktick-popup-x; y: root.ticktick-popup-y; width: 220px;
+            height: root.ticktick-popup-options ? 148px : 12px + min(6,max(0,root.ticktick-views.length - root.ticktick-list-page)) * 36px + (root.ticktick-views.length > 6 ? 32px : 0px);
+            background: #282b35; border-radius: 10px; border-width: 1px; border-color: #ffffff32;
+            if root.ticktick-popup-options: VerticalLayout {
+                padding: 6px; spacing: 4px;
+                AddOption { label: root.ticktick-loading ? "Loading…" : "Refresh Tasks"; option-width: 208px; enabled: !root.ticktick-loading; clicked => { root.load-ticktick(); } }
+                AddOption { label: "Refresh List"; option-width: 208px; enabled: !root.ticktick-loading; clicked => {
+                    root.refresh-ticktick-list(root.ticktick-selected-project(root.ticktick-popup-widget-id));
+                } }
+                AddOption { label: root.ticktick-show-completed ? "Hide completed" : "Show completed"; option-width: 208px; clicked => { root.ticktick-show-completed = !root.ticktick-show-completed; root.ticktick-scroll-row = 0; root.ticktick-popup-widget-id = ""; } }
+            }
+            for row in 6: Rectangle {
+                visible: !root.ticktick-popup-options && row + root.ticktick-list-page < root.ticktick-views.length;
+                x: 6px; y: 6px + row * 36px; width: parent.width - 12px; height: 36px;
+                background: project-touch.has-hover ? #ffffff14 : transparent; border-radius: 5px;
+                Text { x: 10px; width: parent.width - 20px; height: parent.height; text: row + root.ticktick-list-page < root.ticktick-views.length ? root.ticktick-views[row + root.ticktick-list-page].name : ""; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; }
+                project-touch := TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => {
+                    if row + root.ticktick-list-page < root.ticktick-views.length { root.select-ticktick-list(root.ticktick-popup-widget-id,root.ticktick-views[row + root.ticktick-list-page].id); root.ticktick-scroll-row = 0; root.ticktick-popup-widget-id = ""; }
+                } }
+            }
+            if !root.ticktick-popup-options && root.ticktick-views.length > 6: Rectangle {
+                x: 6px; y: 6px + min(6,max(0,root.ticktick-views.length - root.ticktick-list-page)) * 36px;
+                width: parent.width - 12px; height: 32px; background: more-lists-touch.has-hover ? #ffffff14 : transparent; border-radius: 5px;
+                Text { x: 10px; width: parent.width - 20px; height: parent.height; text: root.ticktick-list-page + 6 < root.ticktick-views.length ? "More lists ↓" : "First lists ↑"; color: Theme.secondary; font-size: 12px; vertical-alignment: center; }
+                more-lists-touch := TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.ticktick-list-page = root.ticktick-list-page + 6 < root.ticktick-views.length ? root.ticktick-list-page + 6 : 0; } }
+            }
+        }
+    }
+    if root.ticktick-open: Rectangle {
+        width: root.width; height: root.height; background: #00000099;
+        TouchArea {
+            clicked => { root.ticktick-open = false; root.ticktick-confirm-delete = false; }
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                    root.ticktick-open = false; root.ticktick-confirm-delete = false;
+                }
+            }
+        }
+        ticktick-editor := Rectangle {
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            width: min(parent.width - 40px, 470px); height: min(parent.height - 40px, root.ticktick-form-error == "" ? 730px : 770px);
+            background: #222631; border-radius: 14px; border-color: #ffffff2a; border-width: 1px;
+            TouchArea { width: parent.width; height: parent.height; }
+            VerticalLayout {
+                padding: 20px; spacing: 12px;
+                HorizontalLayout {
+                    Text { text: root.ticktick-create ? "New task" : "Task details"; color: Theme.text; font-size: 19px; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    AddOption { label: "Cancel"; option-width: 72px; clicked => { root.ticktick-open = false; root.ticktick-confirm-delete = false; } }
+                }
+                AddField { label: "Title"; placeholder: "What needs doing?"; text <=> root.ticktick-title; enabled: !root.ticktick-loading; }
+                VerticalLayout {
+                    spacing: 4px;
+                    Text { text: "List"; color: Theme.text; font-size: 13px; }
+                    ComboBox { model: root.ticktick-project-names; current-index <=> root.ticktick-project-index; enabled: root.ticktick-projects.length > 0 && !root.ticktick-loading; }
+                }
+                if !root.ticktick-create: Text { text: "Currently in " + root.ticktick-list-name(root.ticktick-projects,root.ticktick-edit-project); color: Theme.secondary; font-size: 12px; }
+                AddField { label: "Notes (optional)"; placeholder: "Add notes"; text <=> root.ticktick-content; multiline: true; enabled: !root.ticktick-loading; }
+                if !root.ticktick-create: AddField { label: "Description"; placeholder: "Add a task description"; text <=> root.ticktick-desc; multiline: true; enabled: !root.ticktick-loading; }
+                if !root.ticktick-create: HorizontalLayout {
+                    spacing: 10px;
+                    VerticalLayout { spacing: 4px; Text { text: "Priority"; color: Theme.text; font-size: 13px; } ComboBox { model: ["None", "Low", "Medium", "High"]; current-index <=> root.ticktick-priority; enabled: !root.ticktick-loading; } }
+                    AddField { label: "Tags · comma separated"; placeholder: "work, urgent"; text <=> root.ticktick-tags; enabled: !root.ticktick-loading; }
+                }
+                if !root.ticktick-create: AddField { label: "Due date · YYYY-MM-DD"; placeholder: "YYYY-MM-DD or blank"; text <=> root.ticktick-due-date; enabled: !root.ticktick-loading; }
+                if root.ticktick-form-error != "": Text { text: root.ticktick-form-error; color: Theme.error; font-size: 12px; wrap: word-wrap; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    AddOption { label: root.ticktick-create ? "Add task" : "Save changes"; option-width: 112px; primary: true; enabled: !root.ticktick-loading && root.ticktick-title != "" && root.ticktick-projects.length > 0; clicked => {
+                        root.ticktick-form-error = "";
+                        root.save-ticktick-task(root.ticktick-edit-id,root.ticktick-projects[root.ticktick-project-index].id,root.ticktick-edit-project,root.ticktick-title,root.ticktick-content,root.ticktick-desc,root.ticktick-priority-value(root.ticktick-priority),root.ticktick-tags,root.ticktick-due-date);
+                    } }
+                    Rectangle { horizontal-stretch: 1; }
+                    if !root.ticktick-create: AddOption { label: root.ticktick-confirm-delete ? "Delete forever" : "Delete"; option-width: root.ticktick-confirm-delete ? 122px : 82px; destructive: true; enabled: !root.ticktick-loading; clicked => {
+                        if root.ticktick-confirm-delete { root.delete-ticktick-task(root.ticktick-edit-id,root.ticktick-edit-project); root.ticktick-confirm-delete = false; }
+                        else { root.ticktick-confirm-delete = true; }
+                    } }
+                }
             }
         }
     }
@@ -1314,21 +1994,33 @@ export component Launcher inherits Window {
             }
         }
     }
-    if root.context-index >= 0 || root.dock-context != "": Rectangle {
+    if root.page-context || root.context-index >= 0 || root.dock-context != "": Rectangle {
         width: root.width; height: root.height;
         background: #00000050;
-        TouchArea { clicked => { root.context-index = -1; root.dock-context = ""; root.context-id = ""; } }
+        TouchArea {
+            clicked => { root.page-context = false; root.context-index = -1; root.dock-context = ""; root.context-id = ""; }
+            pointer-event(event) => { if event.button == PointerEventButton.right && event.kind == PointerEventKind.down { root.page-context = false; root.context-index = -1; root.dock-context = ""; root.context-id = ""; } }
+        }
         Rectangle {
-            x: min(root.context-x, parent.width - self.width);
-            y: min(root.context-y, parent.height - self.height);
-            width: 200px; height: root.context-index >= 0 ? (root.items[root.context-index].widget ? 294px : 198px) : 64px;
+            x: max(0px, min(root.context-x, parent.width - self.width));
+            y: max(0px, min(root.context-y, parent.height - self.height));
+            width: 200px; height: root.context-index >= 0 ? (root.items[root.context-index].widget ? 380px : 198px) : 64px;
             background: Theme.sheet; border-radius: 16px; border-width: 1px; border-color: Theme.border;
             VerticalLayout {
                 padding: 12px; spacing: 8px;
-                if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Refresh text"; clicked => { root.busy = true; root.widget-action(root.items[root.context-index].id,true,1,1); root.context-index = -1; } }
-                if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Resize · wider"; clicked => { root.busy = true; root.widget-action(root.items[root.context-index].id,false,root.items[root.context-index].span-x + 1,root.items[root.context-index].span-y); root.context-index = -1; } }
-                if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Resize · taller"; clicked => { root.busy = true; root.widget-action(root.items[root.context-index].id,false,root.items[root.context-index].span-x,root.items[root.context-index].span-y + 1); root.context-index = -1; } }
-                if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Resize · smaller"; clicked => { root.busy = true; root.widget-action(root.items[root.context-index].id,false,max(1,root.items[root.context-index].span-x - 1),max(1,root.items[root.context-index].span-y - 1)); root.context-index = -1; } }
+                if root.page-context: AddOption { width: 176px; label: "Add item"; clicked => { root.add-item("App"); } }
+                if root.context-index >= 0 && root.items[root.context-index].ticktick && !root.items[root.context-index].ticktick-next: AddOption { width: 176px; label: "New task"; clicked => { root.open-ticktick-create(root.items[root.context-index].ticktick-project-id); root.context-index = -1; } }
+                if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Duplicate"; clicked => { root.busy = true; root.duplicate-widget(root.items[root.context-index].id); root.context-index = -1; } }
+                if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Resize · wider";
+                    enabled: root.preview-valid(root.items,root.items[root.context-index].id,root.items[root.context-index].row * grid.columns + root.items[root.context-index].col,root.items[root.context-index].span-x + 1,root.items[root.context-index].span-y,grid.columns,grid.rows);
+                    clicked => { root.busy = true; root.widget-action(root.items[root.context-index].id,root.items[root.context-index].span-x + 1,root.items[root.context-index].span-y); root.context-index = -1; } }
+                if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Resize · taller";
+                    enabled: root.preview-valid(root.items,root.items[root.context-index].id,root.items[root.context-index].row * grid.columns + root.items[root.context-index].col,root.items[root.context-index].span-x,root.items[root.context-index].span-y + 1,grid.columns,grid.rows);
+                    clicked => { root.busy = true; root.widget-action(root.items[root.context-index].id,root.items[root.context-index].span-x,root.items[root.context-index].span-y + 1); root.context-index = -1; } }
+                if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Resize · smaller";
+                    enabled: (root.items[root.context-index].span-x > root.items[root.context-index].min-span-x || root.items[root.context-index].span-y > root.items[root.context-index].min-span-y)
+                        && root.preview-valid(root.items,root.items[root.context-index].id,root.items[root.context-index].row * grid.columns + root.items[root.context-index].col,max(root.items[root.context-index].min-span-x,root.items[root.context-index].span-x - 1),max(root.items[root.context-index].min-span-y,root.items[root.context-index].span-y - 1),grid.columns,grid.rows);
+                    clicked => { root.busy = true; root.widget-action(root.items[root.context-index].id,max(root.items[root.context-index].min-span-x,root.items[root.context-index].span-x - 1),max(root.items[root.context-index].min-span-y,root.items[root.context-index].span-y - 1)); root.context-index = -1; } }
                 if root.context-index >= 0 && !root.items[root.context-index].widget: AddOption { width: 176px; label: root.items[root.context-index].folder ? "Rename" : "Edit"; clicked => {
                     root.edit-item(root.context-index);
                 } }
@@ -1561,10 +2253,24 @@ export component Launcher inherits Window {
                             width: root.sheet-content-width;
                             alignment: start;
                             spacing: 8px;
-                            Text { width: root.sheet-content-width; text: "Widget Gallery · place automatically"; color: Theme.text; font-size: 18px; }
-                            for name[index] in ["Random Quote · 2×2", "Random Fact · 2×2", "Random Word · 2×1", "Motivation · 2×1", "Random Number · 2×1"]: AddOption {
-                                width: root.sheet-content-width; label: name; full-width: true; available-width: root.sheet-content-width;
-                                clicked => { root.busy = true; root.add-widget(index); root.sheet = false; }
+                            Text { width: root.sheet-content-width; text: "Widget Gallery · select a widget, then click an empty area"; color: Theme.text; font-size: 18px; }
+                            for name[index] in ["TickTick Tasks", "TickTick Focus Task"]: Rectangle {
+                                width: root.sheet-content-width; height: 72px; border-radius: 10px;
+                                background: Theme.field; border-width: 1px; border-color: Theme.border;
+                                Rectangle {
+                                    x: 8px; y: 7px; width: 58px; height: 58px; border-radius: 9px;
+                                    background: #51405f99; border-width: 1px; border-color: Theme.border;
+                                    Text { x: 6px; y: 5px; width: parent.width - 12px; height: parent.height - 10px; text: index == 0 ? "Tasks ▾\n☐ Buy milk" : "FOCUS NOW\n☐ Do this now"; color: Theme.text; font-size: 9px; wrap: word-wrap; vertical-alignment: center; }
+                                }
+                                Text { x: 78px; y: 12px; width: parent.width - 174px; height: 24px; text: name; color: Theme.text; font-size: 13px; vertical-alignment: center; }
+                                Text { x: 78px; y: 38px; width: parent.width - 174px; height: 20px; text: index == 0 ? (root.item-size * 2) + " × " + (root.item-size * 2) + " px · choose list" : (root.item-size * 4) + " × " + root.item-size + " px · focus task"; color: Theme.secondary; font-size: 12px; vertical-alignment: center; }
+                                AddOption { x: parent.width - 158px; y: 16px; label: "Auto"; option-width: 64px; clicked => { root.busy = true; root.add-widget(7 + index,-1); root.sheet = false; } }
+                                AddOption { x: parent.width - 84px; y: 16px; label: "Place"; option-width: 72px; clicked => {
+                                    root.placing-widget = 7 + index;
+                                    root.placing-width = (index == 0 ? 2 : 4) * root.item-size + 16;
+                                    root.placing-height = (index == 0 ? 2 : 1) * root.item-size + 16;
+                                    root.widget-placement-target = -1; root.sheet = false;
+                                } }
                             }
                         }
                         if root.item-type == "Folder": folder_name_field := AddField {
@@ -1735,7 +2441,11 @@ export component Launcher inherits Window {
                             y: floor(self.position / folder-grid.columns) * 128px;
                             width: folder-grid.column-step - 16px; height: 112px;
                             border-radius: 8px;
-                            background: Theme.field;
+                            property <bool> hovered: root.folder-open && folder-input.has-hover
+                                && floor(folder-input.mouse-y / 128px) * folder-grid.columns + floor(folder-input.mouse-x / folder-grid.column-step) == self.position
+                                && mod(folder-input.mouse-x, folder-grid.column-step) < folder-grid.column-step - 16px
+                                && mod(folder-input.mouse-y, 128px) < 112px;
+                            background: self.hovered ? #ffffff16 : transparent;
                             opacity: root.dragging && root.drag-from-folder && index == root.drag-index ? 0 : 1;
                             animate x { duration: 120ms; easing: ease-out; }
                             animate y { duration: 120ms; easing: ease-out; }
@@ -1764,7 +2474,7 @@ export component Launcher inherits Window {
                                 root.begin-drag(index >= 0 && index < root.folder-items.length ? index : -1, true, x, y);
                             }
                             if event.kind == PointerEventKind.move { root.move-drag(x, y); }
-                            if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.end-drag(); }
+                            if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.move-drag(x,y); root.end-drag(); }
                             if event.kind == PointerEventKind.cancel { root.cancel-drag(); }
                         }
                     }
@@ -1780,10 +2490,21 @@ export component Launcher inherits Window {
         background: #71ddcf18;
     }
     if (root.dragging || root.snapping) && !root.resizing: Rectangle {
-        x: root.drag-x - root.grab-x; y: root.drag-y - root.grab-y;
-        width: root.drag-item.span-x * (root.item-size * 1px + 16px) - 16px; height: root.drag-item.span-y * (root.item-size * 1px + 16px) - 16px;
-        opacity: root.merge-ready ? 0 : 0.9;
-        PageTile { width: parent.width; height: parent.height; items: [root.drag-item]; index: 0; hovered: true; }
+        x: root.drag-x - root.grab-x * root.drag-scale;
+        y: root.drag-y - root.grab-y * root.drag-scale;
+        width: (root.drag-item.span-x * 1px - 16px) * root.drag-scale;
+        height: (root.drag-item.span-y * 1px - 16px) * root.drag-scale;
+        Rectangle {
+            x: 0px; y: 6px; width: parent.width; height: parent.height;
+            border-radius: 20px; background: #080812;
+            opacity: root.dragging ? 0.38 : 0;
+            animate opacity { duration: 160ms; easing: ease-out; }
+        }
+        PageTile {
+            width: parent.width; height: parent.height; items: [root.drag-item]; index: 0; hovered: true;
+            opacity: root.merge-ready ? 0.72 : 1;
+            animate opacity { duration: 180ms; easing: ease-out; }
+        }
     }
     alert-backdrop := Rectangle {
         width: root.width; height: root.height;
@@ -1801,6 +2522,7 @@ export component Launcher inherits Window {
                 padding: 24px; spacing: 16px;
                 Text {
                     text: root.items[root.editing].folder ? ("Delete folder '" + root.app-name + "'? Its apps will move to the page.")
+                        : root.items[root.editing].widget ? ("Remove '" + root.app-name + "' from Home?")
                         : ("Delete '" + root.app-name + "' from Orbit?");
                     color: Theme.text; font-size: 17px; wrap: word-wrap;
                 }
@@ -1809,11 +2531,20 @@ export component Launcher inherits Window {
                     spacing: 12px;
                     cancel-delete := AddOption { label: "Cancel"; enabled: !root.busy; clicked => { root.alert = false; } }
                     AddOption {
-                        label: "Delete"; destructive: true; enabled: !root.busy;
+                        label: root.items[root.editing].widget ? "Remove Widget" : "Delete"; destructive: true; enabled: !root.busy;
                         clicked => { root.busy = true; root.delete-item(root.editing); }
                     }
                 }
             }
         }
     }
+    for toast[row] in root.toast-items: ToastCard {
+        x: root.width - self.width - Theme.space-6;
+        y: root.height - Theme.space-6 - self.height - (root.toast-items.length - row - 1) * (self.height + Theme.space-2);
+        available-width: root.width - 2 * Theme.space-6;
+        pulse: toast.pulse;
+        item: toast;
+        dismissed(id) => { root.dismiss-toast(id); }
+    }
+
 }

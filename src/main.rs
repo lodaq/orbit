@@ -15,6 +15,10 @@ mod recent;
 mod shortcuts;
 mod spatial;
 mod storage;
+mod ticktick;
+#[path = "ticktick-ui.rs"]
+mod ticktick_ui;
+mod toast;
 
 slint::include_modules!();
 

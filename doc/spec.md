@@ -6,9 +6,9 @@ The user approved `Orbit_Desktop_Launcher_UX_Spec_v2.md` on 2026-10-20 as author
 
 ## Current behavior
 
-Folder center targets accept Apps, Websites, Files and Directories. After a 500 ms center dwell, release creates a folder or appends to an existing folder. Edge targets exclusively reorder after their own dwell. Folder children retain shortcut type, URL/path, ID and icon through extraction, dissolution, unpacking and restart. Widgets and folders never become folder children.
+Overlapping folder targets accept Apps, Websites, Files and Directories. After a 500 ms tile-overlap dwell, release creates a folder or appends to an existing folder. Existing page items remain fixed during dragging and dropping. Occupied targets that cannot form a folder reject placement instead of displacing neighbors; empty-space drops move only the dragged item. Folder children retain shortcut type, URL/path, ID and icon through extraction, dissolution, unpacking and restart. Widgets and folders never become folder children.
 
-`Orbit_Desktop_Launcher_UX_Spec_v2.md` is the current product specification and acceptance-test source. Its desktop Android-inspired spatial model supersedes the earlier list-only home-screen, Arch-only target and ordered-dock assumptions below. Existing Orbit appearance, item launching, search, native pickers and background-work requirements remain in force when compatible. New layout data lives in `config.json` version 2 with stable page IDs, explicit item rectangles, widget instances and active page; version 1 files migrate on load. Grid sizing is persisted in the existing Settings page. A dock pin owns a shortcut's layout location; page arrays retain its item record for existing app/search/recent lookups.
+`Orbit_Desktop_Launcher_UX_Spec_v2.md` is the current product specification and acceptance-test source. Its desktop Android-inspired spatial model supersedes the earlier list-only home-screen, Arch-only target and ordered-dock assumptions below. Existing Orbit appearance, item launching, search, native pickers and background-work requirements remain in force when compatible. New layout data lives in `config.json` version 3 with stable page IDs, explicit pixel-cell item rectangles, widget instances and active page; versions 1, 2 and 3 migrate on load while preserving rendered sizes. Grid item sizing is persisted in the existing Settings page. A dock pin owns a shortcut's layout location; page arrays retain its item record for existing app/search/recent lookups.
 
 
 
@@ -16,7 +16,7 @@ Every decision for the MVP, in one place. Words follow `glossary.md`. Shortcuts 
 
 ## 1. What Orbit is
 
-A fullscreen app launcher for Arch Linux (Hyprland), styled like iOS. You arrange apps and folders on pages, like a phone home screen, and open it instantly with a key. It starts empty. Search anything searches saved page items, System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Ctrl+K focuses it. Windows is not in the MVP (see `planned-features.md`).
+Orbit is a fullscreen desktop app-launcher replacement for Windows and Arch Linux, styled like iOS. It replaces the desktop launcher and takes over the work that would otherwise send you to your browser bookmarks, your file search or your task app. You arrange apps, websites, files, directories, folders and widgets on pages, like a phone home screen, and open it instantly with a key. It starts empty. Search anything searches saved page items, System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Ctrl+K focuses it. A Prefix routes the rest of the query to a site, a search engine, TickTick or a user Action, so the query is typed in Orbit and not in the browser's search field. Orbit is written in Rust with Slint and runs as one binary with a resident daemon that keeps everything ready, so showing the launcher does no disk or network work. Interactions and transitions are animated; showing and hiding the launcher is immediate.
 
 ## 2. Stack
 
@@ -76,17 +76,17 @@ Recent = [item id]                  most recent first
 - `Icon::File` icons are only used for saved images, including system icons of installed apps and Website icons.
 - An installed app stores a reference (its id in the Installed apps list), not a command. The Installed apps list holds the command to start it.
 - Icons are decoded on the worker when an item is loaded or added and cached at no more than 80 × 80 px. The Installed apps list decodes cached system icons on the worker when first requested and keeps them ready. Opening the launcher never performs this work. The same installed app can be added more than once. Each copy is its own item with its own id.
-- An Action is a predefined app launch, selected from the Actions list. Custom command is the choice for commands outside that list.
+- An Action is a named, reusable command with a description. Built-in Actions include URL templates and the TickTick task action; users can add shell scripts in Settings. A Prefix has a Name, Token and selected Action. Tab or Space activates a matching Token, hides search results and displays the Prefix name as a badge. Enter sends the remaining Search anything text to its Action.
 - A Website opens its URL in the default browser. When it is added or saved again without an icon, Orbit reads the page's declared icon, then tries the host favicon and Google's domain favicon. The downloaded icon is saved in `icons/`. Fetching runs on the worker and never happens at startup or when showing the launcher.
 - A File opens its path with the default app. A Directory opens its path in the default file manager. Both accept a typed absolute Path or a path selected with the native file chooser; the item name comes from the saved file or directory path. The default icon is a file or directory image, and can be changed in the Icon picker.
-- A separate Action item is not needed. The predefined System actions are Apps; use Custom command for commands outside the Actions list.
+- A separate Action item is not needed. The predefined System actions are Apps; use Custom command for commands outside the Actions list. Search Prefixes dispatch to named Actions without parsing action-specific arguments in the search bar.
 
 ## 5. The launcher screen
 
 From top to bottom: top bar, the open page, page dots, dock.
 
 - **Top bar:** the supplied Orbit logo and wordmark (`ui/assets/orbit.svg`) and name on the left. The Settings and Close icons on the right.
-- **Page:** a full-width, full-height page area below the top bar and above the dock, with a grid of items and the Add tile last. It scrolls vertically and has no item limit.
+- **Page:** a full-width, full-height page area below the top bar and above the dock, with a grid of items. Right-click empty page space and choose Add item to add an item. It scrolls vertically and has no item limit.
 - **Page dots:** show which page is open. Clicking a dot opens that page. A + beside the dots adds a page, as does Add page in Settings.
 - **Dock:** a floating, semi-transparent white rounded bar at the bottom center, with no blur. Up to two recent items appear on the left and pinned items in saved order on the right, separated by a thin line when both sections have items. Each 48 px icon has an 11 px name below it. The dock is always shown, even when it is empty.
 - **On open:** the launcher opens on its current page with folders, Settings, sheets and alerts closed, search cleared, and Search anything focused. Grid focus navigation remains deferred.
@@ -97,12 +97,12 @@ From top to bottom: top bar, the open page, page dots, dock.
 - An app starts directly with no shell: the command is split into arguments and run detached, so the app survives a daemon restart. On success the launcher hides and the item enters Recent.
 - A Website opens its URL in the default browser. A File opens with its default app. A Directory opens in the default file manager. These use `xdg-open` with the URL or path as one argument, without a shell. On success the launcher hides.
 - On failure the launcher stays open and shows a banner such as "Couldn't start 'figma': not found".
-- A folder opens instead of launching. The Add tile opens the Add item sheet.
+- A folder opens instead of launching. Right-click empty page space → Add item opens the Add item sheet.
 
 **Context menu** (right-click an item): Edit, Pin (or Unpin), Delete on page items and folder apps. A pinned dock item offers Unpin; a Recent dock item offers Remove from Recent.
 
 **Sheets.** All open over a dimmed backdrop inside the launcher window. The Add item sheet fits the selected tab's content, has a maximum height of 760 px, and scrolls only when that content exceeds the available height.
-- *Add item:* segmented control App, Website, File, Directory or Folder. For an App, a second segmented control: Custom command (first and selected by default), Actions or Installed apps. Actions shows Lock screen, Take screenshot, Sleep, Log out, Volume up, Volume down, Mute, Mute microphone, Play or pause, Next track and Previous track; choosing one adds it to the current page and closes the sheet. Audio and media actions use `wpctl` and `playerctl`, following the [Hyprland media examples](https://wiki.hypr.land/0.53.0/Configuring/Binds/) and [WirePlumber command reference](https://pipewire.pages.freedesktop.org/wireplumber/man/wpctl.html). Custom command has Name, Icon and Command, with Cancel and Save. Installed apps shows the saved Installed apps list and a Refresh installed apps button; clicking an app adds it right away at the end of the current page (before the Add tile) and closes the sheet, with no Save. Adding the same installed app again is allowed. Its name and icon come from the list and can be changed later with Edit. Website has Name and URL. File and Directory each have an editable Path, a native chooser button, a default Icon with Change icon beside it, and Cancel and Save. The chooser fills Path. Save checks the path, derives the item name, adds it to the current page and closes the sheet. A Folder has just a Name, with Cancel and Save.
+- *Add item:* segmented control App, Website, File, Directory or Folder. For an App, a second segmented control: Custom command (first and selected by default), Actions or Installed apps. Actions shows Lock screen, Take screenshot, Sleep, Log out, Volume up, Volume down, Mute, Mute microphone, Play or pause, Next track and Previous track; choosing one adds it to the current page and closes the sheet. Audio and media actions use `wpctl` and `playerctl`, following the [Hyprland media examples](https://wiki.hypr.land/0.53.0/Configuring/Binds/) and [WirePlumber command reference](https://pipewire.pages.freedesktop.org/wireplumber/man/wpctl.html). Custom command has Name, Icon and Command, with Cancel and Save. Installed apps shows the saved Installed apps list and a Refresh installed apps button; clicking an app adds it right away at the end of the current page and closes the sheet, with no Save. Adding the same installed app again is allowed. Its name and icon come from the list and can be changed later with Edit. Website has Name and URL. File and Directory each have an editable Path, a native chooser button, a default Icon with Change icon beside it, and Cancel and Save. The chooser fills Path. Save checks the path, derives the item name, adds it to the current page and closes the sheet. A Folder has just a Name, with Cancel and Save.
 - *Edit app:* Name, Icon, Command (custom command apps only). Delete and Save.
 - *Edit website:* Name and URL. Its cached icon is refreshed when the URL is changed.
 - *Edit file* and *Edit directory:* editable Path, native chooser button, Icon and Change icon, with Delete and Save. Choosing another path fills Path; Save updates the item and its name from that path. The Icon preview and Change icon button are vertically centered together in these sheets and Edit app.
@@ -122,7 +122,7 @@ From top to bottom: top bar, the open page, page dots, dock.
 - A 24 px gap separates page surfaces during a swipe.
 - The page area fills the available width and height. The + beside the page dots creates and opens an empty page with the mouse.
 - Leaving an empty page does not remove it. Delete page in Settings removes the current page after confirmation, moving its items to the previous page (or the next page when deleting the first). The last page cannot be deleted.
-- First run: one empty page with the Add tile.
+- First run: one empty page with Add item available from its empty-space Context menu.
 - Startup page controls are deferred; reopening keeps the current page.
 
 **Folders** work like iOS folders.
@@ -150,7 +150,7 @@ From top to bottom: top bar, the open page, page dots, dock.
 | To do this | With the mouse |
 |---|---|
 | Open an item (launch an app, open a Website, File or Directory; open a Folder) | Click it |
-| Add an item | Click the Add tile |
+| Add an item | Right-click empty page space → Add item |
 | Edit, Pin or Unpin, Delete | Right-click the item, choose from the context menu |
 | Reorder, move between pages, make a folder | Drag and drop |
 | Change page | Click a page dot, or Shift + wheel |
@@ -197,12 +197,13 @@ Settings has General and Shortcuts tabs. Shortcuts lists each Orbit action once,
 
 The authoritative visual reference is `doc/orbit-ui/orbit.png` and `orbit.svg` (1440 × 1080). The user approved this design replacing the previous light theme restrictions on 2026-10-18.
 
-- Use the reference radial background, lavender artwork, logo, search field, Settings and Close controls, circular dotted Add tile, page dots, labeled dock and footer hints.
+- Use the reference radial background, lavender artwork, logo, search field, Settings and Close controls, page dots, labeled dock and footer hints.
 - Embed Inter. Page labels are 14 px, dock labels 11 px. Page icons are 80 px; dock icons are 48 px.
 - Top bar: logo at (48,40), 360 × 44 px centered search at y=34, controls 48 px apart at the right.
 - Grid: 144 px between item centers at reference width. The page area fills the available width and height, and the grid adds columns as width permits. The page and its 128 × 128 px item tiles have 1 px borders. Item tiles have a lighter background on hover. The gaps between tiles do not select items.
 - Page dots are centered 146 px above the bottom. The dock is 94 px tall, 26 px above the bottom, with 26 px corners and 100 px per item. Each dock item's hover area is inset 6 px on all sides. The separator divides Recent from Pinned when both are present.
-- Search filters saved page items, all System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. The first result is initially selected. Arrow keys move the selection through the grid without wrapping and scroll it into view. Enter opens the selected result. Clicking any result opens it. Each highlight encloses the icon and labels with padding and a gap from neighboring results. Results show their saved or cached icon when available. Choosing an action runs it, and choosing an installed app launches it without adding it to a page. Esc clears search before hiding.
+- Search filters saved page items, all System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Results from saved page items appear after the other matches. The first result is initially selected. Arrow keys move the selection through the grid without wrapping and scroll it into view. Enter opens the selected result. Clicking any result opens it. Each highlight encloses the icon and labels with padding and a gap from neighboring results. Results show their saved or cached icon when available. Choosing an action runs it, and choosing an installed app launches it without adding it to a page. Esc clears search before hiding.
+- Prefix tokens activate with Tab or Space, display the Prefix name as a badge and hide search results while active. Enter sends only the remaining query as the Action argument. When no local results match, Enter opens a Brave web search. Prefixes and Actions are stored in config.json; one Action can have several editable Prefix Tokens, and URL Actions encode query text. Site-search defaults include ChatGPT (`g`, `ل`), Claude (`c`, `ؤ`), GitHub (`gh`), Google Maps (`m`), Image Search (`i`, `ه`), Perplexity (`p`, `ح`), Wikipedia (`w`, `ص`), Translate ar to en (`ف`), Translate en to ar (`tr`), YouTube (`y`, `غ`), plus the web search engines. TickTick task creation parses `!today`, `!high`, `!medium`, `!low`, `!none`, `#tag`, and `^List`/`~List` in its own handler; omitted lists use Inbox. Shell Actions receive the query as a separate process argument, never interpolated into script source.
 - Left and Right switch pages when a text field, sheet or folder is not active. Ctrl+K focuses search.
 - Preserve native, interactive controls. The exported `main.slint` is only a full-screen PNG and cannot be used as the application implementation.
 - Sheets, the Context menu and Delete alerts follow the supplied Add item reference in `doc/add-item` and the shared rules in `design-system.md`. The 2026-10-18 request adds system icons to Installed apps rows.
@@ -240,10 +241,10 @@ The 2026-10-18 UI task explicitly overrides the earlier exclusions of search, Ct
 Each step ends with an app that runs on Arch.
 
 1. **Skeleton and speed test:** fullscreen Slint window, daemon, `orbit toggle`, hide on focus loss, monitor with the cursor. Run the speed test from section 3 and write the results there. Stop and report if the budget cannot be met.
-2. **Data:** `config.json`, atomic writes, the empty launcher, pages with scrolling and the Add tile.
+2. **Data:** `config.json`, atomic writes, the empty launcher, pages with scrolling and the empty-space Add item menu.
 3. **Apps:** the Add item sheet for custom commands, launching, letter and SVG icons, the context menu, the delete alert.
 4. **Folders and drag and drop:** folders, reordering, moving between pages, mouse page swipes, creating and deleting pages. This is the largest step.
-5. **Item types and App sources:** Websites, files and directories; Actions and custom commands; scan, cache and choose installed apps from the Add item sheet.
+5. **Item types, App sources and Search Prefixes:** Websites, files and directories; Actions and custom commands; scan, cache and choose installed apps from the Add item sheet. Add reusable shell-script and URL-template Actions, editable Actions and Prefixes settings, generic token activation/dispatch, the TickTick task Action, and default site-search prefixes.
 6. **Dock:** Recent, Pinned and pin reordering.
 7. **Keyboard:** the few keys in `shortcuts.md` and the focus ring.
 8. **Settings and looks:** startup page, appearance, background color, iOS polish.

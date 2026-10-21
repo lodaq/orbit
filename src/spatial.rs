@@ -2,6 +2,20 @@ use crate::config::{Config, Item, Page};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
+const ITEM_GAP: usize = 16;
+
+pub fn cell_pitch(item_size: i32) -> usize {
+    item_size.max(1) as usize + ITEM_GAP
+}
+
+pub fn item_span(units: usize, item_size: i32) -> usize {
+    units * cell_pitch(item_size)
+}
+
+pub fn widget_span(units: usize, item_size: i32) -> usize {
+    units * item_size.max(1) as usize + ITEM_GAP
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Rect {
     pub row: usize,
@@ -45,50 +59,11 @@ pub fn place(
     }
     let mut result = occupied.clone();
     result.remove(id);
-    if !result.values().any(|rect| rect.overlaps(target)) {
-        result.insert(id.into(), target);
-        return Some(result);
-    }
-    if target.width != 1 || target.height != 1 {
+    if result.values().any(|rect| rect.overlaps(target)) {
         return None;
     }
-    let start = target.row * columns + target.col;
-    for forward in [true, false] {
-        let mut trial = result.clone();
-        let mut chain = Vec::new();
-        let mut slot = start;
-        loop {
-            let cell = Rect::cell(slot, columns);
-            let occupant = trial.iter().find(|(_, rect)| rect.overlaps(cell));
-            match occupant {
-                None => {
-                    for (id, from) in chain.into_iter().rev() {
-                        trial.insert(
-                            id,
-                            Rect::cell(if forward { from + 1 } else { from - 1 }, columns),
-                        );
-                    }
-                    trial.insert(id.into(), target);
-                    return Some(trial);
-                }
-                Some((id, rect)) if rect.width == 1 && rect.height == 1 => {
-                    chain.push((id.clone(), slot))
-                }
-                _ => break,
-            }
-            if forward {
-                slot += 1;
-                if slot >= columns * rows {
-                    break;
-                }
-            } else if slot == 0 {
-                break;
-            } else {
-                slot -= 1;
-            }
-        }
-    }
-    None
+    result.insert(id.into(), target);
+    Some(result)
 }
 
 pub fn occupied(config: &Config, page: usize) -> BTreeMap<String, Rect> {
@@ -113,21 +88,51 @@ fn free(
     columns: usize,
     rows: usize,
 ) -> Option<Rect> {
+    if rect.width > columns || rect.height > rows {
+        return None;
+    }
     let origin = (rect.row, rect.col);
-    (0..columns * rows)
-        .filter_map(|slot| {
-            rect.row = slot / columns;
-            rect.col = slot % columns;
-            (rect.fits(columns, rows) && !occupied.values().any(|other| rect.overlaps(*other)))
-                .then_some(rect)
-        })
-        .min_by_key(|rect| {
-            (
-                rect.row.abs_diff(origin.0) + rect.col.abs_diff(origin.1),
-                rect.row,
-                rect.col,
-            )
-        })
+    let mut best = None;
+    let mut best_distance = usize::MAX;
+    let max_col = columns.saturating_sub(rect.width);
+    for row in 0..=rows - rect.height {
+        let vertical_distance = row.abs_diff(origin.0);
+        if vertical_distance > best_distance {
+            continue;
+        }
+        for forward in [false, true] {
+            let mut col = origin.1.min(max_col);
+            loop {
+                rect.row = row;
+                rect.col = col;
+                if let Some(other) = occupied.values().find(|other| rect.overlaps(**other)) {
+                    let next = if forward {
+                        col.max(other.col.saturating_add(other.width))
+                    } else {
+                        other.col.saturating_sub(rect.width)
+                    };
+                    if (forward && next <= col) || (!forward && next >= col) {
+                        break;
+                    }
+                    col = next;
+                    if col > max_col {
+                        break;
+                    }
+                    continue;
+                }
+                let distance = vertical_distance + col.abs_diff(origin.1);
+                if distance < best_distance
+                    || (distance == best_distance
+                        && best.is_none_or(|current: Rect| (row, col) < (current.row, current.col)))
+                {
+                    best_distance = distance;
+                    best = Some(rect);
+                }
+                break;
+            }
+        }
+    }
+    best
 }
 
 // Keep valid coordinates first; displaced items follow page, row, column, ID order.
@@ -181,13 +186,14 @@ pub fn reconcile(config: &mut Config) -> Result<(), String> {
                 occupancy[page_index].insert(item.id().to_owned(), rect);
                 page.items.push(item);
             } else {
+                let (width, height) = if let Item::Widget { variant, .. } = &item {
+                    WIDGET_SPANS[*variant]
+                } else {
+                    (1, 1)
+                };
                 let rect = saved.unwrap_or(Rect {
-                    width: if matches!(item, Item::Widget { .. }) {
-                        2
-                    } else {
-                        1
-                    },
-                    height: 1,
+                    width: widget_span(width, config.item_size),
+                    height: widget_span(height, config.item_size),
                     ..Rect::cell(index, config.columns)
                 });
                 pending.push((page_index, rect, item));
@@ -197,8 +203,17 @@ pub fn reconcile(config: &mut Config) -> Result<(), String> {
     pending
         .sort_by(|a, b| (a.0, a.1.row, a.1.col, a.2.id()).cmp(&(b.0, b.1.row, b.1.col, b.2.id())));
     for (origin, mut rect, item) in pending {
-        rect.width = rect.width.max(1).min(config.columns);
-        rect.height = rect.height.max(1).min(config.rows);
+        if let Item::Widget { variant, .. } = &item {
+            let (min_width, min_height) = WIDGET_MIN_SPANS[*variant];
+            rect.width = rect.width.max(widget_span(min_width, config.item_size));
+            rect.height = rect.height.max(widget_span(min_height, config.item_size));
+            if rect.width > config.columns || rect.height > config.rows {
+                return Err("A widget does not fit at this Grid Cell Size.".into());
+            }
+        } else {
+            rect.width = rect.width.max(1).min(config.columns);
+            rect.height = rect.height.max(1).min(config.rows);
+        }
         let mut page = origin;
         loop {
             if page == config.pages.len() {
@@ -224,44 +239,117 @@ pub fn reconcile(config: &mut Config) -> Result<(), String> {
     Ok(())
 }
 
-// Coordinates are relative to the icon, not its surrounding card or label.
-pub fn center(x: f32, y: f32, size: f32, held: bool) -> bool {
-    let half = size * if held { 0.31 } else { 0.275 };
-    (x - size / 2.).abs() <= half && (y - size / 2.).abs() <= half
+// Use the visible tile bounds, excluding the spacing around each footprint.
+fn folder_target(
+    items: &slint::ModelRc<crate::AppTile>,
+    dragged: &crate::AppTile,
+    col: i32,
+    row: i32,
+    held: i32,
+) -> i32 {
+    use slint::Model;
+    if dragged.folder || dragged.widget {
+        return -1;
+    }
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| !item.pinned && !item.widget && item.id != dragged.id)
+        .filter_map(|(index, item)| {
+            let width = (col + dragged.span_x - ITEM_GAP as i32)
+                .min(item.col + item.span_x - ITEM_GAP as i32)
+                - col.max(item.col);
+            let height = (row + dragged.span_y - ITEM_GAP as i32)
+                .min(item.row + item.span_y - ITEM_GAP as i32)
+                - row.max(item.row);
+            (width > 0 && height > 0)
+                .then_some((index as i32, i64::from(width) * i64::from(height)))
+        })
+        .max_by_key(|(index, area)| (*area, *index == held, -index))
+        .map_or(-1, |(index, _)| index)
 }
 
-pub const WIDGETS: [&str; 5] = [
+// Legacy indexes remain readable only so old saved widgets can be migrated.
+pub const WIDGETS: [&str; 9] = [
+    "Random Text",
     "Random Quote",
     "Random Fact",
     "Random Word",
     "Motivation",
     "Random Number",
+    "Custom Text",
+    "TickTick Tasks",
+    "TickTick Focus Task",
 ];
-pub fn widget_text(variant: usize, sample: u128) -> String {
-    let snippets = match variant {
-        0 => &[
-            "Make room for curiosity.",
-            "Small steps carry you far.",
-            "A fresh page invites a new idea.",
-        ][..],
-        1 => &[
-            "A triangle has three sides.",
-            "An octagon has eight sides.",
-            "A prime number has exactly two positive divisors.",
-        ][..],
-        2 => &[
-            "Orbit — a path around a center.",
-            "Serene — calm and peaceful.",
-            "Discover — find something new.",
-        ][..],
-        3 => &[
-            "Take the next small step.",
-            "Give your idea a little time.",
-            "Progress begins with practice.",
-        ][..],
-        _ => return format!("Your random number: {}", sample % 1000),
-    };
-    snippets[sample as usize % snippets.len()].into()
+pub const WIDGET_SPANS: [(usize, usize); 9] = [
+    (2, 2),
+    (2, 2),
+    (2, 2),
+    (2, 1),
+    (2, 1),
+    (2, 1),
+    (2, 2),
+    (2, 2),
+    (4, 1),
+];
+pub const WIDGET_MIN_SPANS: [(usize, usize); 9] = [
+    (2, 1),
+    (2, 1),
+    (2, 1),
+    (2, 1),
+    (2, 1),
+    (1, 1),
+    (2, 1),
+    (2, 2),
+    (2, 1),
+];
+pub const WIDGET_MAX_SPANS: [(usize, usize); 9] = [
+    (128, 128),
+    (128, 128),
+    (128, 128),
+    (128, 128),
+    (128, 128),
+    (128, 128),
+    (128, 128),
+    (128, 128),
+    (128, 128),
+];
+
+pub fn can_place(
+    candidate: Rect,
+    others: &BTreeMap<String, Rect>,
+    columns: usize,
+    rows: usize,
+) -> bool {
+    candidate.fits(columns, rows) && !others.values().any(|other| candidate.overlaps(*other))
+}
+
+pub fn find_first_fit(
+    occupied: &BTreeMap<String, Rect>,
+    width: usize,
+    height: usize,
+    columns: usize,
+    rows: usize,
+) -> Option<Rect> {
+    for row in 0..rows {
+        let mut col: usize = 0;
+        while col.saturating_add(width) <= columns {
+            let rect = Rect {
+                row,
+                col,
+                width,
+                height,
+            };
+            if let Some(other) = occupied.values().find(|other| rect.overlaps(**other)) {
+                col = col.max(other.col.saturating_add(other.width));
+            } else if rect.fits(columns, rows) {
+                return Some(rect);
+            } else {
+                break;
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -274,25 +362,84 @@ mod tests {
             .collect()
     }
     #[test]
-    fn holes_and_forward_backward() {
+    fn empty_moves_keep_neighbors_fixed_and_occupied_moves_are_rejected() {
         let initial = slots(&[("a", 0), ("b", 1), ("c", 3)]);
         let moved = place(&initial, "b", Rect::cell(2, 4), 4, 1).unwrap();
         assert_eq!(moved, slots(&[("a", 0), ("b", 2), ("c", 3)]));
-        let moved = place(&initial, "c", Rect::cell(0, 4), 4, 1).unwrap();
-        assert_eq!(moved, slots(&[("c", 0), ("a", 1), ("b", 2)]));
-        let moved = place(&initial, "a", Rect::cell(3, 4), 4, 1).unwrap();
-        assert_eq!(moved, slots(&[("a", 3), ("b", 1), ("c", 2)]));
+        assert!(place(&initial, "c", Rect::cell(0, 4), 4, 1).is_none());
+        assert!(place(&initial, "a", Rect::cell(3, 4), 4, 1).is_none());
+        assert_eq!(place(&initial, "a", Rect::cell(0, 4), 4, 1), Some(initial));
     }
+
     #[test]
-    fn geometry_zones_and_hysteresis() {
-        for size in [40., 50., 80., 110.] {
-            assert!(center(size / 2., size / 2., size, false));
-            for x in [0., size * 0.1, size * 0.9, size] {
-                assert!(!center(x, size / 2., size, false));
-            }
-            assert!(!center(size * 0.2, size / 2., size, false));
-            assert!(center(size * 0.2, size / 2., size, true));
+    fn staggered_pixel_items_block_moves_without_displacement() {
+        let rect = |col, row| Rect {
+            col,
+            row,
+            width: 144,
+            height: 144,
+        };
+        let initial = BTreeMap::from([
+            ("a".into(), rect(0, 0)),
+            ("b".into(), rect(300, 120)),
+            ("c".into(), rect(470, 200)),
+        ]);
+        for target in [rect(280, 170), rect(320, 170)] {
+            assert!(place(&initial, "a", target, 1200, 800).is_none());
+            assert!(place(&initial, "external", target, 1200, 800).is_none());
         }
+        let moved = place(&initial, "a", rect(700, 300), 1200, 800).unwrap();
+        assert_eq!(moved["a"], rect(700, 300));
+        assert_eq!(moved["b"], initial["b"]);
+        assert_eq!(moved["c"], initial["c"]);
+        assert!(place(&initial, "a", rect(1100, 300), 1200, 800).is_none());
+    }
+
+    #[test]
+    fn folder_intent_uses_tile_overlap_and_largest_target() {
+        let tile = |id: &str, col| crate::AppTile {
+            id: id.into(),
+            col,
+            row: 0,
+            span_x: 144,
+            span_y: 144,
+            ..Default::default()
+        };
+        let dragged = tile("a", 0);
+        let items = slint::ModelRc::new(slint::VecModel::from(vec![
+            dragged.clone(),
+            tile("b", 144),
+            tile("c", 288),
+        ]));
+        assert_eq!(folder_target(&items, &dragged, 0, 0, -1), -1);
+        assert_eq!(folder_target(&items, &dragged, 16, 0, -1), -1);
+        assert_eq!(folder_target(&items, &dragged, 17, 0, -1), 1);
+        assert_eq!(folder_target(&items, &dragged, 100, 100, -1), 1);
+        assert_eq!(folder_target(&items, &dragged, 100, 128, -1), -1);
+        assert_eq!(folder_target(&items, &dragged, 216, 0, -1), 1);
+        assert_eq!(folder_target(&items, &dragged, 216, 0, 2), 2);
+        assert_eq!(folder_target(&items, &dragged, 217, 0, 1), 2);
+        let mut folder = dragged.clone();
+        folder.folder = true;
+        assert_eq!(folder_target(&items, &folder, 144, 0, -1), -1);
+        let mut widget = dragged.clone();
+        widget.widget = true;
+        assert_eq!(folder_target(&items, &widget, 144, 0, -1), -1);
+        let mut target = tile("folder", 144);
+        target.folder = true;
+        let targets = |item| slint::ModelRc::new(slint::VecModel::from(vec![item]));
+        assert_eq!(
+            folder_target(&targets(target.clone()), &dragged, 100, 0, -1),
+            0
+        );
+        target.widget = true;
+        assert_eq!(
+            folder_target(&targets(target.clone()), &dragged, 100, 0, -1),
+            -1
+        );
+        target.widget = false;
+        target.pinned = true;
+        assert_eq!(folder_target(&targets(target), &dragged, 100, 0, -1), -1);
     }
     #[test]
     fn randomized_moves_preserve_invariants_and_preview_purity() {
@@ -346,10 +493,64 @@ mod tests {
             .is_none()
         );
     }
+
+    #[test]
+    fn first_fit_is_row_major_and_whole_rectangle_only() {
+        let occupied = slots(&[("a", 0), ("b", 1), ("c", 2)]);
+        assert_eq!(
+            find_first_fit(&occupied, 2, 2, 4, 3),
+            Some(Rect {
+                row: 1,
+                col: 0,
+                width: 2,
+                height: 2
+            })
+        );
+        let blocked = BTreeMap::from([("app".into(), Rect::cell(1, 4))]);
+        assert!(!can_place(
+            Rect {
+                row: 0,
+                col: 0,
+                width: 2,
+                height: 1
+            },
+            &blocked,
+            4,
+            3
+        ));
+        assert!(can_place(
+            Rect {
+                row: 0,
+                col: 2,
+                width: 2,
+                height: 1
+            },
+            &blocked,
+            4,
+            3
+        ));
+    }
+
+    #[test]
+    fn widget_resize_never_uses_app_reordering() {
+        let occupied = BTreeMap::from([
+            (
+                "widget".into(),
+                Rect {
+                    row: 0,
+                    col: 0,
+                    width: 2,
+                    height: 2,
+                },
+            ),
+            ("app".into(), Rect::cell(2, 4)),
+        ]);
+        assert!(place(&occupied, "widget", Rect::cell(2, 4), 4, 3).is_none());
+    }
 }
 
 pub fn connect(launcher: &crate::Launcher) {
-    use slint::{Model, ModelRc, VecModel};
+    use slint::Model;
     launcher.on_next_grid_item(|items, index, direction| {
         let Some(current) = items.row_data(index.max(0) as usize) else {
             return 0;
@@ -381,7 +582,9 @@ pub fn connect(launcher: &crate::Launcher) {
             })
             .map_or(index, |(index, _)| index as i32)
     });
-    launcher.on_center_zone(center);
+    launcher.on_folder_target(|items, dragged, col, row, held| {
+        folder_target(&items, &dragged, col, row, held)
+    });
     launcher.on_hit_cell(|items, col, row| {
         items
             .iter()
@@ -394,35 +597,8 @@ pub fn connect(launcher: &crate::Launcher) {
             })
             .map_or(-1, |index| index as i32)
     });
-    launcher.on_free_cell(|items, columns, rows| {
-        let occupied = tile_positions(&items);
-        free(
-            &occupied,
-            Rect::cell(0, columns.max(1) as usize),
-            columns.max(1) as usize,
-            rows.max(1) as usize,
-        )
-        .map_or(-1, |rect| (rect.row * columns as usize + rect.col) as i32)
-    });
     launcher.on_preview_valid(|items, id, slot, width, height, columns, rows| {
         tile_preview(&items, &id, slot, width, height, columns, rows).is_some()
-    });
-    launcher.on_preview_cells(|items, id, slot, width, height, columns, rows| {
-        let Some(positions) = tile_preview(&items, &id, slot, width, height, columns, rows) else {
-            return items;
-        };
-        ModelRc::new(VecModel::from(
-            items
-                .iter()
-                .map(|mut item| {
-                    if let Some(rect) = positions.get(item.id.as_str()) {
-                        item.col = rect.col as i32;
-                        item.row = rect.row as i32;
-                    }
-                    item
-                })
-                .collect::<Vec<_>>(),
-        ))
     });
 }
 fn tile_positions(items: &slint::ModelRc<crate::AppTile>) -> BTreeMap<String, Rect> {
@@ -535,13 +711,16 @@ mod persistence_tests {
         config.pages[0].items = (0..12).map(|id| app(&id.to_string())).collect();
         config.pages[0].items.push(Item::Widget {
             id: "widget".into(),
-            name: WIDGETS[0].into(),
-            variant: 0,
-            text: widget_text(0, 1),
+            name: WIDGETS[7].into(),
+            variant: 7,
+            text: "TickTick Tasks".into(),
+            ticktick_project_id: String::new(),
+            min_number: 1,
+            max_number: 100,
         });
         reconcile(&mut config).unwrap();
-        config.columns = 3;
-        config.rows = 2;
+        config.columns = 3 * cell_pitch(config.item_size);
+        config.rows = 2 * cell_pitch(config.item_size);
         reconcile(&mut config).unwrap();
         assert_eq!(
             config
@@ -558,12 +737,50 @@ mod persistence_tests {
         for page in 0..restored.pages.len() {
             let occupied = occupied(&restored, page);
             for (id, rect) in &occupied {
-                assert!(rect.fits(3, 2));
+                assert!(rect.fits(restored.columns, restored.rows));
                 assert!(
                     occupied
                         .iter()
                         .all(|(other, r)| id == other || !rect.overlaps(*r))
                 );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod live_config_repro {
+    use super::*;
+
+    #[test]
+    #[ignore = "reproduces the startup failure against the real config"]
+    fn reconcile_real_config() {
+        let (config, banner) = crate::config::load();
+        println!("banner: {banner}");
+        println!(
+            "pages {} cols {} rows {} item_size {} active {}",
+            config.pages.len(),
+            config.columns,
+            config.rows,
+            config.item_size,
+            config.active_page
+        );
+        let mut copy = config.clone();
+        match reconcile(&mut copy) {
+            Ok(()) => println!("reconcile OK"),
+            Err(error) => {
+                println!("reconcile FAILED: {error}");
+                for (index, page) in copy.pages.iter().enumerate() {
+                    for item in &page.items {
+                        if let Item::Widget { variant, .. } = item {
+                            let rect = copy.positions.get(item.id());
+                            println!(
+                                "  page {index} widget variant {variant} rect {rect:?} min {:?} spans {:?}",
+                                WIDGET_MIN_SPANS[*variant], WIDGET_SPANS[*variant]
+                            );
+                        }
+                    }
+                }
             }
         }
     }

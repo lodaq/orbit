@@ -20,10 +20,28 @@ rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal"]
 
 # Count visible characters, including joined emoji, in Letter icons.
 unicode-segmentation = "1.13"
+# Make TickTick HTTPS and JSON requests on Orbit's worker thread.
+ureq = { version = "=3.4.1", default-features = false, features = ["json", "rustls"] }
+# Keep the TickTick personal API token in Windows Credential Manager or Linux Secret Service.
+keyring = { version = "=3.6.3", default-features = false, features = ["windows-native", "sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Activate KDE's Secret Service compatibility name before the standard keyring client connects.
+dbus = "=0.9.12"
+
+# Interpret task dates in the local calendar for Today and Next 7 Days.
+[dependencies.chrono]
+version = "0.4"
+default-features = false
+features = ["clock", "std"]
 
 [build-dependencies]
 # Compile the Slint layout into the binary.
 slint-build = "=1.18.1"
+
+[dev-dependencies]
+# Exercise the real launcher key-event path without a desktop session.
+i-slint-backend-testing = "=1.18.1"
 
 [profile.release]
 strip = true

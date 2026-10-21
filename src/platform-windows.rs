@@ -72,12 +72,14 @@ pub fn show_or_hide(launcher: &crate::Launcher, _: &str) -> Result<(), Box<dyn s
         window.focus_window();
     });
     launcher.set_launcher_visible(true);
+    crate::toast::on_window_shown(launcher);
     Ok(())
 }
 pub fn hide(launcher: &crate::Launcher) -> Result<(), Box<dyn std::error::Error>> {
     launcher.invoke_cancel_pointer();
     launcher.hide()?;
     launcher.set_launcher_visible(false);
+    crate::toast::on_window_hidden(launcher);
     Ok(())
 }
 pub fn restore_after_chooser(launcher: &crate::Launcher) -> Result<(), Box<dyn std::error::Error>> {
@@ -195,6 +197,44 @@ pub fn launch(text: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub fn launch_shell_action(script: &str, argument: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "orbit-action-{}-{}.ps1",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    file.write_all(b"\xef\xbb\xbfparam([string]$OrbitQuery)\r\n")?;
+    file.write_all(script.as_bytes())?;
+    drop(file);
+    let mut child = Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(&path)
+        .arg(argument)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+        let _ = std::fs::remove_file(path);
+    });
+    Ok(())
+}
+
 fn screenshot() -> Result<(), Box<dyn std::error::Error>> {
     let pictures = std::env::var_os("USERPROFILE")
         .map(std::path::PathBuf::from)
@@ -302,4 +342,27 @@ pub fn scan_installed_apps() -> io::Result<Vec<InstalledApp>> {
             })
         })
         .collect())
+}
+
+pub fn play_completion_sound() {
+    let Ok(path) = config_path().map(|p| p.with_file_name("task-complete.wav")) else {
+        return;
+    };
+    if !path.exists()
+        && std::fs::write(&path, include_bytes!("../ui/assets/task-complete.wav")).is_err()
+    {
+        return;
+    }
+    let _ = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "& { param($p) (New-Object System.Media.SoundPlayer $p).PlaySync() }",
+        ])
+        .arg(path)
+        .creation_flags(0x08000000)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }

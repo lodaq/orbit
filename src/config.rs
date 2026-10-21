@@ -25,6 +25,38 @@ pub struct Config {
     pub file_search_paths: Vec<String>,
     #[serde(default)]
     pub directory_search_paths: Vec<String>,
+    #[serde(default = "default_actions")]
+    pub user_actions: Vec<UserAction>,
+    #[serde(default = "default_prefixes")]
+    pub prefixes: Vec<Prefix>,
+    #[serde(default)]
+    site_searches_initialized: bool,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub struct UserAction {
+    pub id: String,
+    pub name: String,
+    pub kind: ActionKind,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub enum ActionKind {
+    Url,
+    Shell,
+    TickTick,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub struct Prefix {
+    pub id: String,
+    pub name: String,
+    pub token: String,
+    pub action_id: String,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -41,6 +73,12 @@ pub enum Item {
         name: String,
         text: String,
         variant: usize,
+        #[serde(default)]
+        ticktick_project_id: String,
+        #[serde(default = "default_widget_min")]
+        min_number: i32,
+        #[serde(default = "default_widget_max")]
+        max_number: i32,
     },
     App(App),
     Website {
@@ -217,10 +255,10 @@ impl Item {
 }
 
 fn default_columns() -> usize {
-    9
+    1920
 }
 fn default_rows() -> usize {
-    5
+    1080
 }
 
 fn default_page_margin() -> i32 {
@@ -230,10 +268,17 @@ fn default_item_size() -> i32 {
     128
 }
 
+fn default_widget_min() -> i32 {
+    1
+}
+fn default_widget_max() -> i32 {
+    100
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: 4,
             positions: Default::default(),
             columns: default_columns(),
             rows: default_rows(),
@@ -248,11 +293,221 @@ impl Default for Config {
             shortcuts: crate::shortcuts::defaults(),
             file_search_paths: Vec::new(),
             directory_search_paths: Vec::new(),
+            user_actions: default_actions(),
+            prefixes: default_prefixes(),
+            site_searches_initialized: true,
         }
     }
 }
 
+fn builtin_actions() -> Vec<UserAction> {
+    let mut actions = [
+        (
+            "youtube",
+            "YouTube",
+            ActionKind::Url,
+            "https://www.youtube.com/results?search_query=%s",
+        ),
+        (
+            "chatgpt",
+            "ChatGPT",
+            ActionKind::Url,
+            "https://chatgpt.com/?q=%s",
+        ),
+        (
+            "image-search",
+            "Image Search",
+            ActionKind::Url,
+            "https://www.google.com/search?tbm=isch&q=%s",
+        ),
+        (
+            "perplexity",
+            "Perplexity",
+            ActionKind::Url,
+            "https://www.perplexity.ai/search?q=%s",
+        ),
+        (
+            "claude",
+            "Claude",
+            ActionKind::Url,
+            "https://claude.ai/new?q=%s",
+        ),
+        (
+            "wikipedia",
+            "Wikipedia",
+            ActionKind::Url,
+            "https://en.wikipedia.org/wiki/Special:Search?search=%s",
+        ),
+        ("ticktick", "TickTick", ActionKind::TickTick, ""),
+    ]
+    .into_iter()
+    .map(|(id, name, kind, source)| UserAction {
+        id: id.into(),
+        name: name.into(),
+        kind,
+        source: source.into(),
+        description: match id {
+            "youtube" => "Search YouTube for the remaining text after the Prefix Token.".into(),
+            "chatgpt" => "Open ChatGPT with the remaining text after the Prefix Token.".into(),
+            "image-search" => "Search Google Images for the remaining text after the Prefix Token.".into(),
+            "perplexity" => "Search Perplexity for the remaining text after the Prefix Token.".into(),
+            "claude" => "Open Claude with the remaining text after the Prefix Token.".into(),
+            "wikipedia" => "Search Wikipedia for the remaining text after the Prefix Token.".into(),
+            "ticktick" => "Enter a title, then optional !today, !high, !medium, !low, #tag, and ^List or ~List. Example: Buy milk !today #home ~Buy. Put a multiword list at the end, such as ~hall of fame. Omit the list to use Inbox.".into(),
+            _ => String::new(),
+        },
+    })
+    .collect::<Vec<_>>();
+    actions.shrink_to_fit();
+    actions
+}
+
+fn default_actions() -> Vec<UserAction> {
+    let mut actions = builtin_actions();
+    actions.extend(
+        [
+            (
+                "brave-search",
+                "Brave",
+                "https://search.brave.com/search?q=%s&source=desktop",
+            ),
+            (
+                "google-search",
+                "Google",
+                "https://www.google.com/search?q=%s",
+            ),
+            (
+                "duckduckgo-search",
+                "DuckDuckGo",
+                "https://duckduckgo.com/?q=%s&t=brave",
+            ),
+            (
+                "qwant-search",
+                "Qwant",
+                "https://www.qwant.com/?q=%s&client=brz-brave",
+            ),
+            ("bing-search", "Bing", "https://www.bing.com/search?q=%s"),
+            (
+                "startpage-search",
+                "Startpage",
+                "https://www.startpage.com/do/search?q=%s&segment=startpage.brave",
+            ),
+            (
+                "ecosia-search",
+                "Ecosia",
+                "https://www.ecosia.org/search?tt=e8eb07a6&q=%s&addon=brave",
+            ),
+            ("github-search", "GitHub", "https://github.com/search?q=%s"),
+            (
+                "google-maps-search",
+                "Google Maps",
+                "https://www.google.com/maps/search/%s",
+            ),
+            (
+                "translate-ar-en-search",
+                "Translate (ar -> en)",
+                "https://translate.google.com/?sl=ar&tl=en&text=%s",
+            ),
+            (
+                "translate-en-ar-search",
+                "Translate (en -> ar)",
+                "https://translate.google.com/?sl=en&tl=ar&text=%s",
+            ),
+        ]
+        .into_iter()
+        .map(|(id, name, source)| UserAction {
+            id: id.into(),
+            name: name.into(),
+            kind: ActionKind::Url,
+            source: source.into(),
+            description: format!("Search {name} for your query."),
+        }),
+    );
+    actions
+}
+
+fn default_prefixes() -> Vec<Prefix> {
+    [
+        ("youtube", "YouTube", "y", "youtube"),
+        ("chatgpt", "ChatGPT", "g", "chatgpt"),
+        ("image-search", "Image Search", "i", "image-search"),
+        ("perplexity", "Perplexity", "p", "perplexity"),
+        ("claude", "Claude", "c", "claude"),
+        ("wikipedia", "Wikipedia", "w", "wikipedia"),
+        ("ticktick", "TickTick", "t", "ticktick"),
+        ("chatgpt-ar", "ChatGPT", "ل", "chatgpt"),
+        ("claude-ar", "Claude", "ؤ", "claude"),
+        ("github", "GitHub", "gh", "github-search"),
+        ("google-maps", "Google Maps", "m", "google-maps-search"),
+        ("image-search-ar", "Image Search", "ه", "image-search"),
+        ("perplexity-ar", "Perplexity", "ح", "perplexity"),
+        ("wikipedia-ar", "Wikipedia", "ص", "wikipedia"),
+        (
+            "translate-ar-en",
+            "Translate (ar -> en)",
+            "ف",
+            "translate-ar-en-search",
+        ),
+        (
+            "translate-en-ar",
+            "Translate (en -> ar)",
+            "tr",
+            "translate-en-ar-search",
+        ),
+        ("youtube-ar", "YouTube", "غ", "youtube"),
+    ]
+    .into_iter()
+    .chain([
+        ("brave-search", "Brave", ":br", "brave-search"),
+        ("google-search", "Google", ":g", "google-search"),
+        ("duckduckgo-search", "DuckDuckGo", ":d", "duckduckgo-search"),
+        ("qwant-search", "Qwant", ":q", "qwant-search"),
+        ("bing-search", "Bing", ":b", "bing-search"),
+        ("startpage-search", "Startpage", ":sp", "startpage-search"),
+        ("ecosia-search", "Ecosia", ":e", "ecosia-search"),
+    ])
+    .map(|(id, name, token, action_id)| Prefix {
+        id: id.into(),
+        name: name.into(),
+        token: token.into(),
+        action_id: action_id.into(),
+    })
+    .collect()
+}
+
 impl Config {
+    fn add_default_search_prefixes(&mut self) -> bool {
+        let defaults = Config::default();
+        let mut changed = false;
+        for action in defaults.user_actions {
+            if let Some(existing) = self
+                .user_actions
+                .iter_mut()
+                .find(|item| item.id == action.id)
+            {
+                if existing.description.is_empty() && !action.description.is_empty() {
+                    existing.description = action.description;
+                    changed = true;
+                }
+            } else if action.id.ends_with("-search") {
+                self.user_actions.push(action);
+                changed = true;
+            }
+        }
+        for prefix in defaults.prefixes {
+            let token_exists = self
+                .prefixes
+                .iter()
+                .any(|item| item.token.eq_ignore_ascii_case(&prefix.token));
+            let id_exists = self.prefixes.iter().any(|item| item.id == prefix.id);
+            if !token_exists && !id_exists {
+                self.prefixes.push(prefix);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub fn remove_page(&mut self, index: usize) -> Option<usize> {
         if self.pages.len() <= 1 || index >= self.pages.len() {
             return None;
@@ -265,13 +520,39 @@ impl Config {
 
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
         let mut saved = self.clone();
-        saved.version = 2;
+        saved.version = 4;
         crate::spatial::reconcile(&mut saved).map_err(std::io::Error::other)?;
         platform::write_config(&serde_json::to_vec_pretty(&saved)?)?;
         Ok(())
     }
 
     pub fn valid(&self) -> bool {
+        let action_ids: std::collections::HashSet<_> = self
+            .user_actions
+            .iter()
+            .map(|action| action.id.as_str())
+            .collect();
+        if action_ids.len() != self.user_actions.len()
+            || self.user_actions.iter().any(|action| {
+                action.id.is_empty()
+                    || action.name.trim().is_empty()
+                    || (action.kind == ActionKind::Url && !action.source.contains("%s"))
+            })
+        {
+            return false;
+        }
+        let mut prefix_ids = std::collections::HashSet::new();
+        let mut tokens = std::collections::HashSet::new();
+        if self.prefixes.iter().any(|prefix| {
+            prefix.id.is_empty()
+                || prefix.name.trim().is_empty()
+                || prefix.token.trim().is_empty()
+                || !prefix_ids.insert(prefix.id.as_str())
+                || !tokens.insert(prefix.token.to_lowercase())
+                || !action_ids.contains(prefix.action_id.as_str())
+        }) {
+            return false;
+        }
         let mut ids = std::collections::HashSet::new();
         for item in self.pages.iter().flat_map(|page| &page.items) {
             if item.id().is_empty() || !ids.insert(item.id()) {
@@ -284,23 +565,65 @@ impl Config {
                     }
                 }
             }
-            if let Item::Widget { variant, text, .. } = item
-                && (*variant >= 5 || text.is_empty())
+            if let Item::Widget {
+                id,
+                variant,
+                text,
+                min_number,
+                max_number,
+                ..
+            } = item
             {
-                return false;
+                if *variant >= crate::spatial::WIDGETS.len()
+                    || text.is_empty()
+                    || text.chars().count() > 1000
+                    || min_number > max_number
+                {
+                    return false;
+                }
+                if let Some(rect) = self.positions.get(id) {
+                    let (min_width, min_height) = crate::spatial::WIDGET_MIN_SPANS[*variant];
+                    let (max_width, max_height) = crate::spatial::WIDGET_MAX_SPANS[*variant];
+                    let bounds = if self.version >= 4 {
+                        (
+                            crate::spatial::widget_span(min_width, self.item_size),
+                            crate::spatial::widget_span(min_height, self.item_size),
+                            crate::spatial::widget_span(max_width, self.item_size),
+                            crate::spatial::widget_span(max_height, self.item_size),
+                        )
+                    } else if self.version >= 3 {
+                        let pitch = crate::spatial::cell_pitch(self.item_size);
+                        (
+                            min_width * pitch,
+                            min_height * pitch,
+                            max_width * pitch,
+                            max_height * pitch,
+                        )
+                    } else {
+                        (min_width, min_height, max_width, max_height)
+                    };
+                    if rect.width < bounds.0
+                        || rect.height < bounds.1
+                        || rect.width > bounds.2
+                        || rect.height > bounds.3
+                    {
+                        return false;
+                    }
+                }
             }
         }
+        let limit = if self.version >= 3 { 32768 } else { 128 };
         if self.positions.values().any(|rect| {
-            rect.row > 128
-                || rect.col > 128
-                || !(1..=4).contains(&rect.width)
-                || !(1..=4).contains(&rect.height)
+            rect.row > limit
+                || rect.col > limit
+                || !(1..=limit).contains(&rect.width)
+                || !(1..=limit).contains(&rect.height)
         }) {
             return false;
         }
-        (1..=2).contains(&self.version)
-            && (1..=128).contains(&self.columns)
-            && (1..=128).contains(&self.rows)
+        (1..=4).contains(&self.version)
+            && (1..=limit).contains(&self.columns)
+            && (1..=limit).contains(&self.rows)
             && (1..=9).contains(&self.pages.len())
             && crate::shortcuts::valid(&self.shortcuts)
             && (0..=64).contains(&self.page_margin)
@@ -324,7 +647,68 @@ fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
         if let Ok(mut config) = serde_json::from_slice::<Config>(&text)
             && config.valid()
         {
+            let mut changed = false;
+            if config.version < 3 {
+                let pitch = crate::spatial::cell_pitch(config.item_size);
+                for rect in config.positions.values_mut() {
+                    rect.row *= pitch;
+                    rect.col *= pitch;
+                    rect.width *= pitch;
+                    rect.height *= pitch;
+                }
+                config.columns *= pitch;
+                config.rows *= pitch;
+                config.version = 3;
+                changed = true;
+            }
+            if config.version < 4 {
+                let pitch = crate::spatial::cell_pitch(config.item_size);
+                let widgets: Vec<_> = config
+                    .pages
+                    .iter()
+                    .flat_map(|page| &page.items)
+                    .filter_map(|item| match item {
+                        Item::Widget { id, .. } => Some(id.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                for id in widgets {
+                    if let Some(rect) = config.positions.get_mut(&id) {
+                        let width = (rect.width / pitch).max(1);
+                        let height = (rect.height / pitch).max(1);
+                        rect.width = crate::spatial::widget_span(width, config.item_size);
+                        rect.height = crate::spatial::widget_span(height, config.item_size);
+                    }
+                }
+                config.version = 4;
+                changed = true;
+            }
+            if !config.site_searches_initialized {
+                config.add_default_search_prefixes();
+                config.site_searches_initialized = true;
+                changed = true;
+            }
+            // Retired widget kinds are removed; shortcut and TickTick IDs remain intact.
+            let mut removed = Vec::new();
+            for page in &mut config.pages {
+                page.items.retain(|item| {
+                    let keep =
+                        !matches!(item, Item::Widget { variant, .. } if !matches!(*variant, 7 | 8));
+                    if !keep {
+                        removed.push(item.id().to_owned());
+                    }
+                    keep
+                });
+            }
+            config.positions.retain(|id, _| !removed.contains(id));
+            config.pinned.retain(|id| !removed.contains(id));
             crate::spatial::reconcile(&mut config).map_err(std::io::Error::other)?;
+            if !removed.is_empty() {
+                changed = true;
+            }
+            if changed {
+                config.save()?;
+            }
             return Ok((config, banner));
         }
         platform::backup_config()?;
@@ -348,10 +732,124 @@ mod tests {
     }
 
     #[test]
+    fn default_prefixes_and_actions_include_builtin_and_web_search_destinations() {
+        let config = Config::default();
+        let expected = [
+            ("y", "YouTube", "youtube"),
+            ("g", "ChatGPT", "chatgpt"),
+            ("i", "Image Search", "image-search"),
+            ("p", "Perplexity", "perplexity"),
+            ("c", "Claude", "claude"),
+            ("w", "Wikipedia", "wikipedia"),
+            ("t", "TickTick", "ticktick"),
+        ];
+        for (token, name, action_id) in expected {
+            let prefix = config
+                .prefixes
+                .iter()
+                .find(|prefix| prefix.token == token)
+                .unwrap();
+            let action = config
+                .user_actions
+                .iter()
+                .find(|action| action.id == action_id)
+                .unwrap();
+            assert_eq!(prefix.name, name);
+            assert_eq!(prefix.action_id, action_id);
+            assert_eq!(action.name, name);
+        }
+        for (token, name, action_id) in [
+            (":br", "Brave", "brave-search"),
+            (":g", "Google", "google-search"),
+            (":d", "DuckDuckGo", "duckduckgo-search"),
+            (":q", "Qwant", "qwant-search"),
+            (":b", "Bing", "bing-search"),
+            (":sp", "Startpage", "startpage-search"),
+            (":e", "Ecosia", "ecosia-search"),
+        ] {
+            let prefix = config
+                .prefixes
+                .iter()
+                .find(|prefix| prefix.token == token)
+                .unwrap();
+            let action = config
+                .user_actions
+                .iter()
+                .find(|action| action.id == action_id)
+                .unwrap();
+            assert_eq!(prefix.name, name);
+            assert_eq!(prefix.action_id, action_id);
+            assert_eq!(action.name, name);
+        }
+        for (token, name, action_id) in [
+            ("ل", "ChatGPT", "chatgpt"),
+            ("ؤ", "Claude", "claude"),
+            ("gh", "GitHub", "github-search"),
+            ("m", "Google Maps", "google-maps-search"),
+            ("ه", "Image Search", "image-search"),
+            ("ح", "Perplexity", "perplexity"),
+            ("ص", "Wikipedia", "wikipedia"),
+            ("ف", "Translate (ar -> en)", "translate-ar-en-search"),
+            ("tr", "Translate (en -> ar)", "translate-en-ar-search"),
+            ("غ", "YouTube", "youtube"),
+        ] {
+            let prefix = config
+                .prefixes
+                .iter()
+                .find(|prefix| prefix.token == token)
+                .unwrap();
+            assert_eq!(prefix.name, name);
+            assert_eq!(prefix.action_id, action_id);
+            assert!(
+                config
+                    .user_actions
+                    .iter()
+                    .any(|action| action.id == action_id)
+            );
+        }
+        assert_eq!(config.prefixes.len(), 24);
+        assert_eq!(config.user_actions.len(), 18);
+    }
+
+    #[test]
+    fn prefix_and_action_config_round_trips_without_losing_custom_entries() {
+        let mut config = Config::default();
+        config.user_actions.push(UserAction {
+            id: "custom-shell".into(),
+            name: "Custom shell".into(),
+            kind: ActionKind::Shell,
+            source: "printf '%s' \"$1\"".into(),
+            description: "Print the query".into(),
+        });
+        config.prefixes.push(Prefix {
+            id: "custom-prefix".into(),
+            name: "Custom".into(),
+            token: "z".into(),
+            action_id: "custom-shell".into(),
+        });
+        let saved = serde_json::to_vec(&config).unwrap();
+        let restored: Config = serde_json::from_slice(&saved).unwrap();
+        assert!(restored.valid());
+        assert!(restored.user_actions == config.user_actions);
+        assert!(restored.prefixes == config.prefixes);
+    }
+
+    #[test]
+    fn invalid_prefix_tokens_and_missing_actions_are_rejected() {
+        let mut config = Config::default();
+        config.prefixes[1].token = config.prefixes[0].token.clone();
+        assert!(!config.valid());
+
+        let mut config = Config::default();
+        config.prefixes[0].action_id = "missing".into();
+        assert!(!config.valid());
+    }
+
+    #[test]
     fn saved_page_count_is_between_one_and_nine() {
         for count in 0..=10 {
             let config = Config {
-                version: 1,
+                version: 3,
                 pages: (0..count)
                     .map(|_| Page {
                         id: crate::config::new_page_id(),
