@@ -35,6 +35,8 @@ const ACTIONS: [(&str, &str, SystemAction); 11] = [
     ),
 ];
 
+const RECENT_DOCK_LIMIT: usize = 5;
+
 type UrlOpener<'a> = dyn Fn(&str) -> Result<(), Box<dyn std::error::Error>> + 'a;
 
 enum Action {
@@ -46,7 +48,8 @@ enum Action {
     DuplicateWidget(String),
     SelectTickTickList(String, String),
     TransferData(bool),
-    SaveAppearance(i32, i32, usize, usize),
+    SaveAppearance(i32, i32, i32, usize, usize),
+    SaveDefaultSearchEngine(i32),
     DeletePage,
     SaveShortcut(i32, String, String),
     DeleteShortcut(i32, String),
@@ -182,6 +185,7 @@ pub fn connect(launcher: &Launcher) {
                     | Action::AddInstalledApp(..)
                     | Action::SaveSearchPath(..)
                     | Action::DeleteSearchPath(..)
+                    | Action::SaveDefaultSearchEngine(..)
                     | Action::SaveNamedCommand(..)
                     | Action::DeleteNamedCommand(..)
                     | Action::SavePrefix(..)
@@ -201,6 +205,7 @@ pub fn connect(launcher: &Launcher) {
                         | Action::Drop(..)
                         | Action::SaveSearchPath(..)
                         | Action::DeleteSearchPath(..)
+                        | Action::SaveDefaultSearchEngine(..)
                         | Action::SaveNamedCommand(..)
                         | Action::DeleteNamedCommand(..)
                         | Action::SavePrefix(..)
@@ -213,7 +218,7 @@ pub fn connect(launcher: &Launcher) {
             let refreshing = matches!(action, Action::RefreshInstalledApps(_));
             let filtering = matches!(action, Action::FilterInstalled(_));
             let appearance = match &action {
-                Action::SaveAppearance(margin, size, ..) => Some((*margin, *size)),
+                Action::SaveAppearance(margin, size, gap, ..) => Some((*margin, *size, *gap)),
                 _ => None,
             };
             let action_feedback = success_message(&action);
@@ -224,9 +229,9 @@ pub fn connect(launcher: &Launcher) {
                 continue;
             }
             let success = result.is_ok();
-            if success && let Some((margin, size)) = appearance {
+            if success && let Some((margin, size, gap)) = appearance {
                 let _ = weak.upgrade_in_event_loop(move |launcher| {
-                    launcher.invoke_appearance_saved(margin, size);
+                    launcher.invoke_appearance_saved(margin, size, gap);
                 });
             }
             if refreshing && !success {
@@ -324,13 +329,18 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             .unwrap_or(0) as i32
     });
     let sender = send.clone();
-    launcher.on_save_appearance(move |margin, size, columns, rows| {
+    launcher.on_save_appearance(move |margin, size, gap, columns, rows| {
         let _ = sender.send(Action::SaveAppearance(
             margin,
             size,
+            gap,
             columns as usize,
             rows as usize,
         ));
+    });
+    let sender = send.clone();
+    launcher.on_save_default_search_engine(move |index| {
+        let _ = sender.send(Action::SaveDefaultSearchEngine(index));
     });
     let sender = send.clone();
     launcher.on_transfer_data(move |import| {
@@ -699,11 +709,21 @@ impl Apps {
                 Ok(())
             }
             Action::SearchWeb(query) => {
-                let url = url_action_url(
-                    "https://search.brave.com/search?q=%s&source=desktop",
-                    &query,
-                )?;
+                let url = url_action_url(self.config.search_engine_template(), &query)?;
                 open_url(&url).map_err(|error| format!("Couldn't open web search: {error}"))
+            }
+            Action::SaveDefaultSearchEngine(index) => {
+                let index =
+                    usize::try_from(index).map_err(|_| "Choose a supported search engine")?;
+                let id =
+                    Config::search_engine_id(index).ok_or("Choose a supported search engine")?;
+                let mut config = self.config.clone();
+                config.default_search_engine = id.into();
+                config
+                    .save()
+                    .map_err(|error| format!("Couldn't save config.json: {error}"))?;
+                self.config = config;
+                Ok(())
             }
             Action::SaveNamedCommand(id, name, kind, source, description, tokens) => {
                 let kind = match kind.as_str() {
@@ -868,7 +888,7 @@ impl Apps {
                 let mut config = self.config.clone();
                 if config.pinned.iter().any(|id| id == item.id()) {
                     config.pinned.retain(|id| id != item.id());
-                } else if config.pinned.len() < 8 {
+                } else if config.pinned.len() < crate::config::PINNED_LIMIT {
                     config.pinned.push(item.id().into());
                 } else {
                     return Err("Dock is full".into());
@@ -1010,8 +1030,16 @@ impl Apps {
                         .get(&id)
                         .copied()
                         .unwrap_or(crate::spatial::Rect {
-                            width: crate::spatial::item_span(1, self.config.item_size),
-                            height: crate::spatial::item_span(1, self.config.item_size),
+                            width: crate::spatial::item_span(
+                                1,
+                                self.config.item_size,
+                                self.config.grid_gap,
+                            ),
+                            height: crate::spatial::item_span(
+                                1,
+                                self.config.item_size,
+                                self.config.grid_gap,
+                            ),
                             ..crate::spatial::Rect::cell(0, self.config.columns)
                         });
                 let mut occupied = crate::spatial::occupied(&self.config, page);
@@ -1059,8 +1087,8 @@ impl Apps {
                 let text = crate::spatial::WIDGETS[variant].to_owned();
                 let mut config = self.config.clone();
                 let (width, height) = crate::spatial::WIDGET_SPANS[variant];
-                let width = crate::spatial::widget_span(width, config.item_size);
-                let height = crate::spatial::widget_span(height, config.item_size);
+                let width = crate::spatial::widget_span(width, config.item_size, config.grid_gap);
+                let height = crate::spatial::widget_span(height, config.item_size, config.grid_gap);
                 let destination = if let Some(slot) = slot {
                     let rect = crate::spatial::Rect {
                         row: slot / config.columns.max(1),
@@ -1156,8 +1184,16 @@ impl Apps {
                         .get(&id)
                         .copied()
                         .unwrap_or(crate::spatial::Rect {
-                            width: crate::spatial::widget_span(width, config.item_size),
-                            height: crate::spatial::widget_span(height, config.item_size),
+                            width: crate::spatial::widget_span(
+                                width,
+                                config.item_size,
+                                config.grid_gap,
+                            ),
+                            height: crate::spatial::widget_span(
+                                height,
+                                config.item_size,
+                                config.grid_gap,
+                            ),
                             ..Default::default()
                         });
                 let source_page = config
@@ -1232,10 +1268,14 @@ impl Apps {
                         .ok_or("Widget is missing")?;
                     let (min_width, min_height) = crate::spatial::WIDGET_MIN_SPANS[variant];
                     let (max_width, max_height) = crate::spatial::WIDGET_MAX_SPANS[variant];
-                    let min_width = crate::spatial::widget_span(min_width, config.item_size);
-                    let min_height = crate::spatial::widget_span(min_height, config.item_size);
-                    let max_width = crate::spatial::widget_span(max_width, config.item_size);
-                    let max_height = crate::spatial::widget_span(max_height, config.item_size);
+                    let min_width =
+                        crate::spatial::widget_span(min_width, config.item_size, config.grid_gap);
+                    let min_height =
+                        crate::spatial::widget_span(min_height, config.item_size, config.grid_gap);
+                    let max_width =
+                        crate::spatial::widget_span(max_width, config.item_size, config.grid_gap);
+                    let max_height =
+                        crate::spatial::widget_span(max_height, config.item_size, config.grid_gap);
                     if width < min_width
                         || height < min_height
                         || width > max_width
@@ -1267,13 +1307,16 @@ impl Apps {
                 self.config = config;
                 Ok(())
             }
-            Action::SaveAppearance(margin, size, columns, rows) => {
+            Action::SaveAppearance(margin, size, gap, columns, rows) => {
                 let mut config = self.config.clone();
                 config.page_margin = margin.clamp(0, 64);
-                let old_pitch = crate::spatial::cell_pitch(config.item_size) as u64;
+                let old_gap = config.grid_gap.clamp(0, 64) as u64;
+                let new_gap = gap.clamp(0, 64) as u64;
+                let old_pitch =
+                    crate::spatial::cell_pitch(config.item_size, config.grid_gap) as u64;
                 let old_size = config.item_size.max(1) as u64;
                 let new_size = size.clamp(80, 176) as u64;
-                let new_pitch = crate::spatial::cell_pitch(size.clamp(80, 176)) as u64;
+                let new_pitch = crate::spatial::cell_pitch(size.clamp(80, 176), gap) as u64;
                 if old_pitch != new_pitch {
                     let widgets: HashSet<_> = config
                         .pages
@@ -1288,12 +1331,14 @@ impl Apps {
                         rect.col = (rect.col as u64 * new_pitch / old_pitch) as usize;
                         rect.row = (rect.row as u64 * new_pitch / old_pitch) as usize;
                         if widgets.contains(id.as_str()) {
-                            rect.width = (rect.width.saturating_sub(16) as u64 * new_size
+                            rect.width = (rect.width.saturating_sub(old_gap as usize) as u64
+                                * new_size
                                 / old_size
-                                + 16) as usize;
-                            rect.height = (rect.height.saturating_sub(16) as u64 * new_size
+                                + new_gap) as usize;
+                            rect.height = (rect.height.saturating_sub(old_gap as usize) as u64
+                                * new_size
                                 / old_size
-                                + 16) as usize;
+                                + new_gap) as usize;
                         } else {
                             rect.width = (rect.width as u64 * new_pitch / old_pitch) as usize;
                             rect.height = (rect.height as u64 * new_pitch / old_pitch) as usize;
@@ -1301,6 +1346,7 @@ impl Apps {
                     }
                 }
                 config.item_size = size.clamp(80, 176);
+                config.grid_gap = gap.clamp(0, 64);
                 config.columns = columns.max(1);
                 config.rows = rows.max(1);
                 crate::spatial::reconcile(&mut config)?;
@@ -2048,15 +2094,20 @@ impl Apps {
     }
 
     fn tile(&self, item: &Item, page: usize, index: usize) -> Tile {
-        let mut tile = Tile::new(item, &self.icons, self.config.item_size);
+        let mut tile = Tile::new(
+            item,
+            &self.icons,
+            self.config.item_size,
+            self.config.grid_gap,
+        );
         tile.rect = self
             .config
             .positions
             .get(item.id())
             .copied()
             .unwrap_or(crate::spatial::Rect {
-                width: crate::spatial::item_span(1, self.config.item_size),
-                height: crate::spatial::item_span(1, self.config.item_size),
+                width: crate::spatial::item_span(1, self.config.item_size, self.config.grid_gap),
+                height: crate::spatial::item_span(1, self.config.item_size, self.config.grid_gap),
                 ..crate::spatial::Rect::cell(index, self.config.columns)
             });
         tile.page = page as i32;
@@ -2078,6 +2129,7 @@ impl Apps {
                         &apps[folder_app].clone().into_item(),
                         &self.icons,
                         self.config.item_size,
+                        self.config.grid_gap,
                     );
                     tile.page = page as i32;
                     tile.index = index as i32;
@@ -2107,6 +2159,8 @@ impl Apps {
         let previews: Vec<_> = (0..self.config.pages.len()).map(page_items).collect();
         let margin = self.config.page_margin;
         let size = self.config.item_size;
+        let gap = self.config.grid_gap;
+        let search_engine_index = self.config.default_search_engine_index() as i32;
         let saved_columns = self.config.columns as i32;
         let saved_rows = self.config.rows as i32;
         let items = page_items(self.page);
@@ -2158,7 +2212,7 @@ impl Apps {
             .filter(|id| !self.config.pinned.contains(id))
             .filter_map(|id| self.dock_tile(id))
             .filter(|tile| !tile.folder)
-            .take(2)
+            .take(RECENT_DOCK_LIMIT)
             .collect();
         let created_items: Vec<_> = all
             .iter()
@@ -2287,6 +2341,12 @@ impl Apps {
                     .find(|action| action.id == prefix.action_id)
                     .map(|action| action.name.as_str().into())
                     .unwrap_or_default(),
+                action_index: self
+                    .config
+                    .user_actions
+                    .iter()
+                    .position(|action| action.id == prefix.action_id)
+                    .unwrap_or(0) as i32,
             })
             .collect::<Vec<_>>();
         let shortcut_groups = (0..12)
@@ -2315,7 +2375,12 @@ impl Apps {
                 apps.iter()
                     .map(|app| {
                         let item = app.clone().into_item();
-                        Tile::new(&item, &self.icons, self.config.item_size)
+                        Tile::new(
+                            &item,
+                            &self.icons,
+                            self.config.item_size,
+                            self.config.grid_gap,
+                        )
                     })
                     .collect::<Vec<_>>(),
             ))
@@ -2377,6 +2442,18 @@ impl Apps {
                 .set_installed_apps(std::rc::Rc::new(slint::VecModel::from(installed_apps)).into());
             launcher.set_page_margin(margin);
             launcher.set_item_size(size);
+            launcher.set_grid_gap(gap);
+            launcher.set_search_engine_names(
+                std::rc::Rc::new(slint::VecModel::from(
+                    Config::search_engine_names()
+                        .into_iter()
+                        .map(slint::SharedString::from)
+                        .collect::<Vec<_>>(),
+                ))
+                .into(),
+            );
+            launcher.set_default_search_engine_index(search_engine_index);
+            launcher.invoke_default_search_engine_saved(search_engine_index);
             launcher.set_saved_columns(saved_columns);
             launcher.set_saved_rows(saved_rows);
             launcher.set_page_previews(
@@ -2540,6 +2617,7 @@ pub(crate) fn decode_icon(
 
 fn success_message(action: &Action) -> Option<&'static str> {
     match action {
+        Action::SaveDefaultSearchEngine(..) => Some("Search engine saved"),
         Action::RunPrefix(..) => Some("Action completed"),
         Action::SaveNamedCommand(..) => Some("Action saved"),
         Action::DeleteNamedCommand(..) => Some("Action deleted"),
@@ -2842,6 +2920,7 @@ fn search_path_result(path: PathBuf, directory: bool) -> SearchPathResult {
 struct Tile {
     rect: crate::spatial::Rect,
     item_size: i32,
+    grid_gap: i32,
     widget: bool,
     ticktick: bool,
     ticktick_next: bool,
@@ -2885,11 +2964,13 @@ impl Tile {
         item: &Item,
         icons: &HashMap<String, SharedPixelBuffer<Rgba8Pixel>>,
         item_size: i32,
+        grid_gap: i32,
     ) -> Self {
         let mut tile = Self {
             id: item.id().into(),
             name: item.name().into(),
             item_size,
+            grid_gap,
             ..Self::default()
         };
         match item {
@@ -2982,14 +3063,26 @@ impl Tile {
 
     fn into_slint(self) -> AppTile {
         let icon_present = self.icon.is_some();
-        let min_span_x =
-            crate::spatial::widget_span(self.min_span_x.max(1) as usize, self.item_size);
-        let min_span_y =
-            crate::spatial::widget_span(self.min_span_y.max(1) as usize, self.item_size);
-        let max_span_x =
-            crate::spatial::widget_span(self.max_span_x.max(1) as usize, self.item_size);
-        let max_span_y =
-            crate::spatial::widget_span(self.max_span_y.max(1) as usize, self.item_size);
+        let min_span_x = crate::spatial::widget_span(
+            self.min_span_x.max(1) as usize,
+            self.item_size,
+            self.grid_gap,
+        );
+        let min_span_y = crate::spatial::widget_span(
+            self.min_span_y.max(1) as usize,
+            self.item_size,
+            self.grid_gap,
+        );
+        let max_span_x = crate::spatial::widget_span(
+            self.max_span_x.max(1) as usize,
+            self.item_size,
+            self.grid_gap,
+        );
+        let max_span_y = crate::spatial::widget_span(
+            self.max_span_y.max(1) as usize,
+            self.item_size,
+            self.grid_gap,
+        );
         AppTile {
             row: self.rect.row as i32,
             col: self.rect.col as i32,
@@ -3050,6 +3143,45 @@ impl Tile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn init_ui_for_test() {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(i_slint_backend_testing::init_no_event_loop);
+    }
+
+    #[test]
+    fn no_result_search_uses_the_saved_search_engine() {
+        init_ui_for_test();
+        let mut config = Config::default();
+        config.default_search_engine = "google-search".into();
+        let mut apps = Apps {
+            config,
+            page: 0,
+            icons: HashMap::new(),
+            open_folder: None,
+            inventory: Inventory::default(),
+            installed_filter: String::new(),
+            query: String::new(),
+            search_paths: None,
+            recent: recent::Recent::default(),
+        };
+        let launcher = Launcher::new().unwrap();
+        let opened = std::cell::RefCell::new(Vec::new());
+        apps.apply_with_url_opener(
+            Action::SearchWeb("hello world".into()),
+            &RequestSequence::default(),
+            &launcher.as_weak(),
+            &|url| {
+                opened.borrow_mut().push(url.to_string());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            opened.into_inner(),
+            ["https://www.google.com/search?q=hello%20world"]
+        );
+    }
 
     #[test]
     fn folder_apps_can_enter_recent_and_open_from_the_dock() {
@@ -3120,6 +3252,7 @@ mod tests {
                     token: prefix.token.clone().into(),
                     action_id: prefix.action_id.clone().into(),
                     action_name: prefix.name.clone().into(),
+                    action_index: 0,
                 })
                 .collect::<Vec<_>>();
             let launcher = Launcher::new().unwrap();
@@ -3196,7 +3329,7 @@ mod tests {
             assert_eq!(opened.into_inner(), [expected_url]);
         }
 
-        i_slint_backend_testing::init_no_event_loop();
+        init_ui_for_test();
         exercise(
             "y",
             "loda",

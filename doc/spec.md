@@ -87,8 +87,8 @@ From top to bottom: top bar, the open page, page dots, dock.
 
 - **Top bar:** the supplied Orbit logo and wordmark (`ui/assets/orbit.svg`) and name on the left. The Settings and Close icons on the right.
 - **Page:** a full-width, full-height page area below the top bar and above the dock, with a grid of items. Right-click empty page space and choose Add item to add an item. It scrolls vertically and has no item limit.
-- **Page dots:** show which page is open. Clicking a dot opens that page. A + beside the dots adds a page, as does Add page in Settings.
-- **Dock:** a floating, semi-transparent white rounded bar at the bottom center, with no blur. Up to two recent items appear on the left and pinned items in saved order on the right, separated by a thin line when both sections have items. Each 48 px icon has an 11 px name below it. The dock is always shown, even when it is empty.
+- **Page dots:** show which page is open. Clicking a dot opens that page. A + beside the dots adds a page, as does Add page in the empty-space Context menu.
+- **Dock:** a floating, semi-transparent rounded bar at the bottom center, with no blur. Up to five recent items appear on the left and up to ten pinned items in saved order on the right, separated by a thin line when both sections have items. Each 48 px icon has an 11 px name below it. The dock is always shown, even when it is empty. When its contents exceed the viewport, the dock scrolls horizontally only, with transparent arrows layered over the first and last visible items; the bottom position line is omitted.
 - **On open:** the launcher opens on its current page with folders, Settings, sheets and alerts closed, search cleared, and Search anything focused. Grid focus navigation remains deferred.
 
 ## 6. Behavior
@@ -99,14 +99,14 @@ From top to bottom: top bar, the open page, page dots, dock.
 - On failure the launcher stays open and shows a banner such as "Couldn't start 'figma': not found".
 - A folder opens instead of launching. Right-click empty page space → Add item opens the Add item sheet.
 
-**Context menu** (right-click an item): Edit, Pin (or Unpin), Delete on page items and folder apps. A pinned dock item offers Unpin; a Recent dock item offers Remove from Recent.
+**Context menu:** right-click a page item for Edit, Pin (or Unpin), Move to Page and Delete. Delete asks for confirmation and includes widgets. Right-click empty page space for Add item, Add page or Delete page; page deletion asks for confirmation and is unavailable on the final page. A pinned dock item offers Unpin; a Recent dock item offers Remove from Recent.
 
 **Sheets.** All open over a dimmed backdrop inside the launcher window. The Add item sheet fits the selected tab's content, has a maximum height of 760 px, and scrolls only when that content exceeds the available height.
 - *Add item:* segmented control App, Website, File, Directory or Folder. For an App, a second segmented control: Custom command (first and selected by default), Actions or Installed apps. Actions shows Lock screen, Take screenshot, Sleep, Log out, Volume up, Volume down, Mute, Mute microphone, Play or pause, Next track and Previous track; choosing one adds it to the current page and closes the sheet. Audio and media actions use `wpctl` and `playerctl`, following the [Hyprland media examples](https://wiki.hypr.land/0.53.0/Configuring/Binds/) and [WirePlumber command reference](https://pipewire.pages.freedesktop.org/wireplumber/man/wpctl.html). Custom command has Name, Icon and Command, with Cancel and Save. Installed apps shows the saved Installed apps list and a Refresh installed apps button; clicking an app adds it right away at the end of the current page and closes the sheet, with no Save. Adding the same installed app again is allowed. Its name and icon come from the list and can be changed later with Edit. Website has Name and URL. File and Directory each have an editable Path, a native chooser button, a default Icon with Change icon beside it, and Cancel and Save. The chooser fills Path. Save checks the path, derives the item name, adds it to the current page and closes the sheet. A Folder has just a Name, with Cancel and Save.
-- *Edit app:* Name, Icon, Command (custom command apps only). Delete and Save.
+- *Edit app:* Name, Icon, Command (custom command apps only). Cancel and Save. Delete is in the item's Context menu.
 - *Edit website:* Name and URL. Its cached icon is refreshed when the URL is changed.
-- *Edit file* and *Edit directory:* editable Path, native chooser button, Icon and Change icon, with Delete and Save. Choosing another path fills Path; Save updates the item and its name from that path. The Icon preview and Change icon button are vertically centered together in these sheets and Edit app.
-- *Edit folder:* Name. Delete and Save.
+- *Edit file* and *Edit directory:* editable Path, native chooser button, Icon and Change icon, with Cancel and Save. Choosing another path fills Path; Save updates the item and its name from that path. The Icon preview and Change icon button are vertically centered together in these sheets and Edit app. Delete is in the item's Context menu.
+- *Edit folder:* Name. Cancel and Save. Delete is in the item's Context menu.
 - Keys inside sheets, pickers and alerts are listed in `shortcuts.md`. Their defaults can be changed in Settings. `Enter` in a Name, URL, Path or Command field moves to the next field or Save. Clicking the backdrop closes the sheet.
 
 **Alert.** Delete always asks for confirmation.
@@ -117,11 +117,11 @@ From top to bottom: top bar, the open page, page dots, dock.
 
 **Pages.**
 - No names. At least 1, at most 9.
-- A new page is created by dropping an item past the right edge of the last page, clicking + beside the page dots, or clicking Add page in Settings.
+- A new page is created by dropping an item past the right edge of the last page, clicking + beside the page dots, or clicking Add page in the empty-space Context menu.
 - Drag an empty area of the page left or right to move to the previous or next page. The page follows the pointer without delay and settles into place after release. At the first or last page, it moves only a little and returns to the center.
 - A 24 px gap separates page surfaces during a swipe.
 - The page area fills the available width and height. The + beside the page dots creates and opens an empty page with the mouse.
-- Leaving an empty page does not remove it. Delete page in Settings removes the current page after confirmation, moving its items to the previous page (or the next page when deleting the first). The last page cannot be deleted.
+- Leaving an empty page does not remove it. Delete page in the empty-space Context menu or the empty-space Context menu removes the current page after confirmation, moving its items to the previous page (or the next page when deleting the first). The last page cannot be deleted.
 - First run: one empty page with Add item available from its empty-space Context menu.
 - Startup page controls are deferred; reopening keeps the current page.
 
@@ -135,7 +135,7 @@ From top to bottom: top bar, the open page, page dots, dock.
 **Dock.**
 - Pin or Unpin in an item's context menu adds or removes it from the dock. The item stays on its page.
 - Right-click a pinned dock item to Unpin it. Right-click a Recent dock item to remove it from Recent history.
-- Recent tracks successfully opened Apps, Websites, Files and Directories, including Apps inside folders. Folders themselves do not enter Recent. The two newest unpinned items appear on the left; pinned items appear on the right in saved order, up to eight. An item appears only once in the dock.
+- Recent tracks successfully opened Apps, Websites, Files and Directories, including Apps inside folders. Folders themselves do not enter Recent. The five newest unpinned items appear on the left; pinned items appear on the right in saved order, up to ten. An item appears only once in the dock.
 - Recent keeps up to sixteen item IDs so older unpinned items can fill the left side when a newer item is pinned or deleted. Opening an item again moves it to the front. A successful launch writes `recent.json` only when the order changes.
 - Clicking a dock item opens it, including a folder or an App inside a folder on another page. Dock drag reordering remains a later functional step.
 
@@ -154,7 +154,7 @@ From top to bottom: top bar, the open page, page dots, dock.
 | Edit, Pin or Unpin, Delete | Right-click the item, choose from the context menu |
 | Reorder, move between pages, make a folder | Drag and drop |
 | Change page | Click a page dot, or Shift + wheel |
-| Add a page | Click + beside the page dots, or Add page in Settings |
+| Add a page | Click + beside the page dots, or Add page in the empty-space Context menu |
 | Open Settings | Click the Settings icon |
 | Leave Settings | Click Back |
 | Hide the launcher | Click the Close icon |
@@ -187,11 +187,11 @@ Installed apps use their real system icon, resolved once when you press Refresh 
 
 ## 9. Settings
 
-The top bar Settings control opens a dark panel with Add page, Refresh installed apps, file and directory search paths, and Back. Add, Edit or Delete a path in either list. Each path is an existing folder and can be entered as an absolute Path. File search paths are searched recursively for files; Directory search paths show only their immediate directories. Indexing starts on the first non-empty search and stays cached until a path changes. The refresh status is visible in the panel. Esc returns to the launcher. Page margin and Item size controls save to config.json. Page margins are equal on all four sides, default to 10 px and allow 0–64 px. Page tiles stay square, default to 128 px and allow 80–240 px. Startup controls remain deferred.
+The top bar Settings control opens a dark panel with General, Shortcuts, Search bar, and Back. Add, Edit or Delete a path in either list. Each path is an existing folder and can be entered as an absolute Path. File search paths are searched recursively for files; Directory search paths show only their immediate directories. Indexing starts on the first non-empty search and stays cached until a path changes. The refresh status is visible in the panel. Esc returns to the launcher. Page margin and Item size controls save to config.json. Page margins are equal on all four sides, default to 10 px and allow 0–64 px. Page tiles stay square, default to 128 px and allow 80–240 px. Startup controls remain deferred.
 
 Settings also has Export data and Import data. Export saves a versioned JSON backup containing pages, folders, saved icons, Pinned, Recent, search paths and the Installed apps list. Import opens the native chooser directly, then validates the chosen backup before replacing data. Cancelling the chooser leaves data unchanged. It retains the previous data in a sibling `orbit-before-import-<time>` directory and reloads the launcher. File and Directory items keep their paths; the referenced files and installed programs are not included. Both operations run on the worker and use a centered floating native file chooser. Orbit stays fullscreen behind the chooser, and returns focus to Settings when it closes. This explicitly requested addition is outside the original build order.
 
-Settings has General and Shortcuts tabs. Shortcuts lists each Orbit action once, with all assigned key combinations grouped in that row. Users can record, change, add and delete individual combinations. Duplicate key combinations are rejected. Bindings persist in config.json and backups; old configurations receive the defaults. Native text editing remains provided by text fields; the global toggle is configured in Hyprland. These user-requested changes extend the original fixed-shortcut scope.
+Settings has General, Shortcuts and Search bar tabs. Shortcuts lists each Orbit action once, with all assigned key combinations grouped in that row. Users can record, change, add and delete individual combinations. Duplicate key combinations are rejected. Bindings persist in config.json and backups; old configurations receive the defaults. Native text editing remains provided by text fields; the global toggle is configured in Hyprland. These user-requested changes extend the original fixed-shortcut scope.
 
 ## 10. Look
 
@@ -200,10 +200,10 @@ The authoritative visual reference is `doc/orbit-ui/orbit.png` and `orbit.svg` (
 - Use the reference radial background, lavender artwork, logo, search field, Settings and Close controls, page dots, labeled dock and footer hints.
 - Embed Inter. Page labels are 14 px, dock labels 11 px. Page icons are 80 px; dock icons are 48 px.
 - Top bar: logo at (48,40), 360 × 44 px centered search at y=34, controls 48 px apart at the right.
-- Grid: 144 px between item centers at reference width. The page area fills the available width and height, and the grid adds columns as width permits. The page and its 128 × 128 px item tiles have 1 px borders. Item tiles have a lighter background on hover. The gaps between tiles do not select items.
-- Page dots are centered 146 px above the bottom. The dock is 94 px tall, 26 px above the bottom, with 26 px corners and 100 px per item. Each dock item's hover area is inset 6 px on all sides. The separator divides Recent from Pinned when both are present.
+- Grid: 144 px between item centers at reference width (128 px item size + 16 px default Item Gap). The page area fills the available width and height, and the grid adds columns as width permits. The page and its 128 × 128 px item tiles have 1 px borders. Item tiles have a lighter background on hover. The gaps between tiles do not select items. Settings lets the user change Item Gap from 0 to 64 px.
+- Page dots are centered 146 px above the bottom. The dock is 98 px tall, 26 px above the bottom, with rounded corners and 100 px per item. It can grow to 1400 px wide and scrolls horizontally when its Recent and Pinned items overflow. Side controls sit outside the scroll viewport. Each dock item's hover area is inset 6 px on all sides. The separator divides Recent from Pinned when both are present.
 - Search filters saved page items, all System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Results from saved page items appear after the other matches. The first result is initially selected. Arrow keys move the selection through the grid without wrapping and scroll it into view. Enter opens the selected result. Clicking any result opens it. Each highlight encloses the icon and labels with padding and a gap from neighboring results. Results show their saved or cached icon when available. Choosing an action runs it, and choosing an installed app launches it without adding it to a page. Esc clears search before hiding.
-- Prefix tokens activate with Tab or Space, display the Prefix name as a badge and hide search results while active. Enter sends only the remaining query as the Action argument. When no local results match, Enter opens a Brave web search. Prefixes and Actions are stored in config.json; one Action can have several editable Prefix Tokens, and URL Actions encode query text. Site-search defaults include ChatGPT (`g`, `ل`), Claude (`c`, `ؤ`), GitHub (`gh`), Google Maps (`m`), Image Search (`i`, `ه`), Perplexity (`p`, `ح`), Wikipedia (`w`, `ص`), Translate ar to en (`ف`), Translate en to ar (`tr`), YouTube (`y`, `غ`), plus the web search engines. TickTick task creation parses `!today`, `!high`, `!medium`, `!low`, `!none`, `#tag`, and `^List`/`~List` in its own handler; omitted lists use Inbox. Shell Actions receive the query as a separate process argument, never interpolated into script source.
+- Prefix tokens activate with Tab or Space, display the Prefix name as a badge and hide search results while active. Enter sends only the remaining query as the Action argument. When no local results match, Enter searches with the web search engine selected in Settings → Search bar → General (Perplexity by default). Prefixes, Actions and the selected engine are stored in config.json; one Action can have several editable Prefix Tokens, and URL Actions encode query text. Site-search defaults include ChatGPT (`g`, `ل`), Claude (`c`, `ؤ`), GitHub (`gh`), Google Maps (`m`), Image Search (`i`, `ه`), Perplexity (`p`, `ح`), Wikipedia (`w`, `ص`), Translate ar to en (`ف`), Translate en to ar (`tr`), YouTube (`y`, `غ`), plus the web search engines. TickTick task creation parses `!today`, `!high`, `!medium`, `!low`, `!none`, `#tag`, and `^List`/`~List` in its own handler; omitted lists use Inbox. Shell Actions receive the query as a separate process argument, never interpolated into script source.
 - Left and Right switch pages when a text field, sheet or folder is not active. Ctrl+K focuses search.
 - Preserve native, interactive controls. The exported `main.slint` is only a full-screen PNG and cannot be used as the application implementation.
 - Sheets, the Context menu and Delete alerts follow the supplied Add item reference in `doc/add-item` and the shared rules in `design-system.md`. The 2026-10-18 request adds system icons to Installed apps rows.
@@ -260,3 +260,5 @@ Each step ends with an app that runs on Arch.
 ## 15. Open questions
 
 None at the moment.
+
+Settings groups Home Screen sizing, TickTick account and data under General. Search bar contains General (search engine and search paths), Prefixes and Actions. Page creation, deletion and Move page left/right are in the empty-space Context menu. TickTick widgets use the raised surface background.

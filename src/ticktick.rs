@@ -76,6 +76,28 @@ pub struct Task {
     pub time_zone: String,
     #[serde(default)]
     pub status: i32,
+    #[serde(default, rename = "repeatFlag")]
+    pub repeat_flag: String,
+    #[serde(default, rename = "repeatFrom")]
+    pub repeat_from: String,
+    #[serde(default)]
+    pub reminders: Vec<String>,
+    #[serde(default)]
+    pub items: Vec<ChecklistItem>,
+    #[serde(default, rename = "completedTime")]
+    pub completed_time: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default, rename = "assigneeUsername")]
+    pub assignee: String,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct ChecklistItem {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub status: i32,
 }
 
 #[derive(Serialize)]
@@ -272,41 +294,19 @@ pub fn project_tasks(token: &str, project: &str) -> Result<Vec<Task>, String> {
     Ok(tasks)
 }
 
-// Project data can omit old open tasks. Fetch dated tasks separately for calendar views.
+// Project data can omit older tasks. Query each priority separately to retain them for Today.
 fn scheduled_tasks(token: &str, project: Option<&str>) -> Result<Vec<Task>, String> {
     let client = agent();
-    let end = (chrono::Local::now().date_naive() + chrono::Duration::days(8))
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc()
-        .timestamp();
-    let mut ranges = vec![(0, end)];
     let mut tasks = Vec::new();
-    while let Some((start, end)) = ranges.pop() {
-        let date = |seconds| {
-            chrono::DateTime::from_timestamp(seconds, 0)
-                .unwrap()
-                .format("%Y-%m-%dT%H:%M:%S%z")
-                .to_string()
-        };
-        let mut filter = serde_json::json!({
-            "status": [0], "startDate": date(start), "endDate": date(end)
-        });
+    for priority in [5, 3, 1, 0] {
+        let mut filter = serde_json::json!({ "status": [0], "priority": [priority] });
         if let Some(project) = project {
             filter["projectIds"] = serde_json::json!([project]);
         }
         let batch: Vec<Task> = post_json(&client, token, "/task/filter", &filter)?;
-        if batch.len() >= 200 {
-            if end - start <= 1 {
-                return Err("TickTick returned too many tasks for one date range".into());
-            }
-            let middle = start + (end - start) / 2;
-            ranges.extend([(start, middle), (middle, end)]);
-        } else {
-            for task in batch {
-                if !tasks.iter().any(|t: &Task| t.id == task.id) {
-                    tasks.push(task);
-                }
+        for task in batch {
+            if !tasks.iter().any(|found: &Task| found.id == task.id) {
+                tasks.push(task);
             }
         }
     }

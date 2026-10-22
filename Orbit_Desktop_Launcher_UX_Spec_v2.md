@@ -9,7 +9,7 @@
 
 1. **Keep Orbit's existing desktop UI**: top Orbit header/search, wide rounded workspace, page dots and Add Page control, and persistent bottom dock. Do not replace it with a portrait phone simulator, mobile status bar, mobile breakpoint, or fixed 3×4 layout.
 2. **A spatial grid, not a sortable list**: every top-level app, shortcut, folder, or widget has an explicit page and grid position. Empty cells are valid and persistent. Movement into an empty cell does not compact or shift other items.
-3. **Configurable sizing**: the user can change **item size in the existing application Settings page**. The spatial grid uses fixed 1 px cells; each item spans enough cells to preserve its physical size. Calculate grid capacity from available *desktop workspace* dimensions; do not use separate mobile/tablet layouts.
+3. **Configurable sizing and spacing**: the user can change **item size and item gap in the existing application Settings page**. The spatial grid uses fixed 1 px cells; each item spans enough cells to preserve its physical size. Calculate grid capacity from available *desktop workspace* dimensions; do not use separate mobile/tablet layouts.
 4. **Center = folder; edges = reorder**: when dragging an **app over another app**, the central zone of the target app is reserved for potential folder creation; the outer edge/insertion zones are reserved for reordering. These targets MUST have different hover states, timers, previews, and outcomes. No accidental folders.
 5. **Folders are first-class grid items**: drag app onto app to create; drag app onto folder to add; open, rename, reorder children, extract children, move folder, dissolve on one remaining child if enabled.
 6. **Widgets are first-class grid items**, with multi-cell footprints, configurable size in cells, and a built-in widget catalog. Widgets may use the internet and connect to external services when the user configures them. Keep authentication and stored credentials secure, run network work off the UI thread, and show recoverable errors when a service is unavailable. TickTick Tasks is the only supported widget, as requested on 2026-10-20.
@@ -25,16 +25,17 @@ Retain the Orbit layout: header above; wide main home-screen workspace in the ce
 
 There is **no phone portrait canvas, Android status bar, mobile navbar, touch-only gesture, or phone-specific dimensions**. Support resizable windows and desktop monitors on Windows and Arch Linux, including different resolutions and display scaling. The underlying interaction model must not vary by OS.
 
-### 1.2 Settings: item size
+### 1.2 Settings: item size and gap
 
 Add a setting to Orbit's **existing Settings page**:
 
 - Label: `Home Screen > Item Size`.
+- Label: `Item Gap (px)`; integer range 0–64, default 16.
 - Show slider and numeric value, with a live preview; offer `Reset to default`.
 - Initial suggested range: **80–176 logical CSS pixels**, step **8 px**, default approximately **112 px**; adjust default based on the existing Orbit card dimensions. Do not hardcode these numbers throughout the app.
-- This setting is the source of truth for app and folder card size. The spatial grid remains 1 px per cell; item spans scale with the setting so cards retain their chosen physical size. A 16 px inset on each occupied span preserves the current 16 px gap between items.
+- Item Size is the source of truth for app and folder card size. The spatial grid remains 1 px per cell; item spans scale with the setting so cards retain their chosen physical size. Item Gap controls the inset on each occupied span, preserving 16 px by default.
 - Widgets use spans derived from their design dimensions and the current item size (e.g. 2×1 or 2×2 cards), so their physical size follows the setting.
-- Grid capacity derives from available workspace width and height at one cell per logical pixel. Item size and the 16 px spacing remain separate.
+- Grid capacity derives from available workspace width and height at one cell per logical pixel. Item size and spacing remain separate.
 - A setting change must update both rendering and hit-testing/drag geometry. The preview and final drop cell may never disagree.
 
 Example calculations (illustrative, not rigid constants):
@@ -79,7 +80,7 @@ Top-level items should always store page ID, row, column, rowSpan, and columnSpa
 - **Single left click app**: open/launch. **Single left click folder**: open it. **Single click widget**: execute only its own supported action, if any; otherwise do nothing.
 - **Left pointer down + movement ≥ 6 px**: begin drag immediately, without a long press. A small movement below threshold is still a click.
 - **Left press and hold ~450 ms without moving**: optional Android-inspired icon lift with contextual menu; if movement begins, dismiss menu and continue the same drag. Keep this separate from the essential immediate desktop drag gesture.
-- **Right click**: Orbit-custom context menu; do not lift item. Prevent native browser context menu on launcher cards, but do not suppress OS menus outside the launcher.
+- **Right click**: Orbit-custom context menu; do not lift item. Page items offer Edit, Pin or Unpin, Move to Page and Delete (including Widgets); deleting asks for confirmation. Empty page space offers Add item, Add page (up to 9 pages) and Delete page (with confirmation; unavailable on the final page). Prevent native browser context menu on launcher cards, but do not suppress OS menus outside the launcher.
 - **Pointer while dragging**: item follows pointer with exact original grab offset, `grabbing` cursor, elevated z-index, subtle 1.08–1.12 scale and shadow. Original location shows a ghost/outline.
 - **Release**: commit only if a valid target is armed. Invalid release animates back and does not modify state.
 - **Escape while dragging**: cancel, restore source layout, remove all previews and temporary pages.
@@ -205,17 +206,17 @@ In the existing `Add` flow add `Widgets`, opening a small **Widget Gallery** wit
 
 **TickTick Tasks is the only widget.** Remove retired local widget instances when loading saved data. Preserve TickTick instances and all launchable shortcuts.
 
-Fetch every API project, including NOTE lists, and the Inbox. Project data may omit older open tasks; supplement it with scheduled open tasks through the next seven days using the task filter endpoint, splitting date ranges when its 200-task limit is reached. Today and Next 7 Days are calendar views over those tasks (including overdue tasks); their labels are built-in views, while custom list names and IDs come from the API. Inbox (all tasks) is the aggregate view requested by the user. Keep credentials in the operating system credential store.
+Fetch every API project, including NOTE lists, and the Inbox. Project data may omit older open tasks; supplement it with open tasks grouped by priority using the task filter endpoint. Today and Next 7 Days are calendar views over those tasks (including overdue tasks); their labels are built-in views, while custom list names and IDs come from the API. Inbox (all tasks) is the aggregate view requested by the user. Keep credentials in the operating system credential store.
 
 TickTick has its own background request state. Refresh Tasks fetches all lists; Refresh List fetches the selected project (aggregate/date views refresh their source lists). Show skeletons while refreshing, disable duplicate requests, and keep launcher input available. Mutations update the in-memory view immediately, serialize pending TickTick writes, reconcile creation IDs with the server, and restore the previous snapshot on failure. Show success/error toasts and play a short sound on completion. Editors consume clicks inside their panel and retain drafts on failed saves.
 
-A task can be edited, moved to another list and deleted from the widget. The task editor shows Title, List, Notes, Priority, Tags, Due date and a Delete action. The List control selects the task's list, and saving with a different list moves the task there. The TickTick API rejects a task update that changes its list, so a move is performed as a copy into the new list followed by deleting the original, carrying over every other field (priority, tags, due date, start date, checklist, time zone) and adopting the new task's ID. The TickTick Focus Task widget selects the first unfinished task from Today, including overdue tasks, ordered by highest priority then oldest displayed date (due date, falling back to start date). Task views use this same date ordering, placing undated tasks last within each priority. The focus widget ignores task-list scroll offsets; its task title opens the editor, and its checkbox completes the task.
+A task can be edited, moved to another list and deleted from the widget. The task editor shows Title, List, Notes, Priority, Tags, Due date and a Delete action. The List control selects the task's list, and saving with a different list moves the task there. The TickTick API rejects a task update that changes its list, so a move is performed as a copy into the new list followed by deleting the original, carrying over every other field (priority, tags, due date, start date, checklist, time zone) and adopting the new task's ID. The TickTick Focus Task widget selects the first unfinished task from Today, including overdue tasks, ordered by highest priority then oldest displayed date (due date, falling back to start date). Task views use this same date ordering, placing undated tasks last within each priority. The focus widget shows the task title, list, priority, due date, tags and a scrollable view of all remaining available task details, including notes, description, checklist, schedule, recurrence, reminders, status and time zone. New instances use a 4×2 footprint. Clicking the task title opens its editor, and its checkbox completes the task.
 
 ### 8.2 Widget placement
 
 Select a widget in the gallery -> enter grid placement mode -> show its multi-cell outline -> pointer movement snaps outline to valid aligned cells -> click/drop to commit. Or provide `Place automatically` using the first valid rectangle on current page, adding a new page if required. Escape cancels. Reject collisions and out-of-bounds footprints visibly.
 
-Widget cells are 1 px each. A widget’s visible default size is its design factor multiplied by Item Size (2×2 means 200×200 px at Item Size 100; 4×1 means 400×100 px); its saved footprint adds 16 px for the surrounding gap. Resizing changes width or height in 1 px increments.
+Widget cells are 1 px each. A widget’s visible default size is its design factor multiplied by Item Size (2×2 means 200×200 px at Item Size 100; 4×1 means 400×100 px); its saved footprint adds the configured Item Gap. Resizing changes width or height in 1 px increments.
 
 ### 8.3 Widget dragging and resizing
 
@@ -239,11 +240,13 @@ Each page is an independent sparse grid. Keep the existing dots, active indicato
 - **Cross-page drag:** when carrying an item, hover within ~40–60 px of left/right workspace boundary for ~500–700 ms. Show an edge cue/countdown; then slide to neighbor page while the dragged item remains attached to the cursor. Repeat for multiple pages, with delay/reset to prevent accidental skipping. Drop on that page uses normal validation.
 - **Past last page:** show a temporary empty page on right-edge dwell. Only persist it if a valid drop succeeds. Cancelling leaves page count unchanged. Optionally support equivalent left-edge behavior if product requirements allow prepending pages.
 - **No ghost duplication:** source stays logically owned by origin until destination commits; do not create duplicate items during animation.
-- Page indicator updates when navigation completes. Avoid horizontally scrolling the entire app shell or persistent dock.
+- Page indicator updates when navigation completes. Only page content slides during page navigation; the persistent dock stays in place and scrolls horizontally when its contents overflow.
 
 ## 10. Persistent bottom dock
 
 The existing Orbit dock is an independent persistent placement region shared by all pages. Its layout should reflect the current Orbit UI rather than a fixed three-icon phone dock.
+
+- Show up to five Recent items and ten Pinned items. Keep the dock within the available screen width and horizontally scroll overflowing items without vertical scrolling.
 
 - Drag app/folder into dock: highlight dock and show a clear insertion gap. Other dock items shift in preview; commit order and source ownership atomically.
 - Drag dock item to page: show page cell target; move it out of dock on commit.
@@ -256,9 +259,11 @@ The existing Orbit dock is an independent persistent placement region shared by 
 
 ### Search Prefixes and Actions
 
-Search anything supports named Prefix rules with a Name, Token and selected Action. Press Tab or Space after typing a matching Token to activate it, hide results and display its Name as a badge. Enter dispatches the remaining search text (without the Token) to that Action. With no results, Enter opens a Brave web search. Saved page items appear after other matches. Search handling stays generic: token matching, badge state and Action dispatch only. Action-specific parsing belongs to the Action handler.
+Search anything supports named Prefix rules with a Name, Token and selected Action. Press Tab or Space after typing a matching Token to activate it, hide results and display its Name as a badge. Enter dispatches the remaining search text (without the Token) to that Action. With no results, Enter searches the query using the web search engine selected in General Settings (Perplexity by default). Saved page items appear after other matches. Search handling stays generic: token matching, badge state and Action dispatch only. Action-specific parsing belongs to the Action handler.
 
 Settings has separate `Prefixes` and `Actions` tabs. A Prefix Token selects an Action; one Action can have multiple Tokens. The Actions editor shows and edits a comma-separated Token list, description, Action name and source. The Prefixes tab groups Tokens by Action and can add a separate Prefix. Actions are named reusable URL templates, TickTick task creation, or user-authored shell scripts. URL templates substitute `%s` with safely percent-encoded search text. Shell scripts receive search text as a separate argument (`$1` on Arch Linux; `$OrbitQuery` on Windows); never interpolate it into script source. Persist both collections in the existing config with defaults and migration that preserve existing settings.
+
+The Settings panel keeps its title and tab controls visible while the active tab content scrolls vertically. Back remains available below the scrolling content. Shortcuts groups bindings by Action in a card grid; Prefixes displays each Name, Token and selected Action in an editable card grid.
 
 Default prefixes: YouTube `y` or `غ`, ChatGPT `g` or `ل`, Image Search `i` or `ه`, Perplexity `p` or `ح`, Claude `c` or `ؤ`, Wikipedia `w` or `ص`, GitHub `gh`, Google Maps `m`, Translate ar to en `ف`, Translate en to ar `tr`, and TickTick `t`. Web search engines are Brave `:br`, Google `:g`, DuckDuckGo `:d`, Qwant `:q`, Bing `:b`, Startpage `:sp` and Ecosia `:e`. TickTick parses task title plus `!today`, `!high`, `!medium`, `!low`, `!none`, `#tag`, and `^List` or `~List` selectors inside its Action handler. Use Inbox when no list is specified and preserve Orbit's existing TickTick credential and API integration.
 
@@ -365,7 +370,7 @@ Write automated tests for **pure layout functions** and interaction/e2e tests fo
 8. **Dissolution:** extract one of two folder children -> last child replaces folder in its original cell.
 9. **Cross-page:** dragged app remains attached while page slides; valid drop transfers ownership; cancel returns to source. Holding beyond last page and cancelling leaves no new page.
 10. **Dock:** reorder, move into and out of dock, reject full dock, no duplicate shortcut instances.
-11. **Settings size:** change Item Size -> app/folder/widget spans and coordinates preserve their proportions; grid hit testing remains correct; overflow is reflowed safely; revert restores prior arrangement where practical.
+11. **Settings size and gap:** change Item Size or Item Gap -> app/folder/widget spans and coordinates preserve their proportions; grid hit testing remains correct; overflow is reflowed safely; revert restores prior arrangement where practical.
 12. **Widgets:** gallery lists default types; choose Random Quote; place 2×2; text persists across rerenders/restart; refresh only changes the intended instance; move and resize snap to whole cells; collisions rejected; widget cannot merge into folder.
 13. **Persistence:** reload and get exact saved pages, holes, folder contents, dock, widget text/spans, and size setting.
 14. **Click vs drag:** small pointer movement opens app once; drag never accidentally opens app.
@@ -379,7 +384,7 @@ Use the attached Claude timeline as **reference test fixtures for 1×1 sparse-gr
 ## 15. Codex execution instructions / definition of done
 
 1. Inspect the **existing Orbit repository** first: identify Settings page, current card/grid rendering, paging/slider, dock, item-open actions, context menu, storage and framework. Implement in this architecture without changing the established look.
-2. Add central normalized launcher model and a pure, testable spatial grid engine. Integrate the Settings-driven item size and safe geometry recalculation.
+2. Add central normalized launcher model and a pure, testable spatial grid engine. Integrate Settings-driven item size and gap with safe geometry recalculation.
 3. Implement pointer drag state machine, empty placement, edge reorder, center-folder gesture and previews. **Do not call this done until the center-vs-edge tests pass.**
 4. Add folder creation, folder overlay, child reordering and continuous extraction.
 5. Add desktop page navigation, edge-hover cross-page move, temporary page creation, and dock operations.

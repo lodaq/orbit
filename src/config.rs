@@ -1,6 +1,8 @@
 use crate::platform;
 use serde::{Deserialize, Serialize};
 
+pub const PINNED_LIMIT: usize = 10;
+
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Config {
     version: u32,
@@ -19,6 +21,10 @@ pub struct Config {
     pub page_margin: i32,
     #[serde(default = "default_item_size")]
     pub item_size: i32,
+    #[serde(default = "default_grid_gap")]
+    pub grid_gap: i32,
+    #[serde(default = "default_search_engine")]
+    pub default_search_engine: String,
     #[serde(default = "crate::shortcuts::defaults")]
     pub shortcuts: Vec<crate::shortcuts::Shortcut>,
     #[serde(default)]
@@ -267,6 +273,47 @@ fn default_page_margin() -> i32 {
 fn default_item_size() -> i32 {
     128
 }
+fn default_grid_gap() -> i32 {
+    16
+}
+
+fn default_search_engine() -> String {
+    "perplexity".into()
+}
+
+const SEARCH_ENGINES: [(&str, &str); 8] = [
+    ("brave-search", "Brave"),
+    ("google-search", "Google"),
+    ("duckduckgo-search", "DuckDuckGo"),
+    ("qwant-search", "Qwant"),
+    ("bing-search", "Bing"),
+    ("startpage-search", "Startpage"),
+    ("ecosia-search", "Ecosia"),
+    ("perplexity", "Perplexity"),
+];
+
+const SEARCH_ENGINE_TEMPLATES: [(&str, &str); 8] = [
+    (
+        "brave-search",
+        "https://search.brave.com/search?q=%s&source=desktop",
+    ),
+    ("google-search", "https://www.google.com/search?q=%s"),
+    ("duckduckgo-search", "https://duckduckgo.com/?q=%s&t=brave"),
+    (
+        "qwant-search",
+        "https://www.qwant.com/?q=%s&client=brz-brave",
+    ),
+    ("bing-search", "https://www.bing.com/search?q=%s"),
+    (
+        "startpage-search",
+        "https://www.startpage.com/do/search?q=%s&segment=startpage.brave",
+    ),
+    (
+        "ecosia-search",
+        "https://www.ecosia.org/search?tt=e8eb07a6&q=%s&addon=brave",
+    ),
+    ("perplexity", "https://www.perplexity.ai/search?q=%s"),
+];
 
 fn default_widget_min() -> i32 {
     1
@@ -278,7 +325,7 @@ fn default_widget_max() -> i32 {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            version: 4,
+            version: 5,
             positions: Default::default(),
             columns: default_columns(),
             rows: default_rows(),
@@ -290,6 +337,8 @@ impl Default for Config {
             pinned: Vec::new(),
             page_margin: default_page_margin(),
             item_size: default_item_size(),
+            grid_gap: default_grid_gap(),
+            default_search_engine: default_search_engine(),
             shortcuts: crate::shortcuts::defaults(),
             file_search_paths: Vec::new(),
             directory_search_paths: Vec::new(),
@@ -476,6 +525,38 @@ fn default_prefixes() -> Vec<Prefix> {
 }
 
 impl Config {
+    pub fn search_engine_names() -> Vec<&'static str> {
+        SEARCH_ENGINES.iter().map(|(_, name)| *name).collect()
+    }
+
+    pub fn search_engine_id(index: usize) -> Option<&'static str> {
+        SEARCH_ENGINES.get(index).map(|(id, _)| *id)
+    }
+
+    pub fn default_search_engine_index(&self) -> usize {
+        SEARCH_ENGINES
+            .iter()
+            .position(|(id, _)| *id == self.default_search_engine)
+            .unwrap_or(0)
+    }
+
+    pub fn search_engine_template(&self) -> &str {
+        self.user_actions
+            .iter()
+            .find(|action| {
+                action.id == self.default_search_engine && action.kind == ActionKind::Url
+            })
+            .map(|action| action.source.as_str())
+            .filter(|template| template.contains("%s"))
+            .or_else(|| {
+                SEARCH_ENGINE_TEMPLATES
+                    .iter()
+                    .find(|(id, _)| *id == self.default_search_engine)
+                    .map(|(_, template)| *template)
+            })
+            .unwrap_or(SEARCH_ENGINE_TEMPLATES[0].1)
+    }
+
     fn add_default_search_prefixes(&mut self) -> bool {
         let defaults = Config::default();
         let mut changed = false;
@@ -586,13 +667,13 @@ impl Config {
                     let (max_width, max_height) = crate::spatial::WIDGET_MAX_SPANS[*variant];
                     let bounds = if self.version >= 4 {
                         (
-                            crate::spatial::widget_span(min_width, self.item_size),
-                            crate::spatial::widget_span(min_height, self.item_size),
-                            crate::spatial::widget_span(max_width, self.item_size),
-                            crate::spatial::widget_span(max_height, self.item_size),
+                            crate::spatial::widget_span(min_width, self.item_size, self.grid_gap),
+                            crate::spatial::widget_span(min_height, self.item_size, self.grid_gap),
+                            crate::spatial::widget_span(max_width, self.item_size, self.grid_gap),
+                            crate::spatial::widget_span(max_height, self.item_size, self.grid_gap),
                         )
                     } else if self.version >= 3 {
-                        let pitch = crate::spatial::cell_pitch(self.item_size);
+                        let pitch = crate::spatial::cell_pitch(self.item_size, self.grid_gap);
                         (
                             min_width * pitch,
                             min_height * pitch,
@@ -621,13 +702,17 @@ impl Config {
         }) {
             return false;
         }
-        (1..=4).contains(&self.version)
+        (1..=5).contains(&self.version)
             && (1..=limit).contains(&self.columns)
             && (1..=limit).contains(&self.rows)
             && (1..=9).contains(&self.pages.len())
             && crate::shortcuts::valid(&self.shortcuts)
             && (0..=64).contains(&self.page_margin)
             && (80..=240).contains(&self.item_size)
+            && (0..=64).contains(&self.grid_gap)
+            && SEARCH_ENGINES
+                .iter()
+                .any(|(id, _)| *id == self.default_search_engine)
     }
 }
 
@@ -649,7 +734,7 @@ fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
         {
             let mut changed = false;
             if config.version < 3 {
-                let pitch = crate::spatial::cell_pitch(config.item_size);
+                let pitch = crate::spatial::cell_pitch(config.item_size, config.grid_gap);
                 for rect in config.positions.values_mut() {
                     rect.row *= pitch;
                     rect.col *= pitch;
@@ -662,7 +747,7 @@ fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
                 changed = true;
             }
             if config.version < 4 {
-                let pitch = crate::spatial::cell_pitch(config.item_size);
+                let pitch = crate::spatial::cell_pitch(config.item_size, config.grid_gap);
                 let widgets: Vec<_> = config
                     .pages
                     .iter()
@@ -676,11 +761,17 @@ fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
                     if let Some(rect) = config.positions.get_mut(&id) {
                         let width = (rect.width / pitch).max(1);
                         let height = (rect.height / pitch).max(1);
-                        rect.width = crate::spatial::widget_span(width, config.item_size);
-                        rect.height = crate::spatial::widget_span(height, config.item_size);
+                        rect.width =
+                            crate::spatial::widget_span(width, config.item_size, config.grid_gap);
+                        rect.height =
+                            crate::spatial::widget_span(height, config.item_size, config.grid_gap);
                     }
                 }
                 config.version = 4;
+                changed = true;
+            }
+            if config.version < 5 {
+                config.version = 5;
                 changed = true;
             }
             if !config.site_searches_initialized {
@@ -729,6 +820,25 @@ mod tests {
         assert!(config.valid());
         assert_eq!(config.pages.len(), 1);
         assert!(config.pages[0].items.is_empty());
+    }
+
+    #[test]
+    fn missing_search_engine_setting_defaults_to_perplexity_and_selected_engine_persists() {
+        let mut legacy = serde_json::to_value(Config::default()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("default_search_engine");
+        let mut config: Config = serde_json::from_value(legacy).unwrap();
+        assert_eq!(config.default_search_engine, "perplexity");
+        config.default_search_engine = "google-search".into();
+        let restored: Config =
+            serde_json::from_slice(&serde_json::to_vec(&config).unwrap()).unwrap();
+        assert_eq!(restored.default_search_engine_index(), 1);
+        assert_eq!(
+            restored.search_engine_template(),
+            "https://www.google.com/search?q=%s"
+        );
     }
 
     #[test]

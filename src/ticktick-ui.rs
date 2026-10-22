@@ -38,6 +38,7 @@ fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
 }
 
 pub fn connect(ui: &Launcher) {
+    ui.on_ticktick_current_date(|| Local::now().format("%Y-%m-%d").to_string().into());
     let weak = ui.as_weak();
     ui.on_load_ticktick(move || {
         if let Some(ui) = weak.upgrade() {
@@ -546,6 +547,12 @@ fn normalize_due_date(value: &str) -> Result<Option<String>, String> {
     Ok(Some(format!("{}T00:00:00+0000", date.format("%Y-%m-%d"))))
 }
 
+fn add_task_detail(details: &mut Vec<String>, label: &str, value: &str) {
+    if !value.trim().is_empty() {
+        details.push(format!("{label}: {}", value.trim()));
+    }
+}
+
 fn task_model(task: ticktick::Task) -> TickTickTask {
     let parse_date = |value: &str| {
         if task.all_day {
@@ -565,6 +572,71 @@ fn task_model(task: ticktick::Task) -> TickTickTask {
     };
     let due_date = parse_date(&task.due_date);
     let display_date = due_date.or_else(|| parse_date(&task.start_date));
+    let mut details = Vec::new();
+    add_task_detail(
+        &mut details,
+        "Start date",
+        task.start_date.get(..10).unwrap_or(&task.start_date),
+    );
+    add_task_detail(
+        &mut details,
+        "Due date",
+        task.due_date.get(..10).unwrap_or(&task.due_date),
+    );
+    add_task_detail(
+        &mut details,
+        "Priority",
+        match task.priority {
+            5 => "High",
+            3 => "Medium",
+            1 => "Low",
+            _ => "None",
+        },
+    );
+    add_task_detail(&mut details, "Tags", &task.tags.join(", "));
+    add_task_detail(&mut details, "Notes", &task.content);
+    add_task_detail(&mut details, "Description", &task.desc);
+    if !task.items.is_empty() {
+        details.push("Checklist:".into());
+        details.extend(task.items.iter().map(|item| {
+            format!(
+                "{} {}",
+                if item.status == 1 { "☑" } else { "☐" },
+                item.title
+            )
+        }));
+    }
+    add_task_detail(&mut details, "Repeats", &task.repeat_flag);
+    if !task.repeat_flag.is_empty() {
+        add_task_detail(
+            &mut details,
+            "Repeat timing",
+            match task.repeat_from.as_str() {
+                "0" => "Original schedule",
+                "1" => "After completion",
+                _ => "Calendar schedule",
+            },
+        );
+    }
+    add_task_detail(&mut details, "Reminders", &task.reminders.join(", "));
+    add_task_detail(&mut details, "Time zone", &task.time_zone);
+    if task.all_day {
+        add_task_detail(&mut details, "Schedule", "All day");
+    }
+    add_task_detail(
+        &mut details,
+        "Status",
+        match task.status {
+            2 => "Completed",
+            -1 => "Abandoned",
+            _ => "Open",
+        },
+    );
+    add_task_detail(&mut details, "Created", &task.created_time);
+    add_task_detail(&mut details, "Completed", &task.completed_time);
+    add_task_detail(&mut details, "Type", &task.kind);
+    add_task_detail(&mut details, "Assigned to", &task.assignee);
+    let details = details.join("\n");
     TickTickTask {
         id: task.id.into(),
         project_id: task.project_id.into(),
@@ -582,6 +654,7 @@ fn task_model(task: ticktick::Task) -> TickTickTask {
             .into(),
         priority: task.priority,
         tags: task.tags.join(", ").into(),
+        details: details.into(),
         day: display_date.map_or(0, |d| d.num_days_from_ce()),
         done: task.status == 2,
         ..Default::default()

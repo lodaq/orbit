@@ -4,7 +4,7 @@ The user approved `Orbit_Desktop_Launcher_UX_Spec_v2.md` on 2026-10-20 as author
 
 # Orbit glossary
 
-For v2 desktop layout terms, including Item Size, Grid Position, Widget Gallery, widget footprints, placement preview, insertion edge, folder center, Move to Page and Remove from Home, follow `Orbit_Desktop_Launcher_UX_Spec_v2.md`. These terms are approved alongside the terms below.
+For v2 desktop layout terms, including Item Size, Item Gap, Grid Position, Widget Gallery, widget footprints, placement preview, insertion edge, folder center, Move to Page and Remove from Home, follow `Orbit_Desktop_Launcher_UX_Spec_v2.md`. These terms are approved alongside the terms below.
 
 One word for one thing. If a word is not in this file, do not use it in the UI, the code or the docs.
 
@@ -15,7 +15,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Orbit** | The application. |
 | **Launcher** | The fullscreen view with pages and the dock. Shown by `orbit toggle`. Hidden by launching an app, pressing Esc, toggling again, losing focus, or the Close button. It always opens with all folders closed. |
 | **Daemon** | The background process that starts at login and keeps Orbit ready, so showing the launcher is instant. |
-| **Settings** | The dark panel with Add page, Refresh installed apps, file search paths, directory search paths and Back. The Back button or Esc returns to the launcher. |
+| **Settings** | The dark panel with General, Shortcuts, Search bar and Back. The Back button or Esc returns to the launcher. |
 | **Background** | The radial gradient behind the pages, from the supplied SVG reference. |
 | **Top bar** | The row at the top of the launcher: the Orbit logo and name on the left, the Settings and Close icons on the right. |
 
@@ -66,9 +66,9 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | Term | Meaning |
 |---|---|
-| **Dock** | The semi-transparent bar at the bottom, styled like the macOS Dock. 48 px icons with names below and a separator between Recent and Pinned. |
-| **Recent** | Successfully opened items, newest first. The two newest unpinned Apps, Websites, Files or Directories appear on the left side of the dock; folders are excluded. |
-| **Pinned** | Items you chose to show in the dock. Pinning is a flag: the item also stays on its page. Displayed in saved pin order; drag reordering is deferred. |
+| **Dock** | The semi-transparent horizontal bar at the bottom. It shows 48 px icons with names, Recent and Pinned sections, and scrolls horizontally when its contents overflow. |
+| **Recent** | Successfully opened items, newest first. Up to five newest unpinned Apps, Websites, Files or Directories appear on the left side of the dock; folders are excluded. |
+| **Pinned** | Up to ten items you chose to show in the dock. Pinning is a flag: the item also stays on its page. Displayed in saved pin order. |
 | **Separator** | The thin vertical line between Recent and Pinned when both are present. |
 
 ## Icons
@@ -86,7 +86,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | Term | Meaning |
 |---|---|
-| **Context menu** | The small menu that appears when you right-click an item or empty page space. Empty space offers Add item; items offer their own actions. |
+| **Context menu** | The small menu that appears when you right-click an item or empty page space. Empty space offers Add item, Add page and Delete page; items offer their own actions, including Delete. |
 | **Sheet** | A form that appears over the launcher with a dimmed backdrop behind it: Add item, Edit app, Edit website, Edit file, Edit directory or Edit folder. (Developers also call these *modals*. In Orbit they are always called sheets.) |
 | **Alert** | A small confirmation box with two buttons. Used for Delete. |
 | **Panel** | The rounded box that holds the content of a sheet, an alert, the Icon picker or an open folder. |
@@ -129,6 +129,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | Term | Meaning |
 |---|---|
 | **Search anything** | Searches saved page items, System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Ctrl+K focuses the field. |
+| **Search engine** | The website used for a web search when no local items match Search anything. Choose it in Settings → Search bar → General. |
 | **Prefix** | A named Search anything rule with a Token and selected Action. Tab or Space activates a matching Token; Enter sends the remaining search text to its Action. |
 | **Token** | The text that activates a Prefix in Search anything. |
 | **Action** | A named reusable command that receives a Prefix query. Actions include built-in site searches, TickTick task creation, and user shell scripts. |
@@ -139,7 +140,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Prefixes** | Settings tab for creating, editing and selecting Prefix Actions. |
 | **Actions** | Settings tab for creating and editing reusable Actions. |
 | **No items found** | Empty search results. |
-| **Add page** | Creates an empty page from Settings or the + beside the page dots. |
+| **Add page** | Creates an empty page from the empty-space Context menu or the + beside the page dots. |
 | **Switch pages** | Footer hint for Left and Right. |
 | **Back to desktop** | Footer hint for Esc. |
 
@@ -154,8 +155,11 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Backup** | A versioned file containing Orbit's saved data and icons. |
 
 | **Shortcuts** | Settings tab for listing, recording, changing and deleting action bindings. |
-| **General** | Settings tab for pages, data and search paths. |
+| **General** | Settings tab for Home Screen sizing, TickTick account and data. |
 | **Delete page** | Remove the current page after confirmation and keep its items on a neighboring page. |
 
 | **Page margin** | Equal space around each side of a page, adjustable in Settings. |
 | **Item size** | The square page tile width and height in pixels, adjustable in Settings. |
+| **Item Gap** | The spacing between page and folder tiles in pixels, adjustable from 0 to 64 in Settings. |
+
+| **Search bar** | Settings tab containing General search settings, Prefixes and Actions. |

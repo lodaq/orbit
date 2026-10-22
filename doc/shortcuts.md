@@ -8,7 +8,7 @@ Orbit is mouse first. Settings → Shortcuts lists Orbit bindings and lets you a
 
 ## Launcher
 
-The launcher opens with Search anything focused. Ctrl+K focuses it again and Enter opens its selected result; with no results, Enter searches the text in Brave. Esc clears search before hiding the launcher. Grid arrows move between spatial neighbors, Enter opens the focused item, Shift+F10 opens its Context menu, and PageUp/PageDown switches pages.
+The launcher opens with Search anything focused. Ctrl+K focuses it again and Enter opens its selected result; with no results, Enter searches using the engine selected in Settings → Search bar → General. Esc clears search before hiding the launcher. Grid arrows move between spatial neighbors, Enter opens the focused item, Shift+F10 opens its Context menu, and PageUp/PageDown switches pages.
 
 | Action | Shortcut |
 |---|---|
@@ -68,7 +68,7 @@ Search engines: `:br` Brave, `:g` Google, `:d` DuckDuckGo, `:q` Qwant, `:b` Bing
 | Click a page dot | Open that page |
 | Click + beside the page dots | Add and open a page |
 | Drag an empty area of the page left or right | Open the previous or next page |
-| Click Add page in Settings | Add an empty page |
+| Click Add page in the empty-space Context menu | Add an empty page |
 | Add, Edit or Delete a file or directory search path in Settings | Manage folders searched by Search anything |
 | Click the Settings icon | Open Settings |
 | Click Back in Settings | Return to the launcher |

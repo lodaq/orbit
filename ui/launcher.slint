@@ -55,11 +55,11 @@ export struct ActionChoice {
     name: string,
 }
 export struct UserActionChoice { id: string, name: string, kind: string, source: string, tokens: string, description: string, referenced: bool }
-export struct PrefixChoice { id: string, name: string, token: string, action-id: string, action-name: string }
+export struct PrefixChoice { id: string, name: string, token: string, action-id: string, action-name: string, action-index: int }
 export struct PrefixMatch { action-id: string, name: string, query: string, query-length: int, badge-width: int }
 
 export struct TickTickProject { id: string, name: string }
-export struct TickTickTask { id: string, project-id: string, list: string, title: string, content: string, desc: string, created-time: string, due: string, due-date: string, day: int, done: bool, priority: int, tags: string }
+export struct TickTickTask { id: string, project-id: string, list: string, title: string, content: string, desc: string, created-time: string, due: string, due-date: string, day: int, done: bool, priority: int, tags: string, details: string }
 export struct ToastItem { id: int, level: int, message: string, pulse: int }
 
 component ToastCard inherits Rectangle {
@@ -159,7 +159,11 @@ component PageTile inherits Rectangle {
     in property <[AppTile]> items;
     in property <int> index;
     in property <[TickTickTask]> ticktick-tasks;
+    in property <int> ticktick-total-count;
+    in property <length> ticktick-scroll-offset;
+    in property <length> ticktick-scroll-shift;
     in property <string> ticktick-list-name;
+    in property <length> ticktick-focus-scroll;
     in property <string> ticktick-status;
     in property <bool> ticktick-connected;
     in property <bool> ticktick-refreshing;
@@ -167,19 +171,19 @@ component PageTile inherits Rectangle {
     in property <bool> ticktick-pulse;
     in property <int> ticktick-next-completion-sequence;
     private property <bool> ticktick-next-completion-flash;
-    private property <bool> ticktick-focus-pulse;
+    private property <int> ticktick-page-size: max(1,floor((self.height - 68px) / 36px));
+    private property <length> ticktick-max-scroll: max(0px,(ticktick-total-count - ticktick-page-size) * 36px);
     in property <bool> hovered;
     in property <bool> folder-preview: false;
     in property <AppTile> drag-preview-item;
     width: 128px;
     height: 128px;
-    background: hovered ? #ffffff16 : transparent;
+    background: index < items.length && items[index].ticktick ? transparent : hovered ? #ffffff16 : transparent;
     border-radius: index < items.length && items[index].widget ? 16px : min(self.width,self.height) * 0.15625;
     border-width: 0px;
     border-color: transparent;
     changed ticktick-next-completion-sequence => { if ticktick-next-completion-sequence > 0 { ticktick-next-completion-flash = true; completion-flash-timer.restart(); } }
     completion-flash-timer := Timer { running: root.ticktick-next-completion-flash; interval: 420ms; triggered => { root.ticktick-next-completion-flash = false; } }
-    focus-pulse-timer := Timer { running: index < items.length && items[index].ticktick-next; interval: 900ms; triggered => { root.ticktick-focus-pulse = !root.ticktick-focus-pulse; } }
     if index < items.length && !items[index].widget: Rectangle {
         x: (parent.width - self.width) / 2; y: parent.height * 0.09;
         width: min(parent.width * 0.625, parent.height - 44px); height: self.width;
@@ -199,63 +203,88 @@ component PageTile inherits Rectangle {
     if index < items.length && items[index].widget: Text { x: parent.width - 24px; y: parent.height - 24px; width: 20px; height: 20px; text: "◢"; color: #a8b3ff; font-size: 16px; horizontal-alignment: center; vertical-alignment: center; }
     if index < items.length && items[index].widget && !items[index].ticktick: Text { x: 16px; y: 12px; width: parent.width - 32px; height: parent.height - 48px; text: items[index].widget-text; color: #e0e3f4; font-size: 16px; wrap: word-wrap; vertical-alignment: center; }
     if index < items.length && items[index].ticktick && !items[index].ticktick-next: Rectangle {
-        x: 12px; y: 8px; width: parent.width - 24px; height: parent.height - 16px;
-        background: transparent;
-        Text { x: 0px; y: 0px; width: parent.width - 110px; height: 28px; text: ticktick-list-name + " ▾"; color: #f0f1f5; font-size: 15px; font-weight: 600; vertical-alignment: center; overflow: elide; }
-        Text { x: parent.width - 62px; y: 0px; width: 28px; height: 28px; text: "+"; color: #f0f1f5; font-size: 24px; horizontal-alignment: center; vertical-alignment: center; }
-        Rectangle { x: parent.width - 31px; y: 5px; width: 1px; height: 18px; background: #ffffff28; }
-        Text { x: parent.width - 27px; y: 0px; width: 26px; height: 28px; text: "⋮"; color: #d4d6de; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; }
-        Rectangle { y: 32px; width: parent.width; height: 1px; background: #ffffff1a; }
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        background: Theme.raised;
+        border-width: 1px; border-color: Theme.border; border-radius: 16px;
+        clip: true;
+        Rectangle { x: 1px; y: 1px; width: parent.width - 2px; height: 44px; background: Theme.widget-header; border-radius: 15px; }
+        Rectangle { x: 1px; y: 22px; width: parent.width - 2px; height: 23px; background: Theme.widget-header; }
+        Text { x: 12px; y: 8px; width: parent.width - 134px; height: 28px; text: ticktick-list-name + " ▾"; color: #f0f1f5; font-size: 15px; font-weight: 600; vertical-alignment: center; overflow: elide; }
+        Text { x: parent.width - 74px; y: 8px; width: 28px; height: 28px; text: "+"; color: #f0f1f5; font-size: 24px; horizontal-alignment: center; vertical-alignment: center; }
+        Rectangle { x: parent.width - 43px; y: 13px; width: 1px; height: 18px; background: #ffffff28; }
+        Text { x: parent.width - 39px; y: 8px; width: 26px; height: 28px; text: "⋮"; color: #d4d6de; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; }
+        Rectangle { x: 12px; y: 44px; width: parent.width - 24px; height: 1px; background: #ffffff1a; }
         if !ticktick-refreshing && ticktick-tasks.length == 0: Text {
-            x: 2px; y: 44px; width: parent.width - 4px; height: parent.height - 52px;
+            x: 14px; y: 56px; width: parent.width - 28px; height: parent.height - 68px;
             text: ticktick-error ? ticktick-status : !ticktick-connected ? "Connect TickTick in Settings" : "No tasks in this list";
             color: #bcbfc9; font-size: 13px; wrap: word-wrap; vertical-alignment: top;
         }
         for row in 3: Rectangle {
-            visible: ticktick-refreshing && 82px + row * 36px < parent.height;
-            x: 2px; y: 48px + row * 36px; width: parent.width * (row == 1 ? 0.62 : 0.84); height: 16px;
+            visible: ticktick-refreshing && 96px + row * 36px < parent.height;
+            x: 14px; y: 60px + row * 36px; width: (parent.width - 28px) * (row == 1 ? 0.62 : 0.84); height: 16px;
             border-radius: 4px; background: #a8b3ff; opacity: ticktick-pulse ? 0.18 : 0.08;
             animate opacity { duration: 350ms; }
         }
-        for task[row] in ticktick-tasks: Rectangle {
-            visible: !ticktick-refreshing;
-            y: 36px + row * 36px; width: parent.width; height: 36px;
-            Rectangle { y: 35px; width: parent.width; height: 1px; background: #ffffff14; }
-            Rectangle { x: 2px; y: 10px; width: 15px; height: 15px; border-radius: 2px; border-width: 1px; border-color: task.done ? #8a9af1 : #9b9da8; background: task.done ? #8a9af1 : transparent; }
-            if task.done: Text { x: 3px; y: 8px; width: 13px; height: 18px; text: "✓"; color: #1a1d29; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
-            Text { x: 27px; y: 1px; width: parent.width - 101px; height: 33px; text: task.title; color: task.done ? #9699a5 : #eaebf0; font-size: 13px; overflow: elide; vertical-alignment: center; }
-            if task.due != "": Text { x: parent.width - 72px; y: 1px; width: 70px; height: 33px; text: task.due; color: #a8aab5; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+        Rectangle {
+            x: 0px; y: 52px; width: parent.width; height: max(0px,parent.height - 52px);
+            background: transparent; clip: true;
+            for task[row] in ticktick-tasks: Rectangle {
+                visible: !ticktick-refreshing;
+                x: 12px; y: row * 36px - ticktick-scroll-shift; width: parent.width - 24px; height: 36px;
+                Rectangle { y: 35px; width: parent.width; height: 1px; background: #ffffff14; }
+                Rectangle { x: 2px; y: 10px; width: 15px; height: 15px; border-radius: 2px; border-width: 1px; border-color: task.done ? #8a9af1 : #9b9da8; background: task.done ? #8a9af1 : transparent; }
+                if task.done: Text { x: 3px; y: 8px; width: 13px; height: 18px; text: "✓"; color: #1a1d29; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                Text { x: 27px; y: 1px; width: parent.width - 101px; height: 33px; text: task.title; color: task.done ? #9699a5 : #eaebf0; font-size: 13px; overflow: elide; vertical-alignment: center; }
+                if task.due != "": Text { x: parent.width - 72px; y: 1px; width: 70px; height: 33px; text: task.due; color: #a8aab5; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+            }
+        }
+        if !ticktick-refreshing && ticktick-max-scroll > 0px: scroll-track := Rectangle {
+            x: parent.width - 9px; y: 52px; width: 4px; height: max(0px,parent.height - 64px);
+            border-radius: 2px; background: #a8b3ff30;
+            Rectangle {
+                width: parent.width;
+                height: min(parent.height,max(24px,parent.height * root.ticktick-page-size / root.ticktick-total-count));
+                y: (parent.height - self.height) * root.ticktick-scroll-offset / root.ticktick-max-scroll;
+                border-radius: 2px; background: #a8b3ffb8;
+            }
         }
     }
     if index < items.length && items[index].ticktick-next: Rectangle {
-        x: 8px; y: 4px; width: parent.width - 16px; height: parent.height - 8px;
-        border-radius: 19px; border-width: 5px; border-color: #8292ff;
-        background: transparent; opacity: root.ticktick-focus-pulse ? 0.18 : 0.06;
-        animate opacity { duration: 700ms; easing: ease-in-out; }
-    }
-    if index < items.length && items[index].ticktick-next: Rectangle {
-        x: 12px; y: 8px; width: parent.width - 24px; height: parent.height - 16px;
-        background: root.ticktick-focus-pulse ? #303e66 : #222d50;
-        border-radius: 14px; border-width: root.ticktick-focus-pulse ? 3px : 2px; border-color: root.ticktick-focus-pulse ? #a8b3ff : #6975e8;
-        animate background { duration: 700ms; easing: ease-in-out; }
-        animate border-color { duration: 700ms; easing: ease-in-out; }
-        animate border-width { duration: 700ms; easing: ease-in-out; }
-        Text { x: 8px; y: 0px; width: parent.width - 16px; height: 28px; text: "✦  YOUR FOCUS — START HERE  ✦"; color: #eff0ff; font-size: 16px; font-weight: 700; vertical-alignment: center; horizontal-alignment: center; }
-        Rectangle { x: 8px; y: 32px; width: parent.width - 16px; height: 1px; background: #a8b3ff70; }
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        background: Theme.raised; border-radius: 16px; border-width: Theme.border-width; border-color: Theme.border;
+        clip: true;
+        Rectangle { x: 1px; y: 1px; width: parent.width - 2px; height: 36px; background: Theme.selection; border-radius: 15px; }
+        Rectangle { x: 1px; y: 18px; width: parent.width - 2px; height: 19px; background: Theme.selection; }
+        Text { x: 14px; y: 4px; width: parent.width - 28px; height: 26px; text: "Focus task"; color: Theme.focus; font-size: 13px; font-weight: 700; vertical-alignment: center; }
         if ticktick-refreshing: Rectangle {
-            x: 2px; y: 45px; width: parent.width * 0.7; height: 16px;
+            x: 16px; y: 52px; width: parent.width * 0.7; height: 16px;
             border-radius: 4px; background: #a8b3ff; opacity: ticktick-pulse ? 0.18 : 0.08;
             animate opacity { duration: 350ms; }
         }
         if !ticktick-refreshing && ticktick-tasks.length == 0: Text {
-            x: 2px; y: 42px; width: parent.width - 4px; height: parent.height - 46px;
+            x: 16px; y: 46px; width: parent.width - 32px; height: parent.height - 54px;
             text: ticktick-error ? ticktick-status : !ticktick-connected ? "Connect TickTick to choose your focus" : "Choose one task. Make it happen.";
-            color: #eff0ff; font-size: 14px; font-weight: 600; wrap: word-wrap; vertical-alignment: center; horizontal-alignment: center;
+            color: Theme.secondary; font-size: 13px; wrap: word-wrap; vertical-alignment: center;
         }
         if !ticktick-refreshing && ticktick-tasks.length > 0: Rectangle {
-            y: 36px; width: parent.width; height: parent.height - 36px;
-            Rectangle { x: 8px; y: (parent.height - 18px) / 2; width: 18px; height: 18px; border-radius: 5px; border-width: 2px; border-color: #b6beff; background: transparent; }
-            Text { x: 36px; y: 0px; width: parent.width - 48px; height: parent.height; text: ticktick-tasks[0].title; color: #ffffff; font-size: 16px; font-weight: 700; overflow: elide; vertical-alignment: center; }
+            x: 12px; y: 42px; width: parent.width - 24px; height: parent.height - 50px;
+            Rectangle { x: 4px; y: 6px; width: 17px; height: 17px; border-radius: 4px; border-width: 1px; border-color: ticktick-tasks[0].done ? Theme.success : Theme.focus; background: ticktick-tasks[0].done ? Theme.success : transparent; }
+            if ticktick-tasks[0].done: Text { x: 5px; y: 5px; width: 15px; height: 18px; text: "✓"; color: Theme.sheet; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+            Text { x: 30px; y: 0px; width: parent.width - 38px; height: 30px; text: ticktick-tasks[0].title; color: Theme.text; font-size: 15px; font-weight: 650; overflow: elide; vertical-alignment: center; }
+            Text { x: 30px; y: 27px; width: parent.width - 38px; height: 18px;
+                text: ticktick-list-name + "  ·  " + (ticktick-tasks[0].priority == 5 ? "High" : ticktick-tasks[0].priority == 3 ? "Medium" : ticktick-tasks[0].priority == 1 ? "Low" : "No priority") + (ticktick-tasks[0].due != "" ? "  ·  " + ticktick-tasks[0].due : "") + (ticktick-tasks[0].tags != "" ? "  ·  " + ticktick-tasks[0].tags : "");
+                color: Theme.secondary; font-size: 11px; overflow: elide; vertical-alignment: center;
+            }
+            Rectangle { x: 4px; y: 49px; width: parent.width - 8px; height: 1px; background: Theme.border; }
+            Flickable {
+                x: 4px; y: 56px; width: parent.width - 8px; height: max(0px,parent.height - 56px);
+                interactive: false; content-width: self.width; content-height: focus-details.preferred-height; content-y: -ticktick-focus-scroll;
+                focus-details := Text {
+                    width: parent.width; height: self.preferred-height;
+                    text: ticktick-tasks[0].details;
+                    color: #d6daea; font-size: 12px; wrap: word-wrap; vertical-alignment: top;
+                }
+            }
         }
         Rectangle {
             x: parent.width / 2 - self.width / 2; y: parent.height / 2 - self.height / 2;
@@ -270,11 +299,12 @@ component PageTile inherits Rectangle {
     }
     if index < items.length && !items[index].ticktick: Text {
         y: parent.height - 28px;
-        width: parent.width;
+        x: 6px;
+        width: parent.width - 12px;
         height: 24px;
         text: folder-preview ? (items[index].folder ? "Add to folder" : "Create folder") : items[index].name;
         color: #e0e3f4;
-        font-size: min(18px,max(12px,min(parent.width,parent.height) * 0.109375));
+        font-size: folder-preview ? 14px : min(14px, max(10px, min(parent.width - 12px, parent.height) * 0.105));
         horizontal-alignment: center;
         overflow: elide;
     }
@@ -310,7 +340,7 @@ component DockTile inherits Rectangle {
 }
 
 export component Launcher inherits Window {
-    pure callback folder-target([AppTile],AppTile,int,int,int) -> int;
+    pure callback folder-target([AppTile],AppTile,int,int,int,int) -> int;
     pure callback hit-cell([AppTile],int,int) -> int;
     pure callback preview-valid([AppTile],string,int,int,int,int,int) -> bool;
     in property <[string]> page-names;
@@ -324,8 +354,8 @@ export component Launcher inherits Window {
     callback widget-action(string,int,int);
     private property <int> placing-widget: -1;
     private property <int> widget-placement-target: -1;
-    private property <int> placing-width: 2 * root.item-size + 16;
-    private property <int> placing-height: 2 * root.item-size + 16;
+    private property <int> placing-width: 2 * root.item-size + root.grid-gap;
+    private property <int> placing-height: 2 * root.item-size + root.grid-gap;
     private property <bool> widget-placement-valid: root.widget-placement-target >= 0
         && root.preview-valid(root.items,"@widget-preview",root.widget-placement-target,root.placing-width,root.placing-height,grid.columns,grid.rows);
     private property <int> known-columns: 0;
@@ -365,7 +395,7 @@ export component Launcher inherits Window {
     private property <bool> resize-valid: root.preview-valid(root.items,root.drag-item.id,root.drag-item.row * grid.columns + root.drag-item.col,root.resize-width,root.resize-height,grid.columns,grid.rows);
     private property <bool> drag-from-dock;
     private property <bool> on-dock: root.dragging && root.drag-y >= dock.absolute-position.y && root.drag-y <= dock.absolute-position.y + dock.height && root.drag-x >= dock.x && root.drag-x <= dock.x + dock.width;
-    private property <int> dock-target: min(root.dock-items.length,max(0,floor((root.drag-x - dock.x) / dock.slot-width) - root.recent-items.length));
+    private property <int> dock-target: min(root.dock-items.length,max(0,floor((root.drag-x - dock-scroll.absolute-position.x + dock-scroll.content-x) / dock.slot-width) - root.recent-items.length));
     private property <bool> placement-valid: root.drop-target >= 0 && root.preview-valid(root.drag-items,root.drag-item.id,root.drop-target,root.drag-item.span-x,root.drag-item.span-y,grid.columns,grid.rows);
     function update-widget-placement(x: length, y: length) {
         let col = floor((x - grid.absolute-position.x) / grid.tile-size);
@@ -423,6 +453,7 @@ export component Launcher inherits Window {
     private property <bool> action-used;
     private property <bool> action-editor-open;
     private property <int> action-columns: max(1, floor((root.width - 160px) / 300px));
+    private property <int> shortcut-columns: max(1, floor((root.width - 160px) / 450px));
     private property <string> prefix-id-draft;
     private property <string> prefix-name-draft;
     private property <string> prefix-token-draft;
@@ -470,15 +501,31 @@ export component Launcher inherits Window {
     in property <[PageItems]> page-previews;
     in-out property <int> page-margin: 10;
     in-out property <int> item-size: 128;
+    in-out property <int> grid-gap: 16;
     private property <int> saved-size: 128;
     private property <int> saved-margin: 10;
+    private property <int> saved-grid-gap: 16;
+    in-out property <[string]> search-engine-names;
+    in-out property <int> default-search-engine-index;
+    private property <int> saved-default-search-engine-index;
     changed settings => {
-        if root.settings { root.saved-size = root.item-size; root.saved-margin = root.page-margin; }
-        else { root.item-size = root.saved-size; root.page-margin = root.saved-margin; }
+        if root.settings {
+            root.saved-size = root.item-size; root.saved-margin = root.page-margin; root.saved-grid-gap = root.grid-gap;
+            root.saved-default-search-engine-index = root.default-search-engine-index;
+        } else {
+            root.item-size = root.saved-size; root.page-margin = root.saved-margin; root.grid-gap = root.saved-grid-gap;
+            root.default-search-engine-index = root.saved-default-search-engine-index;
+        }
     }
-    callback save-appearance(int, int, int, int);
-    callback appearance-saved(int,int);
-    appearance-saved(margin,size) => { root.saved-margin = margin; root.saved-size = size; }
+    callback save-default-search-engine(int);
+    callback default-search-engine-saved(int);
+    default-search-engine-saved(index) => {
+        root.default-search-engine-index = index;
+        root.saved-default-search-engine-index = index;
+    }
+    callback save-appearance(int, int, int, int, int);
+    callback appearance-saved(int,int,int);
+    appearance-saved(margin,size,gap) => { root.saved-margin = margin; root.saved-size = size; root.saved-grid-gap = gap; }
     in-out property <bool> shortcut-recording;
     in-out property <string> shortcut-draft;
     private property <bool> shortcut-editor;
@@ -561,7 +608,7 @@ export component Launcher inherits Window {
     callback dismiss-toast(int);
     Timer { interval: 400ms; running: root.ticktick-loading; triggered => { root.ticktick-pulse = !root.ticktick-pulse; } }
     callback reset-ticktick-scroll();
-    reset-ticktick-scroll => { root.ticktick-scroll-row = 0; }
+    reset-ticktick-scroll => { root.ticktick-scroll-offset = 0px; }
     pure callback ticktick-list-index([TickTickProject], string) -> int;
     pure callback ticktick-list-name([TickTickProject], string) -> string;
     pure callback ticktick-task-count([TickTickTask], string, bool) -> int;
@@ -572,8 +619,13 @@ export component Launcher inherits Window {
     in-out property <string> ticktick-form-error;
     private property <bool> ticktick-create;
     private property <bool> ticktick-show-completed;
+    private property <length> ticktick-focus-scroll;
+    animate ticktick-focus-scroll { duration: 120ms; easing: ease-out; }
     private property <string> ticktick-scroll-widget-id;
-    private property <int> ticktick-scroll-row;
+    private property <length> ticktick-scroll-offset;
+    private property <bool> ticktick-scrollbar-dragging;
+    private property <int> ticktick-scrollbar-index: -1;
+    animate ticktick-scroll-offset { duration: 80ms; easing: ease-out; }
     private property <string> ticktick-popup-widget-id;
     private property <bool> ticktick-popup-options;
     private property <int> ticktick-list-page;
@@ -598,6 +650,7 @@ export component Launcher inherits Window {
     callback load-ticktick();
     callback refresh-ticktick-list(string);
     callback save-ticktick-task(string,string,string,string,string,string,int,string,string);
+    callback ticktick-current-date() -> string;
     callback delete-ticktick-task(string,string);
     callback complete-ticktick-task(string,string);
     callback reopen-ticktick-task(string,string);
@@ -845,16 +898,20 @@ export component Launcher inherits Window {
         root.drag-y = y;
         if index >= 0 && index < (folder ? root.folder-items.length : root.items.length) {
             root.drag-item = folder ? root.folder-items[index] : root.items[index];
-            root.grab-x = folder ? root.item-size * 0.5px : x - grid.absolute-position.x - root.drag-item.col * grid.tile-size - 8px;
-            root.grab-y = folder ? root.item-size * 0.5px : y - grid.absolute-position.y - root.drag-item.row * grid.tile-size - 8px;
+            root.grab-x = folder
+                ? x - folder-grid.absolute-position.x - mod(index, folder-grid.columns) * folder-grid.column-step
+                : x - grid.absolute-position.x - root.drag-item.col * grid.tile-size - root.grid-gap * 0.5px;
+            root.grab-y = folder
+                ? y - folder-grid.absolute-position.y - floor(index / folder-grid.columns) * folder-grid.row-step
+                : y - grid.absolute-position.y - root.drag-item.row * grid.tile-size - root.grid-gap * 0.5px;
         }
     }
     function update-drop() {
         if !root.drag-on-page { return; }
         let x = root.drag-x - grid.absolute-position.x;
         let y = root.drag-y - grid.absolute-position.y;
-        let column = floor((x - root.grab-x - 8px) / grid.tile-size);
-        let row = floor((y - root.grab-y - 8px) / grid.tile-size);
+        let column = floor((x - root.grab-x - root.grid-gap * 0.5px) / grid.tile-size);
+        let row = floor((y - root.grab-y - root.grid-gap * 0.5px) / grid.tile-size);
         let hover-column = floor(x / grid.tile-size);
         let hover-row = floor(y / grid.tile-size);
         let candidate-in-page = column >= 0 && column < grid.columns && row >= 0 && row < grid.rows;
@@ -863,7 +920,7 @@ export component Launcher inherits Window {
         let target = root.hit-cell(root.drag-items,hover-column,hover-row);
         root.drop-target = slot;
         let folder-target = pointer-in-page && !root.on-dock
-            ? root.folder-target(root.drag-items,root.drag-item,column,row,root.merge-target) : -1;
+                ? root.folder-target(root.drag-items,root.drag-item,column,row,root.merge-target,root.grid-gap) : -1;
         let can-merge = folder-target >= 0;
         if can-merge {
             reorder-timer.stop(); root.reorder-ready = false; root.reorder-target = -1;
@@ -905,7 +962,7 @@ export component Launcher inherits Window {
                 || y < folder-panel.absolute-position.y || y > folder-panel.absolute-position.y + folder-panel.height;
             if !root.drag-outside-folder {
                 let column = min(folder-grid.columns - 1, max(0, floor((x - folder-grid.absolute-position.x) / folder-grid.column-step)));
-                let row = max(0, floor((y - folder-grid.absolute-position.y) / 128px));
+                let row = max(0, floor((y - folder-grid.absolute-position.y) / folder-grid.row-step));
                 root.drop-target = min(root.folder-items.length - 1, row * folder-grid.columns + column);
                 return;
             }
@@ -934,7 +991,7 @@ export component Launcher inherits Window {
         if root.dragging {
             let in-page = root.drag-x >= 0px && root.drag-x <= root.width && root.drag-y >= page.absolute-position.y && root.drag-y <= page.absolute-position.y + page.height;
             if root.on-dock {
-                if !root.drag-item.widget && (root.dock-items.length < 8 || root.drag-item.pinned) {
+                if !root.drag-item.widget && (root.dock-items.length < 10 || root.drag-item.pinned) {
                     root.drop-pending = true; root.busy = true;
                     root.drop-item(root.drag-item.id,root.current-page,root.dock-target,"@dock"); return;
                 }
@@ -966,12 +1023,12 @@ export component Launcher inherits Window {
     function handle-ticktick-click(index: int, x: length, y: length) {
         if index < 0 || index >= root.items.length || !root.items[index].ticktick { return; }
         let item = root.items[index];
-        let tile-x = grid.absolute-position.x + item.col * grid.tile-size + 8px;
-        let tile-y = grid.absolute-position.y + item.row * grid.tile-size + 8px;
+        let tile-x = grid.absolute-position.x + item.col * grid.tile-size + root.grid-gap * 0.5px;
+        let tile-y = grid.absolute-position.y + item.row * grid.tile-size + root.grid-gap * 0.5px;
         let local-x = x - tile-x;
         let local-y = y - tile-y;
-        let tile-width = item.span-x * grid.tile-size - 16px;
-        let tile-height = item.span-y * grid.tile-size - 16px;
+        let tile-width = item.span-x * grid.tile-size - root.grid-gap * 1px;
+        let tile-height = item.span-y * grid.tile-size - root.grid-gap * 1px;
         if item.ticktick-next {
             if local-y >= 36px {
                 let first = root.ticktick-visible-tasks(root.ticktick-tasks,"@today",false,0,1);
@@ -988,11 +1045,11 @@ export component Launcher inherits Window {
             }
             return;
         }
-        if local-y < 42px {
-            if local-x >= tile-width - 46px {
+        if local-y < 48px {
+            if local-x >= tile-width - 43px {
                 root.ticktick-popup-options = true;
                 root.ticktick-popup-x = min(tile-x + tile-width - 196px,root.width - 212px);
-            } else if local-x >= tile-width - 80px {
+            } else if local-x >= tile-width - 74px {
                 root.open-ticktick-create(item.ticktick-project-id);
                 return;
             } else {
@@ -1004,10 +1061,12 @@ export component Launcher inherits Window {
             root.ticktick-popup-widget-id = root.items[index].id;
             return;
         }
-        let task-row = floor((local-y - 44px) / 36px);
-        let offset = root.ticktick-scroll-widget-id == item.id ? root.ticktick-scroll-row : 0;
-        let visible = root.ticktick-visible-tasks(root.ticktick-tasks,item.ticktick-project-id,root.ticktick-show-completed,offset,max(0,floor((tile-height - 52px) / 36px)));
-        if local-y >= 44px && task-row >= 0 && task-row < visible.length {
+        let scroll-offset = root.ticktick-scroll-widget-id == item.id ? root.ticktick-scroll-offset : 0px;
+        let scroll-row = floor(scroll-offset / 36px);
+        let scroll-shift = scroll-offset - scroll-row * 36px;
+        let task-row = floor((local-y - 52px + scroll-shift) / 36px);
+        let visible = root.ticktick-visible-tasks(root.ticktick-tasks,item.ticktick-project-id,root.ticktick-show-completed,scroll-row,max(0,floor((tile-height - 68px) / 36px)) + 1);
+        if local-y >= 52px && task-row >= 0 && task-row < visible.length {
             if local-x >= 10px && local-x <= 39px {
                 if root.ticktick-loading { return; }
                 if visible[task-row].done { root.reopen-ticktick-task(visible[task-row].id,visible[task-row].project-id); }
@@ -1019,15 +1078,46 @@ export component Launcher inherits Window {
         let index = root.page-item-at(x,y);
         if index < 0 || index >= root.items.length || !root.items[index].ticktick { return false; }
         let item = root.items[index];
-        if item.ticktick-next { return false; }
+        if item.ticktick-next {
+            root.ticktick-focus-scroll = max(0px, root.ticktick-focus-scroll + (delta < 0px ? 48px : -48px));
+            return true;
+        }
         if root.ticktick-scroll-widget-id != item.id {
             root.ticktick-scroll-widget-id = root.items[index].id;
-            root.ticktick-scroll-row = 0;
+            root.ticktick-scroll-offset = 0px;
         }
         let count = root.ticktick-task-count(root.ticktick-tasks,item.ticktick-project-id,root.ticktick-show-completed);
         let visible = max(0,floor((item.span-y * grid.tile-size - 68px) / 36px));
-        root.ticktick-scroll-row = min(max(0,count - visible),max(0,root.ticktick-scroll-row + (delta < 0px ? 1 : -1)));
+        let max-offset = max(0,count - visible) * 36px;
+        root.ticktick-scroll-offset = min(max-offset,max(0px,root.ticktick-scroll-offset + (delta < 0px ? 36px : -36px)));
         return true;
+    }
+    function ticktick-scrollbar-at(index: int, x: length, y: length) -> bool {
+        if index < 0 || index >= root.items.length || !root.items[index].ticktick || root.items[index].ticktick-next { return false; }
+        let item = root.items[index];
+        let tile-x = grid.absolute-position.x + item.col * grid.tile-size + root.grid-gap * 0.5px;
+        let tile-y = grid.absolute-position.y + item.row * grid.tile-size + root.grid-gap * 0.5px;
+        let tile-width = item.span-x * grid.tile-size - root.grid-gap * 1px;
+        let tile-height = item.span-y * grid.tile-size - root.grid-gap * 1px;
+        let visible = max(1,floor((tile-height - 68px) / 36px));
+        let count = root.ticktick-task-count(root.ticktick-tasks,item.ticktick-project-id,root.ticktick-show-completed);
+        return count > visible && x >= tile-x + tile-width - 16px && x < tile-x + tile-width
+            && y >= tile-y + 52px && y < tile-y + tile-height - 12px;
+    }
+    function set-ticktick-scrollbar(index: int, y: length) {
+        if index < 0 || index >= root.items.length { return; }
+        let item = root.items[index];
+        let tile-y = grid.absolute-position.y + item.row * grid.tile-size + root.grid-gap * 0.5px;
+        let tile-height = item.span-y * grid.tile-size - root.grid-gap * 1px;
+        let visible = max(1,floor((tile-height - 68px) / 36px));
+        let count = root.ticktick-task-count(root.ticktick-tasks,item.ticktick-project-id,root.ticktick-show-completed);
+        if count <= visible { return; }
+        let track-height = max(1px,tile-height - 64px);
+        let thumb-height = min(track-height,max(24px,track-height * visible / count));
+        let travel = max(1px,track-height - thumb-height);
+        let position = min(travel,max(0px,y - tile-y - 52px - thumb-height / 2));
+        root.ticktick-scroll-widget-id = item.id;
+        root.ticktick-scroll-offset = (count - visible) * 36px * position / travel;
     }
     function page-item-at(x: length, y: length) -> int {
         let dx = x - grid.absolute-position.x;
@@ -1037,8 +1127,8 @@ export component Launcher inherits Window {
         if index >= 0 {
             let local-x = dx - root.items[index].col * grid.tile-size;
             let local-y = dy - root.items[index].row * grid.tile-size;
-            return local-x >= 8px && local-x < root.items[index].span-x * grid.tile-size - 8px
-                && local-y >= 8px && local-y < root.items[index].span-y * grid.tile-size - 8px ? index : -1;
+            return local-x >= root.grid-gap * 0.5px && local-x < root.items[index].span-x * grid.tile-size - root.grid-gap * 0.5px
+                && local-y >= root.grid-gap * 0.5px && local-y < root.items[index].span-y * grid.tile-size - root.grid-gap * 0.5px ? index : -1;
         }
         return -1;
     }
@@ -1415,19 +1505,25 @@ export component Launcher inherits Window {
                     property <bool> source-here: root.dragging && index < grid.display-items.length && grid.display-items[index].id == root.drag-item.id;
                     property <int> position: grid.display-items[index].row * grid.columns + grid.display-items[index].col;
                     visible: self.position >= 0 && !grid.display-items[index].pinned;
-                    x: mod(self.position, grid.columns) * grid.tile-size + 8px;
-                    y: floor(self.position / grid.columns) * grid.tile-size + 8px;
-                    width: index < grid.display-items.length ? grid.display-items[index].span-x * grid.tile-size - 16px : root.item-size * 1px;
-                    height: index < grid.display-items.length ? grid.display-items[index].span-y * grid.tile-size - 16px : root.item-size * 1px;
+                    x: mod(self.position, grid.columns) * grid.tile-size + root.grid-gap * 0.5px;
+                    y: floor(self.position / grid.columns) * grid.tile-size + root.grid-gap * 0.5px;
+                    width: index < grid.display-items.length ? grid.display-items[index].span-x * grid.tile-size - root.grid-gap * 1px : root.item-size * 1px;
+                    height: index < grid.display-items.length ? grid.display-items[index].span-y * grid.tile-size - root.grid-gap * 1px : root.item-size * 1px;
                     opacity: self.source-here ? 0.2 : 1;
                     items: grid.display-items; index: index;
+                    ticktick-scroll-offset: index < grid.display-items.length && !grid.display-items[index].ticktick-next && root.ticktick-scroll-widget-id == grid.display-items[index].id ? root.ticktick-scroll-offset : 0px;
+                    ticktick-total-count: index < grid.display-items.length && grid.display-items[index].ticktick && !grid.display-items[index].ticktick-next
+                        ? root.ticktick-task-count(root.ticktick-tasks,grid.display-items[index].ticktick-project-id,root.ticktick-show-completed) : 0;
+                    property <int> ticktick-scroll-row: floor(self.ticktick-scroll-offset / 36px);
+                    ticktick-scroll-shift: self.ticktick-scroll-offset - self.ticktick-scroll-row * 36px;
                     ticktick-tasks: index < grid.display-items.length && grid.display-items[index].ticktick
                         ? root.ticktick-visible-tasks(root.ticktick-tasks,grid.display-items[index].ticktick-next ? "@today" : grid.display-items[index].ticktick-project-id,grid.display-items[index].ticktick-next ? false : root.ticktick-show-completed,
-                            !grid.display-items[index].ticktick-next && root.ticktick-scroll-widget-id == grid.display-items[index].id ? root.ticktick-scroll-row : 0,
-                            grid.display-items[index].ticktick-next ? 1 : max(0,floor((self.height - 52px) / 36px))) : [];
+                            self.ticktick-scroll-row,
+                            grid.display-items[index].ticktick-next ? 1 : max(0,floor((self.height - 68px) / 36px)) + 1) : [];
                     ticktick-next-completion-sequence: root.ticktick-next-completion-sequence;
-                    ticktick-list-name: index < grid.display-items.length && grid.display-items[index].ticktick && !grid.display-items[index].ticktick-next
-                        ? root.ticktick-list-name(root.ticktick-projects,grid.display-items[index].ticktick-project-id) : "";
+                    ticktick-focus-scroll: root.ticktick-focus-scroll;
+                    ticktick-list-name: index < grid.display-items.length && grid.display-items[index].ticktick
+                        ? root.ticktick-list-name(root.ticktick-projects,grid.display-items[index].ticktick-next && ticktick-tasks.length > 0 ? ticktick-tasks[0].project-id : grid.display-items[index].ticktick-project-id) : "";
                     ticktick-status: root.ticktick-status; ticktick-connected: root.ticktick-connected; ticktick-refreshing: root.ticktick-refreshing; ticktick-error: root.ticktick-error; ticktick-pulse: root.ticktick-pulse;
                     folder-preview: root.drag-on-page && root.merge-ready && root.merge-target == index;
                     drag-preview-item: root.drag-item;
@@ -1441,18 +1537,18 @@ export component Launcher inherits Window {
                 }
             }
             if root.drag-on-page && !root.resizing && root.merge-target < 0 && !root.on-dock && root.drop-target >= 0: Rectangle {
-                x: grid.x + mod(root.drop-target,grid.columns) * grid.tile-size + 8px;
-                y: grid.y + floor(root.drop-target/grid.columns) * grid.tile-size + 8px;
-                width: root.drag-item.span-x * grid.tile-size - 16px; height: root.drag-item.span-y * grid.tile-size - 16px;
+                x: grid.x + mod(root.drop-target,grid.columns) * grid.tile-size + root.grid-gap * 0.5px;
+                y: grid.y + floor(root.drop-target/grid.columns) * grid.tile-size + root.grid-gap * 0.5px;
+                width: root.drag-item.span-x * grid.tile-size - root.grid-gap * 1px; height: root.drag-item.span-y * grid.tile-size - root.grid-gap * 1px;
                 border-width: 3px; border-radius: 8px;
                 border-color: root.placement-valid && root.reorder-ready ? #71ddcf : #ee9a8b;
                 background: root.placement-valid && root.reorder-ready ? #71ddcf18 : #ee9a8b18;
             }
             if root.placing-widget >= 0 && root.widget-placement-target >= 0: Rectangle {
-                x: grid.x + mod(root.widget-placement-target,grid.columns) * grid.tile-size + 8px;
-                y: grid.y + floor(root.widget-placement-target/grid.columns) * grid.tile-size + 8px;
-                width: root.placing-width * grid.tile-size - 16px;
-                height: root.placing-height * grid.tile-size - 16px;
+                x: grid.x + mod(root.widget-placement-target,grid.columns) * grid.tile-size + root.grid-gap * 0.5px;
+                y: grid.y + floor(root.widget-placement-target/grid.columns) * grid.tile-size + root.grid-gap * 0.5px;
+                width: root.placing-width * grid.tile-size - root.grid-gap * 1px;
+                height: root.placing-height * grid.tile-size - root.grid-gap * 1px;
                 border-width: 3px; border-radius: 12px;
                 border-color: root.widget-placement-valid ? #71ddcf : #ee9a8b;
                 background: root.widget-placement-valid ? #71ddcf30 : #ee9a8b30;
@@ -1480,25 +1576,31 @@ export component Launcher inherits Window {
                         let index = root.page-item-at(x, y);
                         if event.button == PointerEventButton.left {
                             root.keyboard-grid = false; root.focused-item = index;
-                            root.begin-drag(index, false, x, y);
-                            if index >= 0 && index < root.items.length && root.items[index].widget {
-                                let right = grid.absolute-position.x + (root.items[index].col + root.items[index].span-x) * grid.tile-size - 8px;
-                                let bottom = grid.absolute-position.y + (root.items[index].row + root.items[index].span-y) * grid.tile-size - 8px;
+                            if root.ticktick-scrollbar-at(index,x,y) {
+                                root.ticktick-scrollbar-dragging = true;
+                                root.ticktick-scrollbar-index = index;
+                                root.set-ticktick-scrollbar(index,y);
+                            } else { root.begin-drag(index, false, x, y); }
+                            if !root.ticktick-scrollbar-dragging && index >= 0 && index < root.items.length && root.items[index].widget {
+                                let right = grid.absolute-position.x + (root.items[index].col + root.items[index].span-x) * grid.tile-size - root.grid-gap * 0.5px;
+                                let bottom = grid.absolute-position.y + (root.items[index].row + root.items[index].span-y) * grid.tile-size - root.grid-gap * 0.5px;
                                 root.resizing = x >= right - 32px && x <= right + 8px && y >= bottom - 32px && y <= bottom + 8px;
                                 root.resize-width = root.items[index].span-x; root.resize-height = root.items[index].span-y;
                                 if root.items[index].ticktick && !root.resizing {
-                                    let tile-y = grid.absolute-position.y + root.items[index].row * grid.tile-size + 8px;
-                                    let row = floor((y - tile-y - 44px) / 36px);
-                                    let offset = root.ticktick-scroll-widget-id == root.items[index].id ? root.ticktick-scroll-row : 0;
-                                    let shown = root.ticktick-visible-tasks(root.ticktick-tasks,root.items[index].ticktick-project-id,root.ticktick-show-completed,offset,max(0,floor((root.items[index].span-y * grid.tile-size - 68px) / 36px)));
-                                    let local-x = x - (grid.absolute-position.x + root.items[index].col * grid.tile-size + 8px);
-                                    let tile-width = root.items[index].span-x * grid.tile-size - 16px;
-                                    let header-control = y - tile-y < 42px && (local-x < tile-width - 112px || local-x >= tile-width - 80px);
+                                    let tile-y = grid.absolute-position.y + root.items[index].row * grid.tile-size + root.grid-gap * 0.5px;
+                                    let scroll-offset = root.ticktick-scroll-widget-id == root.items[index].id ? root.ticktick-scroll-offset : 0px;
+                                    let scroll-row = floor(scroll-offset / 36px);
+                                    let scroll-shift = scroll-offset - scroll-row * 36px;
+                                    let row = floor((y - tile-y - 52px + scroll-shift) / 36px);
+                                    let shown = root.ticktick-visible-tasks(root.ticktick-tasks,root.items[index].ticktick-project-id,root.ticktick-show-completed,scroll-row,max(0,floor((root.items[index].span-y * grid.tile-size - 68px) / 36px)) + 1);
+                                    let local-x = x - (grid.absolute-position.x + root.items[index].col * grid.tile-size + root.grid-gap * 0.5px);
+                                    let tile-width = root.items[index].span-x * grid.tile-size - root.grid-gap * 1px;
+                                    let header-control = y - tile-y < 48px && (local-x < tile-width - 74px || local-x >= tile-width - 43px);
                                     // The focus task row is a control too:
                                     // the checkbox completes it and the title opens it.
                                     root.ticktick-control-pressed = root.items[index].ticktick-next
-                                        ? (y - tile-y >= 36px && y - tile-y < root.items[index].span-y * grid.tile-size - 8px)
-                                        : header-control || (y - tile-y >= 44px && row >= 0 && row < shown.length);
+                                        ? (y - tile-y >= 36px && y - tile-y < root.items[index].span-y * grid.tile-size - root.grid-gap * 0.5px)
+                                        : header-control || (y - tile-y >= 52px && row >= 0 && row < shown.length);
                                 }
                             }
                             root.page-swipe-pressed = index < 0;
@@ -1518,6 +1620,7 @@ export component Launcher inherits Window {
                     }
                     if event.kind == PointerEventKind.move {
                         if root.placing-widget >= 0 { root.update-widget-placement(x,y); }
+                        else if root.ticktick-scrollbar-dragging { root.set-ticktick-scrollbar(root.ticktick-scrollbar-index,y); }
                         else if root.page-swipe-pressed { root.move-page-swipe(x); } else { root.move-drag(x, y); }
                     }
                     if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
@@ -1525,11 +1628,15 @@ export component Launcher inherits Window {
                             root.update-widget-placement(x,y);
                             if root.widget-placement-valid { root.busy = true; root.add-widget(root.placing-widget,root.widget-placement-target); }
                             root.placing-widget = -1; root.widget-placement-target = -1;
+                        } else if root.ticktick-scrollbar-dragging {
+                            root.set-ticktick-scrollbar(root.ticktick-scrollbar-index,y);
+                            root.ticktick-scrollbar-dragging = false; root.ticktick-scrollbar-index = -1;
                         } else if root.page-swipe-pressed { root.move-page-swipe(x); root.end-page-swipe(); }
                         else { root.move-drag(x,y); root.end-drag(); }
                     }
                     if event.kind == PointerEventKind.cancel {
                         root.cancel-drag(); root.placing-widget = -1; root.widget-placement-target = -1; root.page-swipe-pressed = false; root.page-dragging = false; root.page-drag-offset = 0px;
+                        root.ticktick-scrollbar-dragging = false; root.ticktick-scrollbar-index = -1;
                     }
                 }
             }
@@ -1552,52 +1659,70 @@ export component Launcher inherits Window {
     }
     dock := Rectangle {
         x: (root.width - self.width) / 2; y: root.height - 120px;
-        width: min(root.width - 96px, max(104px, (root.recent-items.length + root.dock-items.length) * 100px + 4px)); height: 94px;
-        property <length> slot-width: (self.width - 4px) / max(1, root.recent-items.length + root.dock-items.length);
-        Image { x: -1px; y: -1px; width: parent.width + 2px; height: parent.height + 2px; source: @image-url("assets/dock.svg"); image-fit: fill; }
-        for item[index] in root.recent-items: DockTile {
-            x: 8px + index * dock.slot-width; y: 6px; width: dock.slot-width - 12px;
-            item: item; enabled: !root.busy; recent: true;
-            open => { root.busy = true; root.open-dock-item(item.page, item.index, item.folder-app-index); }
-            gesture(kind,x,y) => {
-                if kind == 0 { root.begin-drag(0,false,x,y); root.drag-from-dock = true; root.dock-source-index = index; root.drag-item = item; root.grab-x = 32px; root.grab-y = 32px; }
-                if kind == 1 { root.move-drag(x,y); }
-                if kind == 2 { root.end-drag(); }
-                if kind == 3 { root.cancel-drag(); }
+        property <length> content-width: (root.recent-items.length + root.dock-items.length) * 100px + 16px;
+        width: min(root.width - 48px, max(360px, min(1400px, self.content-width + 64px))); height: 98px;
+        background: #171a29e8; border-width: 1px; border-color: #a6b1ed44; border-radius: 32px;
+        property <bool> overflowing: self.content-width > self.width - 16px;
+        property <length> scroll-inset: 8px;
+        property <length> slot-width: 100px;
+        dock-scroll := Flickable {
+            x: dock.scroll-inset; y: 4px; width: parent.width - 2 * dock.scroll-inset; height: 88px;
+            content-width: max(self.width, dock.content-width); content-height: self.height;
+            mouse-drag-pan-enabled: true;
+            for item[index] in root.recent-items: DockTile {
+                x: 8px + index * dock.slot-width; y: 4px; width: 88px;
+                item: item; enabled: !root.busy; recent: true;
+                open => { root.busy = true; root.open-dock-item(item.page, item.index, item.folder-app-index); }
+                gesture(kind,x,y) => {
+                    if kind == 0 { root.begin-drag(0,false,x,y); root.drag-from-dock = true; root.dock-source-index = index; root.drag-item = item; root.grab-x = 32px; root.grab-y = 32px; }
+                    if kind == 1 { root.move-drag(x,y); }
+                    if kind == 2 { root.end-drag(); }
+                    if kind == 3 { root.cancel-drag(); }
+                }
+                context-menu(recent, id, x, y) => {
+                    root.context-index = -1; root.dock-context = recent ? "recent" : "pinned";
+                    root.context-id = id; root.context-x = x; root.context-y = y;
+                }
             }
-            context-menu(recent, id, x, y) => {
-                root.context-index = -1; root.dock-context = recent ? "recent" : "pinned";
-                root.context-id = id; root.context-x = x; root.context-y = y;
+            for item[index] in root.dock-items: DockTile {
+                property <int> compact: index - (root.drag-item.pinned && index > root.dock-source-index ? 1 : 0);
+                property <int> position: root.on-dock && root.drag-item.id != item.id ? self.compact + (self.compact >= root.dock-target ? 1 : 0) : index;
+                opacity: root.dragging && root.drag-item.id == item.id ? 0.2 : 1;
+                x: 8px + (root.recent-items.length + self.position) * dock.slot-width; y: 4px; width: 88px;
+                animate x { duration: 200ms; easing: ease-out; }
+                item: item; enabled: !root.busy; recent: false;
+                open => { root.busy = true; root.open-dock-item(item.page, item.index, item.folder-app-index); }
+                gesture(kind,x,y) => {
+                    if kind == 0 { root.begin-drag(0,false,x,y); root.drag-from-dock = true; root.dock-source-index = index; root.drag-item = item; root.grab-x = 32px; root.grab-y = 32px; }
+                    if kind == 1 { root.move-drag(x,y); }
+                    if kind == 2 { root.end-drag(); }
+                    if kind == 3 { root.cancel-drag(); }
+                }
+                context-menu(recent, id, x, y) => {
+                    root.context-index = -1; root.dock-context = recent ? "recent" : "pinned";
+                    root.context-id = id; root.context-x = x; root.context-y = y;
+                }
+            }
+            if root.recent-items.length > 0 && root.dock-items.length > 0: Rectangle {
+                x: 8px + root.recent-items.length * dock.slot-width - 1px;
+                y: 20px; width: 1px; height: 52px; background: #a6b1ed40;
             }
         }
-        for item[index] in root.dock-items: DockTile {
-            property <int> compact: index - (root.drag-item.pinned && index > root.dock-source-index ? 1 : 0);
-            property <int> position: root.on-dock && root.drag-item.id != item.id ? self.compact + (self.compact >= root.dock-target ? 1 : 0) : index;
-            opacity: root.dragging && root.drag-item.id == item.id ? 0.2 : 1;
-            x: 8px + (root.recent-items.length + self.position) * dock.slot-width; y: 6px; width: dock.slot-width - 12px;
-            animate x { duration: 200ms; easing: ease-out; }
-            item: item; enabled: !root.busy; recent: false;
-            open => { root.busy = true; root.open-dock-item(item.page, item.index, item.folder-app-index); }
-            gesture(kind,x,y) => {
-                if kind == 0 { root.begin-drag(0,false,x,y); root.drag-from-dock = true; root.dock-source-index = index; root.drag-item = item; root.grab-x = 32px; root.grab-y = 32px; }
-                if kind == 1 { root.move-drag(x,y); }
-                if kind == 2 { root.end-drag(); }
-                if kind == 3 { root.cancel-drag(); }
-            }
-            context-menu(recent, id, x, y) => {
-                root.context-index = -1; root.dock-context = recent ? "recent" : "pinned";
-                root.context-id = id; root.context-x = x; root.context-y = y;
-            }
+        if dock.overflowing: Rectangle {
+            x: 12px; y: 33px; width: 32px; height: 32px; border-radius: 16px; background: #222942cc;
+            Text { text: "‹"; color: #e0e3f4; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { mouse-cursor: pointer; clicked => { dock-scroll.content-x = max(0px,dock-scroll.content-x - 300px); } }
         }
-        if root.recent-items.length > 0 && root.dock-items.length > 0: Rectangle {
-            x: 2px + root.recent-items.length * dock.slot-width;
-            y: 19px; width: 1px; height: 52px; background: #a6b1ed26;
+        if dock.overflowing && dock-scroll.content-x < dock-scroll.content-width - dock-scroll.width: Rectangle {
+            x: parent.width - 44px; y: 33px; width: 32px; height: 32px; border-radius: 16px; background: #222942cc;
+            Text { text: "›"; color: #e0e3f4; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { mouse-cursor: pointer; clicked => { dock-scroll.content-x = min(dock-scroll.content-width - dock-scroll.width,dock-scroll.content-x + 300px); } }
         }
     }
     if root.on-dock: Rectangle {
-        x: dock.x + (root.recent-items.length + root.dock-target) * dock.slot-width;
+        x: dock-scroll.absolute-position.x + (root.recent-items.length + root.dock-target) * dock.slot-width - dock-scroll.content-x;
         y: dock.y + 8px; width: 4px; height: dock.height - 16px;
-        background: !root.drag-item.widget && (root.dock-items.length < 8 || root.drag-item.pinned) ? #71ddcf : #ee9a8b;
+        background: !root.drag-item.widget && (root.dock-items.length < 10 || root.drag-item.pinned) ? #71ddcf : #ee9a8b;
     }
     Image { x: 48px; y: root.height - 22px; width: 105px; height: 15px; source: @image-url("assets/page-hint.svg"); }
     Image { x: root.width - 160px; y: root.height - 21px; width: 112px; height: 13px; source: @image-url("assets/close-hint.svg"); }
@@ -1638,17 +1763,49 @@ export component Launcher inherits Window {
                 spacing: 8px;
                 AddOption { label: "General"; selected: root.settings-tab == 0; clicked => { root.settings-tab = 0; root.shortcuts-tab = false; root.shortcut-recording = false; } }
                 AddOption { label: "Shortcuts"; selected: root.settings-tab == 1; clicked => { root.settings-tab = 1; root.shortcuts-tab = true; } }
-                AddOption { label: "Prefixes"; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; root.shortcuts-tab = false; } }
-                AddOption { label: "Actions"; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; root.shortcuts-tab = false; } }
+                AddOption { label: "Search bar"; option-width: 120px; selected: root.settings-tab >= 2; clicked => { root.settings-tab = 4; root.shortcuts-tab = false; root.shortcut-recording = false; } }
             }
-            if root.page-count > 1 && root.settings-tab == 0: HorizontalLayout {
-                AddOption { label: "Move page left"; option-width: 150px; enabled: root.current-page > 0; clicked => { root.busy = true; root.reorder-page(-1); } }
-                AddOption { label: "Move page right"; option-width: 150px; enabled: root.current-page + 1 < root.page-count; clicked => { root.busy = true; root.reorder-page(1); } }
+            Flickable {
+                width: root.width - 154px;
+                vertical-stretch: 1;
+                content-width: self.width;
+                content-height: settings-content.preferred-height;
+                settings-content := VerticalLayout {
+                    width: root.width - 154px;
+                    spacing: 16px;
+            if root.settings-tab >= 2: HorizontalLayout {
+                spacing: Theme.space-2;
+                AddOption { label: "General"; selected: root.settings-tab == 4; clicked => { root.settings-tab = 4; } }
+                AddOption { label: "Prefixes"; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; } }
+                AddOption { label: "Actions"; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; } }
             }
             if root.banner != "": Text { text: root.banner; color: Theme.error; wrap: word-wrap; }
             if root.settings-tab == 0: VerticalLayout {
-            horizontal-stretch: 1; vertical-stretch: 1;
+            horizontal-stretch: 1;
             spacing: 16px;
+            Text { text: "Home Screen"; color: Theme.text; font-size: Theme.type-title; font-weight: 600; }
+            HorizontalLayout {
+                spacing: 12px;
+                Text { text: "Page margin (px)"; color: Theme.text; vertical-alignment: center; }
+                SpinBox { minimum: 0; maximum: 64; value <=> root.page-margin; }
+                Text { text: "Item Gap (px)"; color: Theme.text; vertical-alignment: center; }
+                SpinBox { minimum: 0; maximum: 64; value <=> root.grid-gap; }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            HorizontalLayout {
+                spacing: Theme.space-3;
+                Text { text: "Home Screen > Item Size"; color: Theme.text; vertical-alignment: center; }
+                Slider { minimum: 80; maximum: 176; value: root.item-size; changed => { root.item-size = round(self.value / 8) * 8; } }
+                Text { text: root.item-size + " px"; color: Theme.text; }
+                AddOption { label: "Reset to default"; option-width: 144px; clicked => { root.item-size = 128; root.grid-gap = 16; } }
+                AddOption { label: "Save"; enabled: !root.busy; clicked => { root.busy = true; root.save-appearance(root.page-margin, root.item-size, root.grid-gap, grid.columns, grid.rows); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                PageTile { width: root.item-size * 1px; height: self.width; items: root.items; index: 0; }
+                Text { text: "Live preview · " + grid.columns + " columns × " + grid.rows + " rows. Save reflows displaced items; Back cancels unsaved sizing."; wrap: word-wrap; color: Theme.secondary; }
+            }
             Text { text: "TickTick account"; color: #e0e3f4; font-size: 16px; }
             AddField { label: "Personal API token"; placeholder: "Paste a replacement token"; text <=> root.ticktick-token-draft; secret: true; }
             HorizontalLayout {
@@ -1658,34 +1815,30 @@ export component Launcher inherits Window {
                 Text { text: root.ticktick-connected ? "Connected" : "Not connected"; color: Theme.secondary; vertical-alignment: center; }
             }
             Text { text: root.ticktick-status; color: Theme.secondary; wrap: word-wrap; font-size: 12px; }
+            Text { text: "Data"; color: Theme.text; font-size: Theme.type-title; font-weight: 600; }
             HorizontalLayout {
                 spacing: 10px;
-                AddOption { label: "Delete page"; option-width: 132px; destructive: true; enabled: root.page-count > 1 && !root.busy; clicked => { root.confirm-delete-page(); } }
-                AddOption { label: "Add page"; option-width: 132px; enabled: root.page-count < 9 && !root.busy; clicked => { root.busy = true; root.add-page(); root.settings = false; } }
                 AddOption { label: "Refresh installed apps"; option-width: 190px; enabled: !root.busy; clicked => { root.busy = true; root.refresh-installed-apps(); } }
                 AddOption { label: "Export data"; option-width: 132px; enabled: !root.busy; clicked => { root.busy = true; root.data-busy = true; root.data-status = ""; root.transfer-data(false); } }
                 AddOption { label: "Import data"; option-width: 132px; enabled: !root.busy; clicked => { root.busy = true; root.data-busy = true; root.data-status = ""; root.transfer-data(true); } }
             }
             if root.data-status != "": Text { text: root.data-status; color: Theme.secondary; wrap: word-wrap; font-size: 12px; }
-            HorizontalLayout {
-                spacing: 12px;
-                Text { text: "Page margin (px)"; color: Theme.text; vertical-alignment: center; }
-                SpinBox { minimum: 0; maximum: 64; value <=> root.page-margin; }
-                Text { text: "Home Screen > Item Size"; color: Theme.text; vertical-alignment: center; }
-                Slider { minimum: 80; maximum: 176; value: root.item-size; changed => { root.item-size = round(self.value / 8) * 8; } }
-                Text { text: root.item-size + " px"; color: Theme.text; }
-                AddOption { label: "Reset to default"; option-width: 144px; clicked => { root.item-size = 128; } }
-                AddOption { label: "Save"; enabled: !root.busy; clicked => { root.busy = true; root.save-appearance(root.page-margin, root.item-size,grid.columns,grid.rows); } }
-                Rectangle { horizontal-stretch: 1; }
-            }
-            HorizontalLayout {
-                spacing: 12px;
-                PageTile { width: root.item-size * 1px; height: self.width; items: root.items; index: 0; }
-                Text { text: "Live preview · " + grid.columns + " columns × " + grid.rows + " rows. Save reflows displaced items; Back cancels unsaved sizing."; wrap: word-wrap; color: Theme.secondary; }
-            }
             Text { text: root.installed-status; color: #a7adc7; }
+            }
+            if root.settings-tab == 4: VerticalLayout {
+                spacing: Theme.space-4;
             HorizontalLayout {
-                horizontal-stretch: 1; vertical-stretch: 1; spacing: 20px;
+                spacing: 12px;
+                Text { text: "Search engine when no items match"; color: Theme.text; vertical-alignment: center; }
+                ComboBox { model: root.search-engine-names; current-index <=> root.default-search-engine-index; enabled: !root.busy; }
+                AddOption {
+                    label: "Save"; primary: true;
+                    enabled: !root.busy && root.default-search-engine-index != root.saved-default-search-engine-index;
+                    clicked => { root.busy = true; root.save-default-search-engine(root.default-search-engine-index); }
+                }
+            }
+            HorizontalLayout {
+                horizontal-stretch: 1; spacing: 20px;
                 VerticalLayout {
                     width: (root.width - 172px) / 2; horizontal-stretch: 1; spacing: 10px; alignment: start;
                     Text { text: "File search paths"; color: #e0e3f4; font-size: 16px; font-weight: 600; }
@@ -1730,26 +1883,38 @@ export component Launcher inherits Window {
                 spacing: 16px;
                 Text { text: "Choose an action, then record its shortcut. Changes are saved automatically."; color: Theme.secondary; font-size: 13px; }
                 Flickable {
-                    vertical-stretch: 1; content-height: root.shortcut-groups.length * 60px; content-width: self.width;
+                    height: max(300px, ceil(root.shortcut-groups.length / root.shortcut-columns) * 164px);
+                    content-height: max(self.height, ceil(root.shortcut-groups.length / root.shortcut-columns) * 164px);
+                    content-width: self.width;
                     for group[index] in root.shortcut-groups: Rectangle {
-                        y: index * 60px; width: parent.width; height: 52px;
-                        background: #ffffff05; border-radius: 8px;
-                        Text { x: 12px; width: 260px; height: parent.height; vertical-alignment: center; text: root.shortcut-actions[group.action]; color: Theme.text; font-size: 14px; }
+                        x: mod(index, root.shortcut-columns) * ((parent.width - (root.shortcut-columns - 1) * 12px) / root.shortcut-columns + 12px);
+                        y: floor(index / root.shortcut-columns) * 164px;
+                        width: (parent.width - (root.shortcut-columns - 1) * 12px) / root.shortcut-columns;
+                        height: 152px;
+                        background: Theme.field; border-color: Theme.border; border-width: 1px; border-radius: 10px;
+                        Text { x: 12px; y: 8px; width: parent.width - 100px; height: 32px; vertical-alignment: center; text: root.shortcut-actions[group.action]; color: Theme.text; font-size: 14px; wrap: word-wrap; }
+                        AddOption { x: parent.width - 80px; y: 8px; label: "Add"; option-width: 68px; enabled: !root.busy; clicked => { root.shortcut-action = group.action; root.shortcut-existing = ""; root.shortcut-draft = ""; root.shortcut-editor = true; } }
                         Flickable {
-                            x: 270px; width: parent.width - 370px; height: parent.height;
-                            content-width: max(self.width, group.entries.length * 360px); content-height: self.height;
+                            x: 10px; y: 48px; width: parent.width - 20px; height: 92px;
+                            content-width: max(self.width, group.entries.length * 240px); content-height: self.height;
                             HorizontalLayout {
-                                spacing: 8px; width: max(group.entries.length * 360px, 200px); height: parent.height;
+                                spacing: 8px; width: max(parent.width, group.entries.length * 240px); height: parent.height;
                                 if group.entries.length == 0: Text { text: "No shortcut assigned"; color: Theme.secondary; vertical-alignment: center; }
-                                for binding in group.entries: HorizontalLayout {
-                                    spacing: 6px; alignment: center; height: parent.height;
-                                    Text { text: binding.keys; color: #a8b3ff; vertical-alignment: center; }
-                                    AddOption { label: "Change"; option-width: 76px; enabled: !root.busy; clicked => { root.shortcut-action = binding.action; root.shortcut-existing = binding.keys; root.shortcut-draft = binding.keys; root.shortcut-editor = true; } }
-                                    AddOption { label: root.shortcut-delete-action == binding.action && root.shortcut-delete-keys == binding.keys ? "Confirm" : "Delete"; option-width: 76px; destructive: true; enabled: !root.busy; clicked => { if root.shortcut-delete-action == binding.action && root.shortcut-delete-keys == binding.keys { root.busy = true; root.shortcut-delete-action = -1; root.delete-shortcut(binding.action, binding.keys); } else { root.shortcut-delete-action = binding.action; root.shortcut-delete-keys = binding.keys; } } }
+                                for binding in group.entries: Rectangle {
+                                    width: 232px; height: 76px; y: 8px;
+                                    background: #ffffff08; border-radius: 8px;
+                                    VerticalLayout {
+                                        padding: 6px; spacing: 4px;
+                                        Text { text: binding.keys; color: #a8b3ff; vertical-alignment: center; }
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            AddOption { label: "Change"; option-width: 82px; enabled: !root.busy; clicked => { root.shortcut-action = binding.action; root.shortcut-existing = binding.keys; root.shortcut-draft = binding.keys; root.shortcut-editor = true; } }
+                                            AddOption { label: root.shortcut-delete-action == binding.action && root.shortcut-delete-keys == binding.keys ? "Confirm" : "Delete"; option-width: 82px; destructive: true; enabled: !root.busy; clicked => { if root.shortcut-delete-action == binding.action && root.shortcut-delete-keys == binding.keys { root.busy = true; root.shortcut-delete-action = -1; root.delete-shortcut(binding.action, binding.keys); } else { root.shortcut-delete-action = binding.action; root.shortcut-delete-keys = binding.keys; } } }
+                                        }
+                                    }
                                 }
                             }
                         }
-                        AddOption { x: parent.width - 78px; y: 4px; label: "Add"; option-width: 64px; enabled: !root.busy; clicked => { root.shortcut-action = group.action; root.shortcut-existing = ""; root.shortcut-draft = ""; root.shortcut-editor = true; } }
                     }
                 }
                 Text { text: "Toggle Orbit is configured in Hyprland. Text editing uses the text field’s shortcuts. Mouse: click to open, right-click for actions, drag to move items, wheel to scroll, Shift + wheel to switch pages."; color: Theme.secondary; font-size: 12px; wrap: word-wrap; }
@@ -1760,23 +1925,30 @@ export component Launcher inherits Window {
                     AddOption { label: "Cancel"; clicked => { root.shortcut-editor = false; root.shortcut-recording = false; } }
                     AddOption { label: "Save"; primary: true; enabled: !root.busy && !root.shortcut-recording && root.shortcut-draft != ""; clicked => { root.busy = true; root.save-shortcut(root.shortcut-action, root.shortcut-existing, root.shortcut-draft); } }
                 }
-                AddOption { label: "Add shortcut"; option-width: 144px; enabled: !root.busy; clicked => { root.shortcut-delete-action = -1; root.shortcut-action = 0; root.shortcut-existing = ""; root.shortcut-draft = ""; root.shortcut-editor = true; } }
             }
             if root.settings-tab == 2: VerticalLayout {
                 spacing: 12px;
-                Text { text: "Each Action can have several Tokens. Edit them together, or add a separate Prefix below."; color: Theme.secondary; wrap: word-wrap; }
+                Text { text: "Prefixes route a Token to an Action."; color: Theme.secondary; wrap: word-wrap; }
                 Flickable {
-                    vertical-stretch: 1; content-height: max(self.height, root.user-actions.length * 52px); content-width: self.width;
-                    for action[index] in root.user-actions: HorizontalLayout {
-                        y: index * 52px; height: 44px; spacing: 8px;
-                        Text { width: 180px; text: action.name; color: Theme.text; vertical-alignment: center; }
-                        Text { horizontal-stretch: 1; text: action.tokens == "" ? "No Tokens" : action.tokens; color: #a8b3ff; vertical-alignment: center; overflow: elide; }
-                        AddOption { label: "Edit Tokens"; option-width: 112px; enabled: !root.busy; clicked => {
-                            root.action-id-draft = action.id; root.action-name-draft = action.name; root.action-kind-draft = action.kind;
-                            root.action-source-draft = action.source; root.action-description-draft = action.description;
-                            root.action-tokens-draft = action.tokens; root.action-used = action.referenced;
-                            root.action-editor-open = true; root.settings-tab = 3;
-                        } }
+                    height: max(144px, ceil(root.prefixes.length / root.action-columns) * 132px);
+                    content-height: max(self.height, ceil(root.prefixes.length / root.action-columns) * 132px);
+                    content-width: self.width;
+                    for prefix[index] in root.prefixes: Rectangle {
+                        x: mod(index, root.action-columns) * ((parent.width - (root.action-columns - 1) * 12px) / root.action-columns + 12px);
+                        y: floor(index / root.action-columns) * 132px;
+                        width: (parent.width - (root.action-columns - 1) * 12px) / root.action-columns;
+                        height: 120px;
+                        background: Theme.field; border-color: Theme.border; border-width: 1px; border-radius: 10px;
+                        Text { x: 12px; y: 8px; width: parent.width - 24px; height: 24px; text: prefix.name; color: Theme.text; font-size: 15px; font-weight: 600; overflow: elide; }
+                        Text { x: 12px; y: 34px; width: parent.width - 24px; height: 20px; text: prefix.token + "  →  " + prefix.action-name; color: #a8b3ff; font-size: 13px; overflow: elide; }
+                        HorizontalLayout {
+                            x: 10px; y: 66px; spacing: 6px;
+                            AddOption { label: "Edit"; option-width: 72px; enabled: !root.busy; clicked => {
+                                root.prefix-id-draft = prefix.id; root.prefix-name-draft = prefix.name;
+                                root.prefix-token-draft = prefix.token; root.prefix-action-index = prefix.action-index;
+                            } }
+                            AddOption { label: "Delete"; option-width: 76px; destructive: true; enabled: !root.busy; clicked => { root.busy = true; root.delete-prefix(prefix.id); } }
+                        }
                     }
                 }
                 HorizontalLayout {
@@ -1791,14 +1963,14 @@ export component Launcher inherits Window {
                 }
             }
             if root.settings-tab == 3: VerticalLayout {
-                vertical-stretch: 1; spacing: 12px;
+                spacing: 12px;
                 if !root.action-editor-open: HorizontalLayout {
                     Text { text: "Choose an Action to edit it, or create a new one."; color: Theme.secondary; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
                     AddOption { label: "New Action"; option-width: 132px; primary: true; enabled: !root.busy; clicked => { root.action-id-draft = ""; root.action-name-draft = ""; root.action-kind-draft = "Shell"; root.action-source-draft = ""; root.action-description-draft = ""; root.action-tokens-draft = ""; root.action-used = false; root.action-editor-open = true; } }
                 }
                 if !root.action-editor-open: Flickable {
-                    vertical-stretch: 1; content-height: max(self.height, ceil(root.user-actions.length / root.action-columns) * 160px); content-width: self.width;
+                    height: max(320px, ceil(root.user-actions.length / root.action-columns) * 160px); content-height: max(self.height, ceil(root.user-actions.length / root.action-columns) * 160px); content-width: self.width;
                     for action[index] in root.user-actions: Rectangle {
                         x: mod(index, root.action-columns) * ((parent.width - (root.action-columns - 1) * 12px) / root.action-columns + 12px);
                         y: floor(index / root.action-columns) * 160px;
@@ -1867,6 +2039,8 @@ export component Launcher inherits Window {
                     Rectangle { vertical-stretch: 1; }
                 }
             }
+                }
+            }
             HorizontalLayout {
                 AddOption { label: "Back"; option-width: 96px; clicked => { root.search-path-editor = false; root.settings = false; } }
             }
@@ -1886,7 +2060,7 @@ export component Launcher inherits Window {
                 AddOption { label: "Refresh List"; option-width: 208px; enabled: !root.ticktick-loading; clicked => {
                     root.refresh-ticktick-list(root.ticktick-selected-project(root.ticktick-popup-widget-id));
                 } }
-                AddOption { label: root.ticktick-show-completed ? "Hide completed" : "Show completed"; option-width: 208px; clicked => { root.ticktick-show-completed = !root.ticktick-show-completed; root.ticktick-scroll-row = 0; root.ticktick-popup-widget-id = ""; } }
+                AddOption { label: root.ticktick-show-completed ? "Hide completed" : "Show completed"; option-width: 208px; clicked => { root.ticktick-show-completed = !root.ticktick-show-completed; root.ticktick-scroll-offset = 0px; root.ticktick-popup-widget-id = ""; } }
             }
             for row in 6: Rectangle {
                 visible: !root.ticktick-popup-options && row + root.ticktick-list-page < root.ticktick-views.length;
@@ -1894,7 +2068,7 @@ export component Launcher inherits Window {
                 background: project-touch.has-hover ? #ffffff14 : transparent; border-radius: 5px;
                 Text { x: 10px; width: parent.width - 20px; height: parent.height; text: row + root.ticktick-list-page < root.ticktick-views.length ? root.ticktick-views[row + root.ticktick-list-page].name : ""; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; }
                 project-touch := TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => {
-                    if row + root.ticktick-list-page < root.ticktick-views.length { root.select-ticktick-list(root.ticktick-popup-widget-id,root.ticktick-views[row + root.ticktick-list-page].id); root.ticktick-scroll-row = 0; root.ticktick-popup-widget-id = ""; }
+                    if row + root.ticktick-list-page < root.ticktick-views.length { root.select-ticktick-list(root.ticktick-popup-widget-id,root.ticktick-views[row + root.ticktick-list-page].id); root.ticktick-scroll-offset = 0px; root.ticktick-popup-widget-id = ""; }
                 } }
             }
             if !root.ticktick-popup-options && root.ticktick-views.length > 6: Rectangle {
@@ -1941,7 +2115,14 @@ export component Launcher inherits Window {
                     VerticalLayout { spacing: 4px; Text { text: "Priority"; color: Theme.text; font-size: 13px; } ComboBox { model: ["None", "Low", "Medium", "High"]; current-index <=> root.ticktick-priority; enabled: !root.ticktick-loading; } }
                     AddField { label: "Tags · comma separated"; placeholder: "work, urgent"; text <=> root.ticktick-tags; enabled: !root.ticktick-loading; }
                 }
-                if !root.ticktick-create: AddField { label: "Due date · YYYY-MM-DD"; placeholder: "YYYY-MM-DD or blank"; text <=> root.ticktick-due-date; enabled: !root.ticktick-loading; }
+                if !root.ticktick-create: HorizontalLayout {
+                    spacing: 10px;
+                    AddField { label: "Due date · YYYY-MM-DD"; placeholder: "YYYY-MM-DD or blank"; text <=> root.ticktick-due-date; enabled: !root.ticktick-loading; }
+                    VerticalLayout {
+                        Rectangle { vertical-stretch: 1; }
+                        AddOption { label: "Today"; option-width: 76px; enabled: !root.ticktick-loading; clicked => { root.ticktick-due-date = root.ticktick-current-date(); } }
+                    }
+                }
                 if root.ticktick-form-error != "": Text { text: root.ticktick-form-error; color: Theme.error; font-size: 12px; wrap: word-wrap; }
                 HorizontalLayout {
                     spacing: 8px;
@@ -2004,11 +2185,15 @@ export component Launcher inherits Window {
         Rectangle {
             x: max(0px, min(root.context-x, parent.width - self.width));
             y: max(0px, min(root.context-y, parent.height - self.height));
-            width: 200px; height: root.context-index >= 0 ? (root.items[root.context-index].widget ? 380px : 198px) : 64px;
+            width: 200px; height: root.page-context ? 256px : root.context-index >= 0 ? (root.items[root.context-index].widget ? 380px : 208px) : 64px;
             background: Theme.sheet; border-radius: 16px; border-width: 1px; border-color: Theme.border;
             VerticalLayout {
                 padding: 12px; spacing: 8px;
                 if root.page-context: AddOption { width: 176px; label: "Add item"; clicked => { root.add-item("App"); } }
+                if root.page-context: AddOption { width: 176px; label: "Add page"; enabled: root.page-count < 9 && !root.busy; clicked => { root.page-context = false; root.busy = true; root.add-page(); } }
+                if root.page-context: AddOption { width: 176px; label: "Move page left"; enabled: root.current-page > 0 && !root.busy; clicked => { root.page-context = false; root.busy = true; root.reorder-page(-1); } }
+                if root.page-context: AddOption { width: 176px; label: "Move page right"; enabled: root.current-page + 1 < root.page-count && !root.busy; clicked => { root.page-context = false; root.busy = true; root.reorder-page(1); } }
+                if root.page-context: AddOption { width: 176px; label: "Delete page"; destructive: true; enabled: root.page-count > 1 && !root.busy; clicked => { root.page-context = false; root.confirm-delete-page(); } }
                 if root.context-index >= 0 && root.items[root.context-index].ticktick && !root.items[root.context-index].ticktick-next: AddOption { width: 176px; label: "New task"; clicked => { root.open-ticktick-create(root.items[root.context-index].ticktick-project-id); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Duplicate"; clicked => { root.busy = true; root.duplicate-widget(root.items[root.context-index].id); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Resize · wider";
@@ -2026,7 +2211,7 @@ export component Launcher inherits Window {
                 } }
                 if root.context-index >= 0 && !root.items[root.context-index].widget: AddOption { width: 176px; label: root.items[root.context-index].pinned ? "Unpin" : "Pin"; clicked => { root.busy = true; root.pin-item(root.context-index); root.context-index = -1; } }
                 if root.context-index >= 0: AddOption { width: 176px; label: "Move to Page"; clicked => { root.move-id = root.items[root.context-index].id; root.move-page = root.current-page; root.context-index = -1; } }
-                if root.context-index >= 0: AddOption { width: 176px; label: "Remove from Home"; clicked => {
+                if root.context-index >= 0: AddOption { width: 176px; label: "Delete"; destructive: true; clicked => {
                     root.editing = root.context-index;
                     root.app-name = root.items[root.context-index].name;
                     root.context-index = -1;
@@ -2263,12 +2448,12 @@ export component Launcher inherits Window {
                                     Text { x: 6px; y: 5px; width: parent.width - 12px; height: parent.height - 10px; text: index == 0 ? "Tasks ▾\n☐ Buy milk" : "FOCUS NOW\n☐ Do this now"; color: Theme.text; font-size: 9px; wrap: word-wrap; vertical-alignment: center; }
                                 }
                                 Text { x: 78px; y: 12px; width: parent.width - 174px; height: 24px; text: name; color: Theme.text; font-size: 13px; vertical-alignment: center; }
-                                Text { x: 78px; y: 38px; width: parent.width - 174px; height: 20px; text: index == 0 ? (root.item-size * 2) + " × " + (root.item-size * 2) + " px · choose list" : (root.item-size * 4) + " × " + root.item-size + " px · focus task"; color: Theme.secondary; font-size: 12px; vertical-alignment: center; }
+                                Text { x: 78px; y: 38px; width: parent.width - 174px; height: 20px; text: index == 0 ? (root.item-size * 2) + " × " + (root.item-size * 2) + " px · choose list" : (root.item-size * 4) + " × " + (root.item-size * 2) + " px · focus task"; color: Theme.secondary; font-size: 12px; vertical-alignment: center; }
                                 AddOption { x: parent.width - 158px; y: 16px; label: "Auto"; option-width: 64px; clicked => { root.busy = true; root.add-widget(7 + index,-1); root.sheet = false; } }
                                 AddOption { x: parent.width - 84px; y: 16px; label: "Place"; option-width: 72px; clicked => {
                                     root.placing-widget = 7 + index;
                                     root.placing-width = (index == 0 ? 2 : 4) * root.item-size + 16;
-                                    root.placing-height = (index == 0 ? 2 : 1) * root.item-size + 16;
+                                    root.placing-height = 2 * root.item-size + 16;
                                     root.widget-placement-target = -1; root.sheet = false;
                                 } }
                             }
@@ -2331,14 +2516,10 @@ export component Launcher inherits Window {
                 HorizontalLayout {
                     spacing: 8px;
                     AddOption {
-                        label: root.editing < 0 ? "Cancel" : "Delete";
-                        selected: false;
-                        enabled: root.editing >= 0 ? !root.busy : true;
+                        label: "Cancel";
+                        enabled: !root.busy;
                         horizontal-stretch: 1;
-                        clicked => {
-                            if root.editing < 0 { root.close-top-layer(); }
-                            else { root.banner = ""; root.alert = true; cancel-delete.focus(); }
-                        }
+                        clicked => { root.close-top-layer(); }
                     }
                     Rectangle { horizontal-stretch: 1; }
                     if root.item-type == "Website" || root.item-type == "Folder" || root.item-type == "File" || root.item-type == "Directory" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command")): AddOption {
@@ -2410,7 +2591,7 @@ export component Launcher inherits Window {
             x: root.folder-open ? (parent.width - self.width) / 2 : grid.absolute-position.x + root.items[root.folder-index].col * grid.tile-size;
             y: root.folder-open ? (parent.height - self.height) / 2 : grid.absolute-position.y + root.items[root.folder-index].row * grid.tile-size;
             width: root.folder-open ? min(560px, parent.width - 32px) : 128px;
-            height: root.folder-open ? min(60px + ceil(root.folder-items.length / folder-grid.columns) * 128px, parent.height - 48px) : 128px;
+            height: root.folder-open ? min(60px + ceil(root.folder-items.length / folder-grid.columns) * folder-grid.row-step, parent.height - 48px) : 128px;
             animate x { duration: root.folder-open ? 0ms : 220ms; easing: ease-out; }
             animate y { duration: root.folder-open ? 0ms : 220ms; easing: ease-out; }
             animate width { duration: root.folder-open ? 0ms : 220ms; easing: ease-out; }
@@ -2430,20 +2611,21 @@ export component Launcher inherits Window {
                     content-height: folder-grid.height;
                     folder-grid := Rectangle {
                         width: parent.width;
-                        property <int> columns: max(1, floor((self.width + 16px) / 128px));
-                        property <length> column-step: (self.width + 16px) / self.columns;
-                        height: max(0px, ceil(root.folder-items.length / self.columns) * 128px - 16px);
+                        property <length> row-step: 112px + root.grid-gap * 1px;
+                        property <int> columns: max(1, floor((self.width + root.grid-gap * 1px) / self.row-step));
+                        property <length> column-step: (self.width + root.grid-gap * 1px) / self.columns;
+                        height: max(0px, ceil(root.folder-items.length / self.columns) * self.row-step - root.grid-gap * 1px);
                         for index in root.folder-items.length: Rectangle {
                             property <int> compact-index: index - (index > root.drag-index ? 1 : 0);
                             property <int> position: root.dragging && root.drag-from-folder && !root.drag-outside-folder && root.drop-target >= 0
                                 ? self.compact-index + (self.compact-index >= root.drop-target ? 1 : 0) : index;
                             x: mod(self.position, folder-grid.columns) * folder-grid.column-step;
-                            y: floor(self.position / folder-grid.columns) * 128px;
-                            width: folder-grid.column-step - 16px; height: 112px;
+                            y: floor(self.position / folder-grid.columns) * folder-grid.row-step;
+                            width: folder-grid.column-step - root.grid-gap * 1px; height: 112px;
                             border-radius: 8px;
                             property <bool> hovered: root.folder-open && folder-input.has-hover
-                                && floor(folder-input.mouse-y / 128px) * folder-grid.columns + floor(folder-input.mouse-x / folder-grid.column-step) == self.position
-                                && mod(folder-input.mouse-x, folder-grid.column-step) < folder-grid.column-step - 16px
+                                && floor(folder-input.mouse-y / folder-grid.row-step) * folder-grid.columns + floor(folder-input.mouse-x / folder-grid.column-step) == self.position
+                                && mod(folder-input.mouse-x, folder-grid.column-step) < folder-grid.column-step - root.grid-gap * 1px
                                 && mod(folder-input.mouse-y, 128px) < 112px;
                             background: self.hovered ? #ffffff16 : transparent;
                             opacity: root.dragging && root.drag-from-folder && index == root.drag-index ? 0 : 1;
@@ -2470,7 +2652,7 @@ export component Launcher inherits Window {
                             if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                                 let dx = x - folder-grid.absolute-position.x;
                                 let dy = y - folder-grid.absolute-position.y;
-                                let index = floor(dy / 128px) * folder-grid.columns + floor(dx / folder-grid.column-step);
+                                let index = floor(dy / folder-grid.row-step) * folder-grid.columns + floor(dx / folder-grid.column-step);
                                 root.begin-drag(index >= 0 && index < root.folder-items.length ? index : -1, true, x, y);
                             }
                             if event.kind == PointerEventKind.move { root.move-drag(x, y); }
@@ -2483,28 +2665,11 @@ export component Launcher inherits Window {
         }
     }
     if root.resizing: Rectangle {
-        x: grid.absolute-position.x + root.drag-item.col * grid.tile-size + 8px;
-        y: grid.absolute-position.y + root.drag-item.row * grid.tile-size + 8px;
-        width: root.resize-width * grid.tile-size - 16px; height: root.resize-height * grid.tile-size - 16px;
+        x: grid.absolute-position.x + root.drag-item.col * grid.tile-size + root.grid-gap * 0.5px;
+        y: grid.absolute-position.y + root.drag-item.row * grid.tile-size + root.grid-gap * 0.5px;
+        width: root.resize-width * grid.tile-size - root.grid-gap * 1px; height: root.resize-height * grid.tile-size - root.grid-gap * 1px;
         border-width: 3px; border-radius: 12px; border-color: root.resize-valid ? #71ddcf : #ee9a8b;
         background: #71ddcf18;
-    }
-    if (root.dragging || root.snapping) && !root.resizing: Rectangle {
-        x: root.drag-x - root.grab-x * root.drag-scale;
-        y: root.drag-y - root.grab-y * root.drag-scale;
-        width: (root.drag-item.span-x * 1px - 16px) * root.drag-scale;
-        height: (root.drag-item.span-y * 1px - 16px) * root.drag-scale;
-        Rectangle {
-            x: 0px; y: 6px; width: parent.width; height: parent.height;
-            border-radius: 20px; background: #080812;
-            opacity: root.dragging ? 0.38 : 0;
-            animate opacity { duration: 160ms; easing: ease-out; }
-        }
-        PageTile {
-            width: parent.width; height: parent.height; items: [root.drag-item]; index: 0; hovered: true;
-            opacity: root.merge-ready ? 0.72 : 1;
-            animate opacity { duration: 180ms; easing: ease-out; }
-        }
     }
     alert-backdrop := Rectangle {
         width: root.width; height: root.height;
@@ -2522,7 +2687,6 @@ export component Launcher inherits Window {
                 padding: 24px; spacing: 16px;
                 Text {
                     text: root.items[root.editing].folder ? ("Delete folder '" + root.app-name + "'? Its apps will move to the page.")
-                        : root.items[root.editing].widget ? ("Remove '" + root.app-name + "' from Home?")
                         : ("Delete '" + root.app-name + "' from Orbit?");
                     color: Theme.text; font-size: 17px; wrap: word-wrap;
                 }
@@ -2531,7 +2695,7 @@ export component Launcher inherits Window {
                     spacing: 12px;
                     cancel-delete := AddOption { label: "Cancel"; enabled: !root.busy; clicked => { root.alert = false; } }
                     AddOption {
-                        label: root.items[root.editing].widget ? "Remove Widget" : "Delete"; destructive: true; enabled: !root.busy;
+                        label: "Delete"; destructive: true; enabled: !root.busy;
                         clicked => { root.busy = true; root.delete-item(root.editing); }
                     }
                 }
@@ -2546,5 +2710,22 @@ export component Launcher inherits Window {
         item: toast;
         dismissed(id) => { root.dismiss-toast(id); }
     }
-
+    if (root.dragging || root.snapping) && !root.resizing: Rectangle {
+        x: root.drag-x - root.grab-x * root.drag-scale;
+        y: root.drag-y - root.grab-y * root.drag-scale;
+        // Folder children have no page rectangle; size the preview from the folder tile.
+        width: (root.drag-from-folder ? folder-grid.column-step - root.grid-gap * 1px : root.drag-item.span-x * 1px - root.grid-gap * 1px) * root.drag-scale;
+        height: (root.drag-from-folder ? 112px : root.drag-item.span-y * 1px - root.grid-gap * 1px) * root.drag-scale;
+        Rectangle {
+            x: 0px; y: 6px; width: parent.width; height: parent.height;
+            border-radius: 20px; background: #080812;
+            opacity: root.dragging ? 0.38 : 0;
+            animate opacity { duration: 160ms; easing: ease-out; }
+        }
+        PageTile {
+            width: parent.width; height: parent.height; items: [root.drag-item]; index: 0; hovered: true;
+            opacity: root.merge-ready ? 0.72 : 1;
+            animate opacity { duration: 180ms; easing: ease-out; }
+        }
+    }
 }

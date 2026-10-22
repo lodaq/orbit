@@ -9,7 +9,7 @@
 - `src/platform.rs`: config and Recent file access and atomic writes, detached commands, the Unix socket, single-daemon lock, Hyprland monitors, fullscreen, and window hiding.
 - `ui/assets/`: vector artwork extracted from `doc/orbit-ui/orbit.svg`.
 - `ui/fonts/`: embedded Inter font and its OFL license.
-- `ui/launcher.slint`: the top bar, banner, Prefix badge and search results, scrolling page grid, page dots, Grid Cell Size Settings, Prefixes and Actions Settings, TickTick Widget Gallery and task editor, app and folder sheets, open folder panel, Icon picker, item and empty-space context menus, and delete alert; `build.rs` compiles it.
+- `ui/launcher.slint`: the top bar, banner, Prefix badge and search results, scrolling page grid, page dots, Home Screen Settings, Search bar Settings with General, Prefixes and Actions, TickTick Widget Gallery and task editor, app and folder sheets, open folder panel, Icon picker, item and empty-space context menus, and delete alert; `build.rs` compiles it.
 - `Cargo.toml` and `Cargo.lock`: dependencies and their locked versions. Speed results are in `doc/spec.md`, section 3.
 
 Steps 1–4 are complete. Step 4 adds folders, item drops, page swipes and page creation. Leaving an empty page does not remove it. Step 5 adds Websites, Files, Directories, Actions, Custom command and Installed apps. Pinning and Recent come with the dock in step 6, grid shortcuts in step 7, Settings and appearance in step 8, glyphs in step 9, and packaging in step 10.

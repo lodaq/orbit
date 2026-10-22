@@ -17,7 +17,8 @@ pub fn apply(
     };
     if into == "@dock" {
         if matches!(next.pages[source.0].items[source.1], Item::Widget { .. })
-            || (next.pinned.len() >= 8 && !next.pinned.iter().any(|pin| pin == id))
+            || (next.pinned.len() >= crate::config::PINNED_LIMIT
+                && !next.pinned.iter().any(|pin| pin == id))
         {
             return false;
         }
@@ -37,8 +38,8 @@ pub fn apply(
             .get(id)
             .copied()
             .unwrap_or(crate::spatial::Rect {
-                width: crate::spatial::item_span(1, next.item_size),
-                height: crate::spatial::item_span(1, next.item_size),
+                width: crate::spatial::item_span(1, next.item_size, next.grid_gap),
+                height: crate::spatial::item_span(1, next.item_size, next.grid_gap),
                 ..crate::spatial::Rect::cell(0, next.columns)
             });
         rect.row = target / next.columns;
@@ -257,7 +258,7 @@ mod tests {
         ];
         for page in &config.pages {
             for (index, item) in page.items.iter().enumerate() {
-                let pitch = crate::spatial::cell_pitch(config.item_size);
+                let pitch = crate::spatial::cell_pitch(config.item_size, config.grid_gap);
                 config.positions.insert(
                     item.id().into(),
                     crate::spatial::Rect {

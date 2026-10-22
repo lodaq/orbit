@@ -2,18 +2,30 @@ use crate::config::{Config, Item, Page};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
-const ITEM_GAP: usize = 16;
-
-pub fn cell_pitch(item_size: i32) -> usize {
-    item_size.max(1) as usize + ITEM_GAP
+pub fn cell_pitch(item_size: i32, grid_gap: i32) -> usize {
+    item_size.max(1) as usize + grid_gap.clamp(0, 64) as usize
 }
 
-pub fn item_span(units: usize, item_size: i32) -> usize {
-    units * cell_pitch(item_size)
+pub fn item_span(units: usize, item_size: i32, grid_gap: i32) -> usize {
+    units * cell_pitch(item_size, grid_gap)
 }
 
-pub fn widget_span(units: usize, item_size: i32) -> usize {
-    units * item_size.max(1) as usize + ITEM_GAP
+pub fn widget_span(units: usize, item_size: i32, grid_gap: i32) -> usize {
+    units * item_size.max(1) as usize + grid_gap.clamp(0, 64) as usize
+}
+
+#[cfg(test)]
+mod gap_tests {
+    use super::{cell_pitch, item_span, widget_span};
+
+    #[test]
+    fn item_gap_controls_grid_and_widget_footprints() {
+        assert_eq!(cell_pitch(128, 0), 128);
+        assert_eq!(cell_pitch(128, 24), 152);
+        assert_eq!(item_span(2, 128, 24), 304);
+        assert_eq!(widget_span(2, 128, 24), 280);
+        assert_eq!(cell_pitch(128, 100), 192);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -192,8 +204,8 @@ pub fn reconcile(config: &mut Config) -> Result<(), String> {
                     (1, 1)
                 };
                 let rect = saved.unwrap_or(Rect {
-                    width: widget_span(width, config.item_size),
-                    height: widget_span(height, config.item_size),
+                    width: widget_span(width, config.item_size, config.grid_gap),
+                    height: widget_span(height, config.item_size, config.grid_gap),
                     ..Rect::cell(index, config.columns)
                 });
                 pending.push((page_index, rect, item));
@@ -205,8 +217,12 @@ pub fn reconcile(config: &mut Config) -> Result<(), String> {
     for (origin, mut rect, item) in pending {
         if let Item::Widget { variant, .. } = &item {
             let (min_width, min_height) = WIDGET_MIN_SPANS[*variant];
-            rect.width = rect.width.max(widget_span(min_width, config.item_size));
-            rect.height = rect.height.max(widget_span(min_height, config.item_size));
+            rect.width = rect
+                .width
+                .max(widget_span(min_width, config.item_size, config.grid_gap));
+            rect.height =
+                rect.height
+                    .max(widget_span(min_height, config.item_size, config.grid_gap));
             if rect.width > config.columns || rect.height > config.rows {
                 return Err("A widget does not fit at this Grid Cell Size.".into());
             }
@@ -246,6 +262,7 @@ fn folder_target(
     col: i32,
     row: i32,
     held: i32,
+    gap: i32,
 ) -> i32 {
     use slint::Model;
     if dragged.folder || dragged.widget {
@@ -256,12 +273,11 @@ fn folder_target(
         .enumerate()
         .filter(|(_, item)| !item.pinned && !item.widget && item.id != dragged.id)
         .filter_map(|(index, item)| {
-            let width = (col + dragged.span_x - ITEM_GAP as i32)
-                .min(item.col + item.span_x - ITEM_GAP as i32)
-                - col.max(item.col);
-            let height = (row + dragged.span_y - ITEM_GAP as i32)
-                .min(item.row + item.span_y - ITEM_GAP as i32)
-                - row.max(item.row);
+            let gap = gap.clamp(0, 64);
+            let width =
+                (col + dragged.span_x - gap).min(item.col + item.span_x - gap) - col.max(item.col);
+            let height =
+                (row + dragged.span_y - gap).min(item.row + item.span_y - gap) - row.max(item.row);
             (width > 0 && height > 0)
                 .then_some((index as i32, i64::from(width) * i64::from(height)))
         })
@@ -290,7 +306,7 @@ pub const WIDGET_SPANS: [(usize, usize); 9] = [
     (2, 1),
     (2, 2),
     (2, 2),
-    (4, 1),
+    (4, 2),
 ];
 pub const WIDGET_MIN_SPANS: [(usize, usize); 9] = [
     (2, 1),
@@ -301,7 +317,7 @@ pub const WIDGET_MIN_SPANS: [(usize, usize); 9] = [
     (1, 1),
     (2, 1),
     (2, 2),
-    (2, 1),
+    (4, 1),
 ];
 pub const WIDGET_MAX_SPANS: [(usize, usize); 9] = [
     (128, 128),
@@ -411,35 +427,38 @@ mod tests {
             tile("b", 144),
             tile("c", 288),
         ]));
-        assert_eq!(folder_target(&items, &dragged, 0, 0, -1), -1);
-        assert_eq!(folder_target(&items, &dragged, 16, 0, -1), -1);
-        assert_eq!(folder_target(&items, &dragged, 17, 0, -1), 1);
-        assert_eq!(folder_target(&items, &dragged, 100, 100, -1), 1);
-        assert_eq!(folder_target(&items, &dragged, 100, 128, -1), -1);
-        assert_eq!(folder_target(&items, &dragged, 216, 0, -1), 1);
-        assert_eq!(folder_target(&items, &dragged, 216, 0, 2), 2);
-        assert_eq!(folder_target(&items, &dragged, 217, 0, 1), 2);
+        assert_eq!(folder_target(&items, &dragged, 0, 0, -1, 16), -1);
+        assert_eq!(folder_target(&items, &dragged, 16, 0, -1, 16), -1);
+        assert_eq!(folder_target(&items, &dragged, 17, 0, -1, 16), 1);
+        assert_eq!(folder_target(&items, &dragged, 100, 100, -1, 16), 1);
+        assert_eq!(folder_target(&items, &dragged, 100, 128, -1, 16), -1);
+        assert_eq!(folder_target(&items, &dragged, 216, 0, -1, 16), 1);
+        assert_eq!(folder_target(&items, &dragged, 216, 0, 2, 16), 2);
+        assert_eq!(folder_target(&items, &dragged, 217, 0, 1, 16), 2);
         let mut folder = dragged.clone();
         folder.folder = true;
-        assert_eq!(folder_target(&items, &folder, 144, 0, -1), -1);
+        assert_eq!(folder_target(&items, &folder, 144, 0, -1, 16), -1);
         let mut widget = dragged.clone();
         widget.widget = true;
-        assert_eq!(folder_target(&items, &widget, 144, 0, -1), -1);
+        assert_eq!(folder_target(&items, &widget, 144, 0, -1, 16), -1);
         let mut target = tile("folder", 144);
         target.folder = true;
         let targets = |item| slint::ModelRc::new(slint::VecModel::from(vec![item]));
         assert_eq!(
-            folder_target(&targets(target.clone()), &dragged, 100, 0, -1),
+            folder_target(&targets(target.clone()), &dragged, 100, 0, -1, 16),
             0
         );
         target.widget = true;
         assert_eq!(
-            folder_target(&targets(target.clone()), &dragged, 100, 0, -1),
+            folder_target(&targets(target.clone()), &dragged, 100, 0, -1, 16),
             -1
         );
         target.widget = false;
         target.pinned = true;
-        assert_eq!(folder_target(&targets(target), &dragged, 100, 0, -1), -1);
+        assert_eq!(
+            folder_target(&targets(target), &dragged, 100, 0, -1, 16),
+            -1
+        );
     }
     #[test]
     fn randomized_moves_preserve_invariants_and_preview_purity() {
@@ -582,8 +601,8 @@ pub fn connect(launcher: &crate::Launcher) {
             })
             .map_or(index, |(index, _)| index as i32)
     });
-    launcher.on_folder_target(|items, dragged, col, row, held| {
-        folder_target(&items, &dragged, col, row, held)
+    launcher.on_folder_target(|items, dragged, col, row, held, gap| {
+        folder_target(&items, &dragged, col, row, held, gap)
     });
     launcher.on_hit_cell(|items, col, row| {
         items
@@ -661,9 +680,9 @@ mod persistence_tests {
     #[test]
     fn dock_ownership_reorder_capacity_and_widget_rejection() {
         let mut config = Config::default();
-        config.pages[0].items = (0..9).map(|id| app(&id.to_string())).collect();
+        config.pages[0].items = (0..11).map(|id| app(&id.to_string())).collect();
         reconcile(&mut config).unwrap();
-        for id in 0..8 {
+        for id in 0..10 {
             assert!(crate::item_drop::apply(
                 &mut config,
                 &id.to_string(),
@@ -676,9 +695,9 @@ mod persistence_tests {
         let saved = serde_json::to_string(&config).unwrap();
         assert!(!crate::item_drop::apply(
             &mut config,
-            "8",
+            "10",
             0,
-            8,
+            10,
             "@dock",
             "f".into()
         ));
@@ -687,7 +706,7 @@ mod persistence_tests {
             &mut config,
             "0",
             0,
-            7,
+            9,
             "@dock",
             "f".into()
         ));
@@ -719,8 +738,8 @@ mod persistence_tests {
             max_number: 100,
         });
         reconcile(&mut config).unwrap();
-        config.columns = 3 * cell_pitch(config.item_size);
-        config.rows = 2 * cell_pitch(config.item_size);
+        config.columns = 3 * cell_pitch(config.item_size, config.grid_gap);
+        config.rows = 2 * cell_pitch(config.item_size, config.grid_gap);
         reconcile(&mut config).unwrap();
         assert_eq!(
             config
