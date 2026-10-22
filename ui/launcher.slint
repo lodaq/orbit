@@ -551,13 +551,15 @@ export component Launcher inherits Window {
     activate-search-selection => {
         if root.search-selection >= 0 && root.search-selection < root.search-results.length && !root.busy {
             root.busy = true;
-            root.open-result(root.search-results[root.search-selection].page, root.search-results[root.search-selection].index);
+            let result = root.search-results[root.search-selection];
+            if result.page == -5 { root.search-web(root.search-text,result.id); }
+            else { root.open-result(result.page,result.index); }
         } else if root.search-results.length == 0 && root.search-text != "" && !root.busy {
             root.busy = true;
-            root.search-web(root.search-text);
+            root.search-web(root.search-text,"");
         }
     }
-    callback search-web(string);
+    callback search-web(string,string);
     move-search-selection(direction) => {
         if root.search-results.length == 0 { return; }
         let column = mod(root.search-selection, root.search-columns);
@@ -566,7 +568,7 @@ export component Launcher inherits Window {
         if direction == 2 && root.search-selection >= root.search-columns { root.search-selection -= root.search-columns; }
         if direction == 3 && root.search-selection + root.search-columns < root.search-results.length { root.search-selection += root.search-columns; }
         let top = floor(root.search-selection / root.search-columns) * 164px;
-        let view-height = root.height - 238px;
+        let view-height = root.height - search-bar.y - search-bar.height - 160px;
         if top < root.search-offset { root.search-offset = top; }
         if top + 152px > root.search-offset + view-height { root.search-offset = top + 152px - view-height; }
     }
@@ -1403,25 +1405,45 @@ export component Launcher inherits Window {
     background: #0b0d19;
     Image { width: root.width; height: root.height; source: @image-url("assets/background.svg"); image-fit: fill; }
     Image { x: 48px; y: 40px; width: 90px; height: 32px; source: @image-url("assets/orbit.svg"); }
-    Rectangle {
-        x: (root.width - self.width) / 2; y: 34px; width: min(560px, root.width - 440px); height: 44px;
+    search-bar := Rectangle {
+        x: (root.width - self.width) / 2; y: 34px; width: min(560px, root.width - 440px);
+        height: max(44px,min(176px,search-measure.preferred-height + 24px));
         background: #ffffff04; border-color: #a6b1ed26; border-width: 1px; border-radius: 12px;
         Image { x: 16px; y: 13px; width: 18px; height: 18px; source: @image-url("assets/search.svg"); }
-        Text { x: root.activated-prefix-name == "" ? 45px : 53px + root.activated-prefix-width; y: 0px; height: parent.height; text: root.search-text == "" ? "Search anything" : ""; color: #a7adc7; font-size: 13px; vertical-alignment: center; }
-        search-input := TextInput {
+        Text { x: root.activated-prefix-name == "" ? 45px : 53px + root.activated-prefix-width; y: 0px; height: 44px; text: root.search-text == "" ? "Search anything" : ""; color: Theme.secondary; font-size: Theme.type-control; vertical-alignment: center; }
+        search-measure := Text {
+            visible: false; width: search-scroll.width;
+            text: root.search-text == "" ? " " : root.search-text;
+            font-size: Theme.type-control; wrap: word-wrap;
+        }
+        search-scroll := Flickable {
             x: root.activated-prefix-name == "" ? 45px : 53px + root.activated-prefix-width;
-            y: 0px; width: parent.width - 109px - (root.activated-prefix-name == "" ? 0px : root.activated-prefix-width + 8px); height: parent.height;
-            text <=> root.search-text; color: #e0e4f5; font-size: 13px; vertical-alignment: center;
-            single-line: true;
-            edited => { root.search-selection = 0; root.search-offset = 0px; root.search(self.text); }
-            accepted => { if self.text != "" || root.activated-prefix-id != "" { root.run-activated-prefix(); } }
-            key-pressed(event) => {
-                if event.text == Key.Tab { if root.activated-prefix-id == "" { root.activate-prefix(); } accept; }
-                else if event.text == Key.Space && root.activated-prefix-id == "" {
-                    let matched = root.match-prefix(root.search-text);
-                    if matched.action-id != "" { root.activate-prefix(); accept; } else { reject; }
+            y: 12px; width: parent.width - 109px - (root.activated-prefix-name == "" ? 0px : root.activated-prefix-width + 8px); height: parent.height - 24px;
+            content-width: self.width; content-height: max(self.height,search-measure.preferred-height);
+            search-input := TextInput {
+                width: parent.width; height: max(search-scroll.height,search-measure.preferred-height);
+                text <=> root.search-text; color: Theme.text; font-size: Theme.type-control; vertical-alignment: top;
+                single-line: false; wrap: word-wrap;
+                cursor-position-changed(point) => {
+                    if point.y + search-scroll.content-y < 0px { search-scroll.content-y = -point.y; }
+                    else if point.y + search-scroll.content-y > search-scroll.height - 18px {
+                        search-scroll.content-y = min(0px,max(search-scroll.height - self.height,search-scroll.height - point.y - 18px));
+                    }
                 }
-                else { reject; }
+                edited => { root.search-selection = 0; root.search-offset = 0px; root.search(self.text); }
+                accepted => { if self.text != "" || root.activated-prefix-id != "" { root.run-activated-prefix(); } }
+                key-pressed(event) => {
+                    if event.text == Key.Backspace && self.text == "" && root.activated-prefix-id != "" {
+                        root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); accept;
+                    }
+                    else if event.text == "\n" { if self.text != "" || root.activated-prefix-id != "" { root.run-activated-prefix(); } accept; }
+                    else if event.text == Key.Tab { if root.activated-prefix-id == "" { root.activate-prefix(); } accept; }
+                    else if event.text == Key.Space && root.activated-prefix-id == "" {
+                        let matched = root.match-prefix(root.search-text);
+                        if matched.action-id != "" { root.activate-prefix(); accept; } else { reject; }
+                    }
+                    else { reject; }
+                }
             }
         }
         if root.activated-prefix-name != "": Rectangle {
@@ -1430,7 +1452,7 @@ export component Launcher inherits Window {
             prefix-badge-label := Text { x: 6px; width: parent.width - 12px; height: parent.height; text: root.activated-prefix-name; accessible-label: root.activated-prefix-name; color: #cbd2ff; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
         }
         Rectangle { x: parent.width - 58px; y: 14px; width: 1px; height: 16px; background: #a6b1ed26; }
-        Text { x: parent.width - 45px; height: parent.height; text: "Ctrl K"; color: #7881a4; font-size: 11px; vertical-alignment: center; }
+        Text { x: parent.width - 45px; y: 0px; height: 44px; text: "Ctrl K"; color: #7881a4; font-size: 11px; vertical-alignment: center; }
     }
     for index in 2: Rectangle {
         x: root.width - 132px + index * 48px; y: 36px; width: 36px; height: 40px;
@@ -1727,7 +1749,8 @@ export component Launcher inherits Window {
     Image { x: 48px; y: root.height - 22px; width: 105px; height: 15px; source: @image-url("assets/page-hint.svg"); }
     Image { x: root.width - 160px; y: root.height - 21px; width: 112px; height: 13px; source: @image-url("assets/close-hint.svg"); }
     if root.search-text != "" && !root.settings && root.activated-prefix-id == "": Flickable {
-        x: (root.width - self.width) / 2; y: 104px; width: min(1316px, root.width - 96px); height: root.height - 238px;
+        x: (root.width - self.width) / 2; y: search-bar.y + search-bar.height + 26px;
+        width: min(1316px, root.width - 96px); height: root.height - self.y - 134px;
         content-y <=> root.search-offset;
         content-height: max(self.height, ceil(root.search-results.length / root.search-columns) * 164px);
         for item[index] in root.search-results: Rectangle {
@@ -1737,16 +1760,31 @@ export component Launcher inherits Window {
             background: index == root.search-selection ? #a8b3ff26 : result-hit.has-hover ? #ffffff0c : transparent;
             border-width: index == root.search-selection ? 2px : 0px;
             border-color: #a8b3ff99; border-radius: 16px;
-            ItemIcon { x: (parent.width - 80px) / 2; y: 10px; width: 80px; height: 80px; item: item; }
+            if item.page != -5: ItemIcon { x: (parent.width - 80px) / 2; y: 10px; width: 80px; height: 80px; item: item; }
+            if item.page == -5: Rectangle {
+                x: (parent.width - 80px) / 2; y: 10px; width: 80px; height: 80px;
+                border-radius: 20px; clip: true;
+                background: item.id == "perplexity" ? #000000 : item.id == "qwant-search" ? #202426 : item.id == "ecosia-search" ? #dceb83 : #ffffff;
+                Image {
+                    x: 12px; y: 12px; width: 56px; height: 56px; image-fit: contain;
+                    source: item.id == "perplexity" ? @image-url("assets/search-engines/perplexity.png")
+                        : item.id == "brave-search" ? @image-url("assets/search-engines/brave.png")
+                        : item.id == "google-search" ? @image-url("assets/search-engines/google.png")
+                        : item.id == "duckduckgo-search" ? @image-url("assets/search-engines/duckduckgo.png")
+                        : item.id == "qwant-search" ? @image-url("assets/search-engines/qwant.png")
+                        : item.id == "bing-search" ? @image-url("assets/search-engines/bing.svg")
+                        : item.id == "startpage-search" ? @image-url("assets/search-engines/startpage.png")
+                        : @image-url("assets/search-engines/ecosia.png");
+                }
+            }
             Text { x: 8px; y: 98px; height: 24px; width: parent.width - 16px; text: item.name; color: #e0e3f4; font-size: 13px; horizontal-alignment: center; overflow: elide; }
             if item.page < 0: Text {
                 y: 126px; width: parent.width; height: 18px;
-                text: item.page == -1 ? "Actions" : item.page == -2 ? "Installed apps" : item.page == -3 ? "File" : "Directory";
+                text: item.page == -5 ? (index == 0 ? "Default search engine" : "Search engine") : item.page == -1 ? "Actions" : item.page == -2 ? "Installed apps" : item.page == -3 ? "File" : "Directory";
                 color: #a7adc7; font-size: 11px; horizontal-alignment: center;
             }
             result-hit := TouchArea { mouse-cursor: pointer; enabled: !root.busy; clicked => { root.search-selection = index; root.activate-search-selection(); } }
         }
-        if root.search-results.length == 0: Text { text: "No items found"; color: #a7adc7; }
     }
     if root.settings: Rectangle {
         x: 48px; y: 112px;

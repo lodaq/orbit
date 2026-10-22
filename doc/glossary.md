@@ -139,7 +139,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **TickTick Action** | An Action that creates a TickTick task from the title, due date, priority, tags and list selectors in Search anything text. |
 | **Prefixes** | Settings tab for creating, editing and selecting Prefix Actions. |
 | **Actions** | Settings tab for creating and editing reusable Actions. |
-| **No items found** | Empty search results. |
+| **Default search engine** | The first and initially selected search engine shown when no local items match Search anything. |
 | **Add page** | Creates an empty page from the empty-space Context menu or the + beside the page dots. |
 | **Switch pages** | Footer hint for Left and Right. |
 | **Back to desktop** | Footer hint for Esc. |

@@ -7,7 +7,7 @@
 - `src/recent.rs`: saved Recent order, duplicate removal, and the history limit.
 - `src/daemon.rs`: the resident Slint event loop and toggle delivery.
 - `src/platform.rs`: config and Recent file access and atomic writes, detached commands, the Unix socket, single-daemon lock, Hyprland monitors, fullscreen, and window hiding.
-- `ui/assets/`: vector artwork extracted from `doc/orbit-ui/orbit.svg`.
+- `ui/assets/`: vector artwork extracted from `doc/orbit-ui/orbit.svg`. `search-engines/` contains bundled search engine brand icons and their source list.
 - `ui/fonts/`: embedded Inter font and its OFL license.
 - `ui/launcher.slint`: the top bar, banner, Prefix badge and search results, scrolling page grid, page dots, Home Screen Settings, Search bar Settings with General, Prefixes and Actions, TickTick Widget Gallery and task editor, app and folder sheets, open folder panel, Icon picker, item and empty-space context menus, and delete alert; `build.rs` compiles it.
 - `Cargo.toml` and `Cargo.lock`: dependencies and their locked versions. Speed results are in `doc/spec.md`, section 3.

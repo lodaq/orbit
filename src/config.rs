@@ -540,18 +540,21 @@ impl Config {
             .unwrap_or(0)
     }
 
-    pub fn search_engine_template(&self) -> &str {
+    pub fn search_engine_template(&self, engine: &str) -> &str {
+        let engine = if engine.is_empty() {
+            &self.default_search_engine
+        } else {
+            engine
+        };
         self.user_actions
             .iter()
-            .find(|action| {
-                action.id == self.default_search_engine && action.kind == ActionKind::Url
-            })
+            .find(|action| action.id == engine && action.kind == ActionKind::Url)
             .map(|action| action.source.as_str())
             .filter(|template| template.contains("%s"))
             .or_else(|| {
                 SEARCH_ENGINE_TEMPLATES
                     .iter()
-                    .find(|(id, _)| *id == self.default_search_engine)
+                    .find(|(id, _)| *id == engine)
                     .map(|(_, template)| *template)
             })
             .unwrap_or(SEARCH_ENGINE_TEMPLATES[0].1)
@@ -836,7 +839,7 @@ mod tests {
             serde_json::from_slice(&serde_json::to_vec(&config).unwrap()).unwrap();
         assert_eq!(restored.default_search_engine_index(), 1);
         assert_eq!(
-            restored.search_engine_template(),
+            restored.search_engine_template(""),
             "https://www.google.com/search?q=%s"
         );
     }

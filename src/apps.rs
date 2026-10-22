@@ -55,7 +55,7 @@ enum Action {
     DeleteShortcut(i32, String),
     Page(usize),
     Search(String),
-    SearchWeb(String),
+    SearchWeb(String, String),
     RunPrefix(String, String),
     SaveNamedCommand(String, String, String, String, String, String),
     DeleteNamedCommand(String),
@@ -168,7 +168,7 @@ pub fn connect(launcher: &Launcher) {
             };
             let launching = recent_id.is_some()
                 || matches!(action, Action::OpenResult(page, _) if page < 0)
-                || matches!(action, Action::SearchWeb(_))
+                || matches!(action, Action::SearchWeb(..))
                 || matches!(action, Action::RunPrefix(..));
             let saving = matches!(
                 action,
@@ -370,8 +370,8 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         let _ = sender.send(Action::RunPrefix(action.into(), argument.into()));
     });
     let sender = send.clone();
-    launcher.on_search_web(move |query| {
-        let _ = sender.send(Action::SearchWeb(query.into()));
+    launcher.on_search_web(move |query, engine| {
+        let _ = sender.send(Action::SearchWeb(query.into(), engine.into()));
     });
     let sender = send.clone();
     launcher.on_save_user_action(move |id, name, kind, source, description, tokens| {
@@ -708,8 +708,8 @@ impl Apps {
                 }
                 Ok(())
             }
-            Action::SearchWeb(query) => {
-                let url = url_action_url(self.config.search_engine_template(), &query)?;
+            Action::SearchWeb(query, engine) => {
+                let url = url_action_url(self.config.search_engine_template(&engine), &query)?;
                 open_url(&url).map_err(|error| format!("Couldn't open web search: {error}"))
             }
             Action::SaveDefaultSearchEngine(index) => {
@@ -2270,6 +2270,9 @@ impl Apps {
                     }),
             );
             results.extend(created_items);
+            if results.is_empty() {
+                results = search_engine_results(&self.config);
+            }
         }
         let installed_apps: Vec<_> = self
             .inventory
@@ -2916,6 +2919,23 @@ fn search_path_result(path: PathBuf, directory: bool) -> SearchPathResult {
 }
 
 // Pixel buffers can cross threads; Slint images stay on the interface thread.
+fn search_engine_results(config: &Config) -> Vec<Tile> {
+    let names = Config::search_engine_names();
+    let default = config.default_search_engine_index();
+    std::iter::once(default)
+        .chain((0..names.len()).filter(|index| *index != default))
+        .map(|index| Tile {
+            id: Config::search_engine_id(index).unwrap().into(),
+            name: names[index].into(),
+            page: -5,
+            index: index as i32,
+            app: true,
+            letter: crate::icons::first_letter(names[index]),
+            ..Tile::default()
+        })
+        .collect()
+}
+
 #[derive(Default)]
 struct Tile {
     rect: crate::spatial::Rect,
@@ -3150,6 +3170,21 @@ mod tests {
     }
 
     #[test]
+    fn search_engines_put_the_saved_default_first_without_duplicates() {
+        let mut config = Config::default();
+        for (engine, name) in [("perplexity", "Perplexity"), ("google-search", "Google")] {
+            config.default_search_engine = engine.into();
+            let results = search_engine_results(&config);
+            assert_eq!(results[0].id, engine);
+            assert_eq!(results[0].name, name);
+            let unique: std::collections::HashSet<_> =
+                results.iter().map(|item| &item.id).collect();
+            assert_eq!(results.len(), Config::search_engine_names().len());
+            assert_eq!(unique.len(), results.len());
+        }
+    }
+
+    #[test]
     fn no_result_search_uses_the_saved_search_engine() {
         init_ui_for_test();
         let mut config = Config::default();
@@ -3168,7 +3203,17 @@ mod tests {
         let launcher = Launcher::new().unwrap();
         let opened = std::cell::RefCell::new(Vec::new());
         apps.apply_with_url_opener(
-            Action::SearchWeb("hello world".into()),
+            Action::SearchWeb("hello world".into(), String::new()),
+            &RequestSequence::default(),
+            &launcher.as_weak(),
+            &|url| {
+                opened.borrow_mut().push(url.to_string());
+                Ok(())
+            },
+        )
+        .unwrap();
+        apps.apply_with_url_opener(
+            Action::SearchWeb("Orbit cats & dogs".into(), "perplexity".into()),
             &RequestSequence::default(),
             &launcher.as_weak(),
             &|url| {
@@ -3179,7 +3224,10 @@ mod tests {
         .unwrap();
         assert_eq!(
             opened.into_inner(),
-            ["https://www.google.com/search?q=hello%20world"]
+            [
+                "https://www.google.com/search?q=hello%20world",
+                "https://www.perplexity.ai/search?q=Orbit%20cats%20%26%20dogs"
+            ]
         );
     }
 
@@ -3266,6 +3314,20 @@ mod tests {
             assert!(launcher.get_search_focused());
 
             let window = launcher.window();
+            assert!(crate::shortcuts::handle(
+                &launcher,
+                &Key::Named(NamedKey::Tab),
+                ModifiersState::empty()
+            ));
+            assert_eq!(launcher.get_activated_prefix_name(), name);
+            window.dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: slint::platform::Key::Backspace.into(),
+            });
+            window.dispatch_event(slint::platform::WindowEvent::KeyReleased {
+                text: slint::platform::Key::Backspace.into(),
+            });
+            assert_eq!(launcher.get_activated_prefix_name(), "");
+            launcher.set_search_text(token.into());
             assert!(crate::shortcuts::handle(
                 &launcher,
                 &Key::Named(NamedKey::Tab),

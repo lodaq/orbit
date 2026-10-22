@@ -262,3 +262,7 @@ Each step ends with an app that runs on Arch.
 None at the moment.
 
 Settings groups Home Screen sizing, TickTick account and data under General. Search bar contains General (search engine and search paths), Prefixes and Actions. Page creation, deletion and Move page left/right are in the empty-space Context menu. TickTick widgets use the raised surface background.
+
+Search anything wraps long queries and grows vertically, with results below the field. Backspace removes an active Prefix when its query is empty. When no local items match, show all available search engines with the saved default first and selected (Perplexity initially). Clicking an engine or pressing Enter searches the current query with that engine.
+
+Search engine results use locally bundled brand icons in rounded tiles.
