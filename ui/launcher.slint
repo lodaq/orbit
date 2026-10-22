@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
-import { SettingsAddButton, SettingsButton, SettingsField, SettingsCard, SettingsTitle, SettingsDescription, SettingsNav, SettingsTabGroup, SettingsTab, SettingsSwitch, SettingsChip, SettingsStepper, SettingsSelect, AddOption, AddField, SmoothCaret, Kbd } from "controls.slint";
+import { AddItemRow, SettingsAddButton, SettingsButton, SettingsField, SettingsCard, SettingsTitle, SettingsDescription, SettingsNav, SettingsTabGroup, SettingsTab, SettingsSwitch, SettingsChip, SettingsStepper, SettingsSelect, AddOption, AddField, SmoothCaret, Kbd } from "controls.slint";
 import "fonts/inter.ttf";
-import { Button, LineEdit, TextEdit, Palette, ComboBox, SpinBox, Slider } from "std-widgets.slint";
+import { Button, LineEdit, TextEdit, Palette, ComboBox, SpinBox, Slider, CheckBox } from "std-widgets.slint";
 
 export struct ShortcutEntry { action: int, keys: string }
 export struct ShortcutGroup { action: int, entries: [ShortcutEntry] }
@@ -43,6 +43,7 @@ export struct AppTile {
 export struct PageItems { items: [AppTile] }
 
 export struct InstalledAppTile {
+    command: string,
     id: string,
     name: string,
     letter: string,
@@ -452,7 +453,26 @@ export component Launcher inherits Window {
     private property <length> search-cursor-y;
     private property <int> search-edit-generation;
     private property <bool> search-cursor-overlay: root.smooth-cursor && root.launcher-visible && search-input.has-focus && search-input.preedit-text == "";
-    changed search-text => { root.search-edit-generation += 1; }
+    changed search-text => { root.search-edit-generation += 1; root.english-dismissed = false; root.english-changed(); }
+    in property <bool> english-suggestions-enabled;
+    in property <string> english-address: "http://127.0.0.1:11434";
+    private property <string> english-address-draft: root.english-address;
+    in-out property <[string]> english-suggestions;
+    in-out property <string> english-source;
+    in-out property <string> english-status;
+    in-out property <string> english-connection: "English assistance disabled";
+    in-out property <bool> english-loading;
+    private property <bool> english-dismissed;
+    out property <bool> english-active: root.search-editing && !root.english-dismissed && root.english-suggestions-enabled && root.activated-prefix-id == "" && search-input.preedit-text == "";
+    callback english-changed();
+    callback english-configure();
+    callback english-test();
+    callback english-retry();
+    callback english-apply(int);
+    callback save-english(bool, string);
+    changed english-active => { root.english-changed(); }
+    changed english-suggestions-enabled => { root.english-configure(); root.english-changed(); }
+    changed english-address => { root.english-configure(); }
     in-out property <string> banner;
     in property <int> page-count: 1;
     in property <int> current-page;
@@ -747,7 +767,7 @@ export component Launcher inherits Window {
     in-out property <bool> folder-open;
     private property <bool> folder-closing;
     in-out property <bool> busy;
-    private property <bool> sheet;
+    in-out property <bool> sheet;
     private property <bool> alert;
     in-out property <bool> picker;
     private property <int> context-index: -1;
@@ -759,8 +779,8 @@ export component Launcher inherits Window {
     private property <int> editing: -1;
     private property <string> app-name;
     private property <string> command;
-    private property <string> url-or-path;
-    private property <string> item-type: "App";
+    in-out property <string> url-or-path;
+    in-out property <string> item-type: "App";
     in-out property <string> icon-value;
     in-out property <string> svg-draft;
     in-out property <string> letter-draft;
@@ -791,7 +811,7 @@ export component Launcher inherits Window {
     private property <duration> transition-duration: max(90ms, 170ms * (1 - abs(root.transition-start) / root.page-span));
     private property <bool> custom: true;
     private property <string> app-source: "Custom command";
-    private property <length> sheet-content-width: min(520px, max(220px, root.width - 68px));
+    private property <length> sheet-content-width: min(root.editing < 0 ? 512px : 520px, max(220px, root.width - (root.editing < 0 ? 96px : 68px)));
     private property <string> installed-filter;
     in-out property <string> sheet-status;
     in-out property <string> sheet-operation;
@@ -829,7 +849,34 @@ export component Launcher inherits Window {
     callback add-installed-app(string);
     callback refresh-installed-apps();
     callback filter-installed-apps(string);
-    callback save-website(int, string, string);
+    callback save-website(int, string, string, string, bool);
+    callback preview-website-icon(string);
+    pure callback website-icon-automatic(string) -> bool;
+    in-out property <int> website-icon-session;
+    in-out property <bool> website-auto-icon: true;
+    in-out property <bool> website-icon-loading;
+    in-out property <string> website-icon-status;
+    in-out property <string> website-preview-url;
+    function website-url-changed() {
+        root.url-error = "";
+        if root.website-auto-icon {
+            root.website-preview-url = "";
+            root.icon-preview-present = false;
+            root.icon-value = "";
+            root.icon-letter = "";
+            root.website-icon-loading = root.valid-url(root.url-or-path);
+            root.website-icon-status = root.website-icon-loading ? "Fetching icon…" : "Enter a URL to preview its icon.";
+        }
+    }
+    Timer {
+        interval: 400ms;
+        running: root.sheet && root.item-type == "Website" && root.website-auto-icon && root.valid-url(root.url-or-path) && root.website-preview-url != root.url-or-path;
+        triggered => {
+            root.website-preview-url = root.url-or-path;
+            root.website-icon-loading = true;
+            root.preview-website-icon(root.url-or-path);
+        }
+    }
     callback choose-path(bool);
     callback path-chosen(string);
     path-chosen(path) => { root.url-or-path = path; root.path-error = ""; }
@@ -1250,6 +1297,7 @@ export component Launcher inherits Window {
         search-input.focus();
     }
     close-top-layer => {
+        if english-panel.visible { root.english-dismissed = true; root.english-changed(); return; }
         if root.page-context { root.page-context = false; return; }
         if root.move-id != "" { root.move-id = ""; return; }
         if root.ticktick-confirm-delete { root.ticktick-confirm-delete = false; return; }
@@ -1322,6 +1370,11 @@ export component Launcher inherits Window {
             root.installed-filter = "";
         }
         root.editing = -1;
+        root.website-icon-session += 1;
+        root.website-auto-icon = true;
+        root.website-preview-url = "";
+        root.website-icon-loading = false;
+        root.website-icon-status = "Enter a URL to preview its icon.";
         root.item-type = kind;
         root.custom = true;
         if kind == "App" {
@@ -1349,6 +1402,7 @@ export component Launcher inherits Window {
         root.path-error = "";
         root.icon-error = "";
         root.sheet = true;
+        if kind == "Website" { root.website-url-changed(); }
 
 
     }
@@ -1378,6 +1432,7 @@ export component Launcher inherits Window {
         root.url-error = "";
         root.path-error = "";
         root.sheet-status = "";
+        if root.item-type == "Website" && root.website-auto-icon && root.website-icon-loading { return; }
         if (root.item-type == "Folder" || root.item-type == "Website" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command"))) && !root.valid-name(root.app-name) {
             root.name-error = "Enter a Name.";
             return;
@@ -1397,7 +1452,7 @@ export component Launcher inherits Window {
         root.busy = true;
         root.sheet-operation = "saving";
         if root.item-type == "App" { root.save-app(root.editing, root.app-name, root.command, root.icon-value); }
-        else if root.item-type == "Website" { root.save-website(root.editing, root.app-name, root.url-or-path); }
+        else if root.item-type == "Website" { root.save-website(root.editing, root.app-name, root.url-or-path, root.icon-value, root.website-auto-icon); }
         else if root.item-type == "File" || root.item-type == "Directory" { root.save-path(root.editing, root.url-or-path, root.item-type == "Directory", root.icon-value); }
         else { root.save-folder(root.editing, root.app-name); }
     }
@@ -1412,6 +1467,11 @@ export component Launcher inherits Window {
             root.item-type = root.items[index].website ? "Website" : (root.items[index].file ? "File" : "Directory");
             root.app-name = root.items[index].name;
             root.url-or-path = root.items[index].website ? root.items[index].url : root.items[index].path;
+            root.website-icon-session += 1;
+            root.website-auto-icon = root.website-icon-automatic(root.items[index].icon-value);
+            root.website-preview-url = root.items[index].url;
+            root.website-icon-loading = false;
+            root.website-icon-status = "Fetched icon";
             root.icon-value = root.items[index].icon-value;
             root.icon-preview = root.items[index].icon;
             root.icon-preview-present = root.items[index].icon-present;
@@ -1739,17 +1799,17 @@ export component Launcher inherits Window {
                                     let shown = root.ticktick-visible-tasks(root.ticktick-tasks,root.items[index].ticktick-project-id,root.ticktick-show-completed,scroll-row,max(0,floor((root.items[index].span-y * grid.tile-size - 68px) / 36px)) + 1);
                                     let local-x = x - (grid.absolute-position.x + root.items[index].col * grid.tile-size + root.grid-gap * 0.5px);
                                     let tile-width = root.items[index].span-x * grid.tile-size - root.grid-gap * 1px;
+                                    let local-y = y - tile-y;
+                                    let tile-height = root.items[index].span-y * grid.tile-size - root.grid-gap * 1px;
+                                    root.ticktick-content-pressed = local-x >= 12px && local-x < tile-width - 16px
+                                        && local-y >= (root.items[index].ticktick-next ? 98px : 52px) && local-y < tile-height - 12px;
+                                    root.ticktick-scroll-start = root.items[index].ticktick-next ? root.ticktick-focus-scroll : scroll-offset;
                                     let header-control = y - tile-y < 48px && (local-x < tile-width - 74px || local-x >= tile-width - 43px);
                                     // The focus task row is a control too:
                                     // the checkbox completes it and the title opens it.
                                     root.ticktick-control-pressed = root.items[index].ticktick-next
                                         ? (y - tile-y >= 36px && y - tile-y < root.items[index].span-y * grid.tile-size - root.grid-gap * 0.5px)
                                         : header-control || (y - tile-y >= 52px && row >= 0 && row < shown.length);
-                                    let local-y = y - tile-y;
-                                    let tile-height = root.items[index].span-y * grid.tile-size - root.grid-gap * 1px;
-                                    root.ticktick-content-pressed = local-x >= 12px && local-x < tile-width - 16px
-                                        && local-y >= (root.items[index].ticktick-next ? 98px : 52px) && local-y < tile-height - 12px;
-                                    root.ticktick-scroll-start = root.items[index].ticktick-next ? root.ticktick-focus-scroll : scroll-offset;
                                 }
                             }
                             root.page-swipe-pressed = index < 0;
@@ -1889,8 +1949,8 @@ export component Launcher inherits Window {
         Text { text: "Back to desktop"; color: Theme.secondary; font-size: Theme.kbd-font-size; vertical-alignment: center; }
     }
     if root.search-text != "" && !root.settings && root.activated-prefix-id == "": Flickable {
-        x: (root.width - self.width) / 2; y: search-bar.y + search-bar.height + 26px;
-        width: min(1316px, root.width - 96px); height: root.height - self.y - 134px;
+        x: (root.width - self.width) / 2; y: search-bar.y + search-bar.height + 26px + (english-panel.visible ? english-panel.height + 12px : 0px);
+        width: min(1316px, root.width - 96px); height: max(0px,root.height - self.y - 134px);
         content-y <=> root.search-offset;
         content-height: max(self.height, ceil(root.search-results.length / root.search-columns) * 164px);
         for item[index] in root.search-results: Rectangle {
@@ -1926,6 +1986,29 @@ export component Launcher inherits Window {
             result-hit := TouchArea { mouse-cursor: pointer; enabled: !root.busy; clicked => { root.search-selection = index; root.activate-search-selection(); } }
         }
     }
+    english-panel := Rectangle {
+        visible: root.english-active && (root.english-loading || root.english-status != "" || root.english-suggestions.length > 0);
+        x: search-bar.x; y: search-bar.y + search-bar.height + 12px;
+        width: search-bar.width; height: min(280px, english-list.preferred-height + 24px);
+        background: Theme.sheet; border-width: Theme.border-width; border-color: Theme.border; border-radius: Theme.radius-sheet; clip: true;
+        Flickable {
+            x: 12px; y: 12px; width: parent.width - 24px; height: parent.height - 24px;
+            content-width: self.width; content-height: english-list.preferred-height;
+            english-list := VerticalLayout {
+                width: parent.width; alignment: start; spacing: 8px;
+                HorizontalLayout { height: 24px; spacing: 8px;
+                    Text { horizontal-stretch: 1; text: root.english-loading ? "Thinking of suggestions…" : root.english-status; color: Theme.secondary; font-size: Theme.type-hint; overflow: elide; vertical-alignment: center; }
+                    if !root.english-loading && root.english-suggestions.length == 0: AddOption { label: "Retry"; height: 24px; option-width: 60px; clicked => { root.english-retry(); } }
+                }
+                for text[index] in root.english-suggestions: Rectangle {
+                    height: max(44px,suggestion-text.preferred-height + 20px);
+                    background: suggestion-hit.has-hover ? Theme.raised : Theme.field; border-radius: Theme.radius-control;
+                    suggestion-text := Text { x: 12px; y: 10px; width: parent.width - 24px; text: text; wrap: word-wrap; color: Theme.text; font-size: Theme.type-body; }
+                    suggestion-hit := TouchArea { mouse-cursor: pointer; clicked => { root.english-apply(index); } }
+                }
+            }
+        }
+    }
     if root.settings: Rectangle {
         x: 40px; y: 112px;
         width: root.width - 80px; height: root.height - 264px;
@@ -1951,10 +2034,11 @@ export component Launcher inherits Window {
             }
             if root.settings-tab >= 2: GridLayout {
                 spacing: 12px;
-                SettingsTabGroup { row: 0; col: 0; width: 322px;
+                SettingsTabGroup { row: 0; col: 0; width: min(530px,root.width - 392px);
                     SettingsTab { label: "General"; selected: root.settings-tab == 4; clicked => { root.settings-tab = 4; } }
                     SettingsTab { label: "Prefixes"; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; } }
                     SettingsTab { label: "Actions"; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; } }
+                    SettingsTab { label: "English assistance"; selected: root.settings-tab == 5; clicked => { root.settings-tab = 5; } }
                 }
                 Rectangle { row: 0; col: 1; horizontal-stretch: 1; }
                 if root.settings-tab == 3 && !root.action-editor-open: SettingsButton { row: root.width - 392px < 500px ? 1 : 0; col: root.width - 392px < 500px ? 0 : 2; label: "New action"; option-width: 132px; primary: true; enabled: !root.busy; clicked => { root.action-id-draft = ""; root.action-name-draft = ""; root.action-kind-draft = "Shell"; root.action-source-draft = ""; root.action-description-draft = ""; root.action-tokens-draft = ""; root.action-used = false; root.action-editor-open = true; } }
@@ -2051,6 +2135,22 @@ export component Launcher inherits Window {
                             if root.data-status != "": SettingsDescription { text: root.data-status; }
                         }
                     }
+                }
+            }
+            if root.settings-tab == 5: SettingsCard {
+                height: english-settings.preferred-height;
+                english-settings := VerticalLayout {
+                    padding: 20px; spacing: 16px; alignment: start;
+                    SettingsTitle { text: "English assistance"; }
+                    SettingsDescription { text: "Local qwen3:4b suggests better wording. Your text changes only when you choose a suggestion. The model stays loaded while enabled."; }
+                    CheckBox { text: "Suggestions"; checked: root.english-suggestions-enabled; enabled: !root.busy; toggled => { root.busy = true; root.save-english(self.checked,root.english-address); } }
+                    SettingsField { label: "Local Ollama address"; text <=> root.english-address-draft; placeholder: "http://127.0.0.1:11434"; }
+                    SettingsDescription { text: "Model: qwen3:4b · English text stays on this computer"; }
+                    HorizontalLayout { spacing: 12px; alignment: start;
+                        SettingsButton { label: "Save address"; option-width: 130px; enabled: !root.busy; clicked => { root.busy = true; root.save-english(root.english-suggestions-enabled,root.english-address-draft); } }
+                        SettingsButton { label: "Test connection"; option-width: 150px; clicked => { root.english-test(); } }
+                    }
+                    SettingsDescription { text: root.english-connection; }
                 }
             }
             if root.settings-tab == 4: VerticalLayout {
@@ -2520,28 +2620,37 @@ export component Launcher inherits Window {
         TouchArea { enabled: !root.picker && !root.alert; clicked => { root.close-top-layer(); } }
         Rectangle {
             x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
+            y: root.editing < 0 ? max(16px, (parent.height - min(760px, parent.height - 32px)) / 2) : (parent.height - self.height) / 2;
             width: min(560px, max(288px, parent.width - (parent.width >= 600px ? 48px : 32px)));
-            height: min(root.editing >= 0 ? (root.item-type == "File" || root.item-type == "Directory" ? 336px : (root.custom && root.item-type == "App" ? 420px : 280px)) : (200px + max(100px, sheet-content.preferred-height) + (root.item-type == "App" ? 56px : 0px)), min(parent.height - 32px, 760px));
-            background: Theme.sheet;
+            height: min(root.editing >= 0 ? (root.item-type == "Website" ? 480px : root.item-type == "File" || root.item-type == "Directory" ? 336px : (root.custom && root.item-type == "App" ? 420px : 280px)) : (352px + max(100px, sheet-content.preferred-height) + (root.item-type == "App" ? 56px : 0px)), min(parent.height - 32px, 760px));
+            animate height { duration: 180ms; easing: ease-out; }
+            background: root.editing < 0 ? Theme.add-sheet : Theme.sheet;
             border-width: 1px;
-            border-color: Theme.border;
-            border-radius: 16px;
+            border-color: root.editing < 0 ? Theme.add-border : Theme.border;
+            border-radius: root.editing < 0 ? 20px : 16px;
+            if root.editing < 0: Rectangle {
+                x: 1px; y: parent.height - 88px; width: parent.width - 2px; height: 68px;
+                background: Theme.add-footer;
+            }
             TouchArea { }
             VerticalLayout {
-                padding: 16px;
-                spacing: 16px;
+                padding: root.editing < 0 ? 24px : 16px;
+                spacing: root.editing < 0 ? 20px : 16px;
                 HorizontalLayout {
                     spacing: 8px;
-                    Text {
-                        text: root.editing < 0 ? "Add item" : ("Edit " + root.item-type);
-                        color: Theme.text;
-                        font-size: 20px;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
+                    VerticalLayout {
+                        spacing: 6px; horizontal-stretch: 1;
+                        Text {
+                            text: root.editing < 0 ? "Add item" : ("Edit " + root.item-type);
+                            color: Theme.text; font-size: 20px; font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                        if root.editing < 0: Text {
+                            text: "Pick a type, then fill in the details.";
+                            color: Theme.add-secondary; font-size: 13px;
+                        }
                     }
-                    AddOption {
+                    AddOption { add-style: root.editing < 0;
                         label: "×";
                         width: 40px;
                         height: 40px;
@@ -2552,19 +2661,19 @@ export component Launcher inherits Window {
                 if root.editing < 0: FlexboxLayout {
                     flex-wrap: wrap;
                     spacing: 8px;
-                    AddOption { label: "App"; selected: root.item-type == "App"; clicked => { root.add-item("App"); } }
-                    AddOption { label: "Website"; selected: root.item-type == "Website"; clicked => { root.add-item("Website"); } }
-                    AddOption { label: "File"; selected: root.item-type == "File"; clicked => { root.add-item("File"); } }
-                    AddOption { label: "Directory"; selected: root.item-type == "Directory"; clicked => { root.add-item("Directory"); } }
-                    AddOption { label: "Folder"; selected: root.item-type == "Folder"; clicked => { root.add-item("Folder"); } }
-                    AddOption { label: "Widgets"; selected: root.item-type == "Widgets"; clicked => { root.add-item("Widgets"); } }
+                    AddOption { add-style: root.editing < 0; type-tile: true; option-width: max(72px, (root.sheet-content-width - 40px) / 6); icon-present: true; icon: @image-url("assets/add-window.svg"); label: "App"; selected: root.item-type == "App"; clicked => { root.add-item("App"); } }
+                    AddOption { add-style: root.editing < 0; type-tile: true; option-width: max(72px, (root.sheet-content-width - 40px) / 6); icon-present: true; icon: @image-url("assets/add-globe.svg"); label: "Website"; selected: root.item-type == "Website"; clicked => { root.add-item("Website"); } }
+                    AddOption { add-style: root.editing < 0; type-tile: true; option-width: max(72px, (root.sheet-content-width - 40px) / 6); icon-present: true; icon: @image-url("assets/add-file.svg"); label: "File"; selected: root.item-type == "File"; clicked => { root.add-item("File"); } }
+                    AddOption { add-style: root.editing < 0; type-tile: true; option-width: max(72px, (root.sheet-content-width - 40px) / 6); icon-present: true; icon: @image-url("assets/add-dir.svg"); label: "Directory"; selected: root.item-type == "Directory"; clicked => { root.add-item("Directory"); } }
+                    AddOption { add-style: root.editing < 0; type-tile: true; option-width: max(72px, (root.sheet-content-width - 40px) / 6); icon-present: true; icon: @image-url("assets/add-group.svg"); label: "Folder"; selected: root.item-type == "Folder"; clicked => { root.add-item("Folder"); } }
+                    AddOption { add-style: root.editing < 0; type-tile: true; option-width: max(72px, (root.sheet-content-width - 40px) / 6); icon-present: true; icon: @image-url("assets/add-widgets.svg"); label: "Widgets"; selected: root.item-type == "Widgets"; clicked => { root.add-item("Widgets"); } }
                 }
                 if root.item-type == "App" && root.editing < 0: FlexboxLayout {
                     flex-wrap: wrap;
                     spacing: 8px;
-                    AddOption { label: "Custom command"; option-width: 148px; selected: root.app-source == "Custom command"; clicked => { root.app-source-changed("Custom command"); } }
-                    AddOption { label: "Actions"; selected: root.app-source == "Actions"; clicked => { root.app-source-changed("Actions"); } }
-                    AddOption { label: "Installed apps"; option-width: 132px; selected: root.app-source == "Installed apps"; clicked => { root.installed-filter = ""; root.filter-installed-apps(""); root.app-source-changed("Installed apps"); } }
+                    AddOption { add-style: root.editing < 0; source-tab: true; label: "Custom command"; option-width: 148px; selected: root.app-source == "Custom command"; clicked => { root.app-source-changed("Custom command"); } }
+                    AddOption { add-style: root.editing < 0; source-tab: true; label: "Actions"; selected: root.app-source == "Actions"; clicked => { root.app-source-changed("Actions"); } }
+                    AddOption { add-style: root.editing < 0; source-tab: true; label: "Installed apps"; option-width: 132px; selected: root.app-source == "Installed apps"; clicked => { root.installed-filter = ""; root.filter-installed-apps(""); root.app-source-changed("Installed apps"); } }
                 }
                 sheet-scroll := Flickable {
                     interactive: true;
@@ -2581,21 +2690,32 @@ export component Launcher inherits Window {
                             width: root.sheet-content-width;
                             alignment: start;
                             spacing: 8px;
-                            for action in root.actions: AddOption {
-                                label: action.name; trailing: "+"; full-width: true;
-                                available-width: root.sheet-content-width; enabled: !root.busy;
-                                clicked => { root.busy = true; root.sheet-operation = "adding"; root.sheet-status = "Adding…"; root.add-system-action(action.id); }
+                            for action[index] in root.actions: VerticalLayout {
+                                spacing: 6px;
+                                if index == 0 || index == 4 || index == 8: Text { text: index == 0 ? "System" : index == 4 ? "Audio" : "Media"; color: Theme.add-secondary; font-size: 12px; font-weight: 600; height: 26px; }
+                                AddItemRow {
+                                    label: action.name; icon-present: true; icon: index == 0 ? @image-url("assets/add-lock.svg") : index == 1 ? @image-url("assets/add-shot.svg") : index == 2 ? @image-url("assets/add-moon.svg") : index == 3 ? @image-url("assets/add-logout.svg") : index == 4 ? @image-url("assets/add-vol-up.svg") : index == 5 ? @image-url("assets/add-vol-down.svg") : index == 6 ? @image-url("assets/add-mute.svg") : index == 7 ? @image-url("assets/add-mic-off.svg") : index == 8 ? @image-url("assets/add-play.svg") : index == 9 ? @image-url("assets/add-next.svg") : @image-url("assets/add-previous.svg");
+                                    enabled: !root.busy;
+                                    clicked => { root.busy = true; root.sheet-operation = "adding"; root.sheet-status = "Adding…"; root.add-system-action(action.id); }
+                                }
                             }
                         }
                         if root.item-type == "App" && root.editing < 0 && root.app-source == "Installed apps": VerticalLayout {
                             width: root.sheet-content-width;
                             alignment: start;
                             spacing: 8px;
-                            AddOption {
-                                label: "Refresh installed apps";
-                                option-width: 220px;
-                                trailing: root.busy && root.sheet-operation == "refreshing" ? "◌" : "↻";
-                                full-width: true; available-width: root.sheet-content-width;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                AddField { add-style: true; label: "";
+                                    text <=> root.installed-filter;
+                                    placeholder: "Filter installed apps";
+                                    enabled: !root.busy;
+                                    horizontal-stretch: 1;
+                                    edited => { root.filter-installed-apps(root.installed-filter); }
+                                }
+                            AddOption { add-style: root.editing < 0;
+                                label: root.busy && root.sheet-operation == "refreshing" ? "◌" : "↻"; accessible-label: "Refresh installed apps";
+                                option-width: 44px;
                                 enabled: !root.busy;
                                 clicked => {
                                     root.busy = true;
@@ -2604,24 +2724,13 @@ export component Launcher inherits Window {
                                     root.refresh-installed-apps();
                                 }
                             }
+
+                            }
                             Text {
                                 text: root.installed-status == "" ? (root.installed-apps-loaded ? "0 apps · Cached inventory" : "No cached apps. Refresh installed apps.") : root.installed-status;
                                 color: Theme.secondary;
                                 font-size: 12px;
 
-                            }
-                            HorizontalLayout {
-                                spacing: 8px;
-                                LineEdit {
-                                    text <=> root.installed-filter;
-                                    placeholder-text: "Filter installed apps";
-                                    enabled: !root.busy;
-                                    min-height: 40px;
-                                    preferred-height: 40px;
-                                    horizontal-stretch: 1;
-                                    edited(text) => { root.filter-installed-apps(text); }
-                                }
-                                AddOption { label: "Clear filter"; enabled: root.installed-filter != "" && !root.busy; clicked => { root.installed-filter = ""; root.filter-installed-apps(""); } }
                             }
                             if root.installed-apps.length == 0 && root.installed-filter == "": Text {
                                 text: root.installed-apps-loaded ? "No items found" : "Refresh installed apps to load the list.";
@@ -2638,11 +2747,9 @@ export component Launcher inherits Window {
                             width: root.sheet-content-width;
                             alignment: start;
                                 spacing: 8px;
-                                for app in root.installed-apps: AddOption {
-                                                                        label: app.name;
+                                for app in root.installed-apps: AddItemRow {
+                                    label: app.name; description: app.command; letter: app.letter;
                                     icon: app.icon; icon-present: app.icon-present;
-                                    trailing: root.busy && root.sheet-operation == "adding" ? "Adding…" : "+";
-                                    full-width: true; available-width: root.sheet-content-width;
                                     enabled: !root.busy;
                                     clicked => {
                                         root.busy = true;
@@ -2656,8 +2763,8 @@ export component Launcher inherits Window {
                         if root.item-type == "App" && root.custom && (root.editing >= 0 || root.app-source == "Custom command"): VerticalLayout {
                             width: root.sheet-content-width;
                             alignment: start;
-                            spacing: 12px;
-                            custom_name_field := AddField {
+                            spacing: root.editing < 0 ? 20px : 12px;
+                            custom_name_field := AddField { add-style: root.editing < 0;
                                 width: root.sheet-content-width;
                                 label: "Name";
                                 placeholder: "e.g. Terminal";
@@ -2667,7 +2774,7 @@ export component Launcher inherits Window {
                                 edited => { root.name-error = ""; }
                                 accepted => { custom_command_field.focus(); }
                             }
-                            custom_command_field := AddField {
+                            custom_command_field := AddField { add-style: root.editing < 0;
                                 width: root.sheet-content-width;
                                 label: "Command";
                                 placeholder: "e.g. foot --title Terminal";
@@ -2678,6 +2785,7 @@ export component Launcher inherits Window {
                                 edited => { root.command-error = ""; }
                                 accepted => { root.submit-form(); }
                             }
+                            if root.editing < 0: Text { text: "Enter the full command, including any arguments."; color: Theme.add-secondary; font-size: 12px; wrap: word-wrap; }
                             HorizontalLayout {
                                 width: root.sheet-content-width; height: 48px; spacing: 12px; alignment: start;
                                 Rectangle {
@@ -2685,14 +2793,14 @@ export component Launcher inherits Window {
                                     if root.icon-preview-present: Image { width: 48px; height: 48px; source: root.icon-preview; image-fit: contain; }
                                     if !root.icon-preview-present: Text { text: root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.focus; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
                                 }
-                                AddOption { label: "Change icon"; option-width: 136px; height: 48px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
+                                AddOption { add-style: root.editing < 0; label: "Change icon"; option-width: 136px; height: 48px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
                             }
                         }
                         if root.item-type == "App" && !root.custom && root.editing >= 0: VerticalLayout {
                             width: root.sheet-content-width;
                             alignment: start;
-                            spacing: 12px;
-                            AddField {
+                            spacing: root.editing < 0 ? 20px : 12px;
+                            AddField { add-style: root.editing < 0;
                                 width: root.sheet-content-width;
                                 label: "Name";
                                 placeholder: "e.g. Terminal";
@@ -2709,35 +2817,51 @@ export component Launcher inherits Window {
                                     if root.icon-preview-present: Image { width: 48px; height: 48px; source: root.icon-preview; image-fit: contain; }
                                     if !root.icon-preview-present: Text { text: root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.focus; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
                                 }
-                                AddOption { label: "Change icon"; option-width: 136px; height: 48px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
+                                AddOption { add-style: root.editing < 0; label: "Change icon"; option-width: 136px; height: 48px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
                             }
                         }
                         if root.item-type == "Website": VerticalLayout {
                             width: root.sheet-content-width;
                             alignment: start;
-                            spacing: 12px;
-                            website_name_field := AddField {
+                            spacing: root.editing < 0 ? 20px : 12px;
+                            website_name_field := AddField { add-style: root.editing < 0;
                                 width: root.sheet-content-width; label: "Name"; placeholder: "e.g. Work"; text <=> root.app-name; error: root.name-error; enabled: !root.busy; edited => { root.name-error = ""; } accepted => { website_url_field.focus(); } }
-                            website_url_field := AddField {
-                                width: root.sheet-content-width; label: "URL"; placeholder: "https://example.com"; text <=> root.url-or-path; error: root.url-error; enabled: !root.busy; edited => { root.url-error = ""; } accepted => { root.submit-form(); } }
+                            website_url_field := AddField { add-style: root.editing < 0;
+                                width: root.sheet-content-width; label: "URL"; placeholder: "https://example.com"; text <=> root.url-or-path; error: root.url-error; enabled: !root.busy; edited => { root.website-url-changed(); } accepted => { root.submit-form(); } }
+                            HorizontalLayout {
+                                height: 44px; spacing: 8px; alignment: start;
+                                AddOption { add-style: root.editing < 0; label: "Automatic"; selected: root.website-auto-icon; enabled: !root.busy; clicked => { root.website-auto-icon = true; root.website-url-changed(); } }
+                                AddOption { add-style: root.editing < 0; label: "Custom icon"; selected: !root.website-auto-icon; option-width: 116px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
+                            }
+                            HorizontalLayout {
+                                height: 48px; spacing: 12px; alignment: start;
+                                Rectangle {
+                                    width: 48px; height: 48px; border-radius: 10px; background: Theme.add-selected;
+                                    if root.icon-preview-present: Image { width: 48px; height: 48px; source: root.icon-preview; image-fit: contain; }
+                                    if !root.icon-preview-present: Text { text: root.website-icon-loading ? "…" : root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.add-focus; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                Text { text: root.website-auto-icon ? root.website-icon-status : "Custom icon"; color: Theme.add-secondary; font-size: 12px; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: center; }
+                                if !root.website-auto-icon: AddOption { add-style: root.editing < 0; label: "Change icon"; option-width: 120px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
+                                if root.website-auto-icon && !root.website-icon-loading && root.valid-url(root.url-or-path): AddOption { add-style: root.editing < 0; label: "Retry"; option-width: 64px; enabled: !root.busy; clicked => { root.website-url-changed(); } }
+                            }
                         }
                         if root.item-type == "Widgets": VerticalLayout {
                             width: root.sheet-content-width;
                             alignment: start;
                             spacing: 8px;
-                            Text { width: root.sheet-content-width; text: "Widget Gallery · select a widget, then click an empty area"; color: Theme.text; font-size: 18px; }
+                            Text { width: root.sheet-content-width; text: "Widget gallery · Auto finds a free spot; Place lets you choose"; color: Theme.text; font-size: 13px; wrap: word-wrap; }
                             for name[index] in ["TickTick Tasks", "TickTick Focus Task"]: Rectangle {
                                 width: root.sheet-content-width; height: 72px; border-radius: 10px;
-                                background: Theme.field; border-width: 1px; border-color: Theme.border;
+                                background: Theme.add-field; border-width: 1px; border-color: Theme.add-border;
                                 Rectangle {
                                     x: 8px; y: 7px; width: 58px; height: 58px; border-radius: 9px;
-                                    background: #51405f99; border-width: 1px; border-color: Theme.border;
+                                    background: #51405f99; border-width: 1px; border-color: root.editing < 0 ? Theme.add-border : Theme.border;
                                     Text { x: 6px; y: 5px; width: parent.width - 12px; height: parent.height - 10px; text: index == 0 ? "Tasks ▾\n☐ Buy milk" : "FOCUS NOW\n☐ Do this now"; color: Theme.text; font-size: 9px; wrap: word-wrap; vertical-alignment: center; }
                                 }
                                 Text { x: 78px; y: 12px; width: parent.width - 174px; height: 24px; text: name; color: Theme.text; font-size: 13px; vertical-alignment: center; }
                                 Text { x: 78px; y: 38px; width: parent.width - 174px; height: 20px; text: index == 0 ? (root.item-size * 2) + " × " + (root.item-size * 2) + " px · choose list" : (root.item-size * 4) + " × " + (root.item-size * 2) + " px · focus task"; color: Theme.secondary; font-size: 12px; vertical-alignment: center; }
-                                AddOption { x: parent.width - 158px; y: 16px; label: "Auto"; option-width: 64px; clicked => { root.busy = true; root.add-widget(7 + index,-1); root.sheet = false; } }
-                                AddOption { x: parent.width - 84px; y: 16px; label: "Place"; option-width: 72px; clicked => {
+                                AddOption { add-style: root.editing < 0; x: parent.width - 158px; y: 16px; label: "Auto"; option-width: 64px; clicked => { root.busy = true; root.add-widget(7 + index,-1); root.sheet = false; } }
+                                AddOption { add-style: root.editing < 0; x: parent.width - 84px; y: 16px; label: "Place"; option-width: 72px; clicked => {
                                     root.placing-widget = 7 + index;
                                     root.placing-width = (index == 0 ? 2 : 4) * root.item-size + 16;
                                     root.placing-height = 2 * root.item-size + 16;
@@ -2745,7 +2869,7 @@ export component Launcher inherits Window {
                                 } }
                             }
                         }
-                        if root.item-type == "Folder": folder_name_field := AddField {
+                        if root.item-type == "Folder": folder_name_field := AddField { add-style: root.editing < 0;
                                 width: root.sheet-content-width;
                             label: "Name";
                             placeholder: "e.g. Work";
@@ -2757,8 +2881,9 @@ export component Launcher inherits Window {
                         }
                         if root.item-type == "File" || root.item-type == "Directory": VerticalLayout {
                             width: root.sheet-content-width; alignment: start; spacing: 12px;
-                            AddField {
-                                width: root.sheet-content-width;
+                            FlexboxLayout { flex-wrap: wrap; spacing: 8px;
+                            AddField { add-style: root.editing < 0;
+                                width: root.editing < 0 && root.sheet-content-width >= 420px ? root.sheet-content-width - 156px : root.sheet-content-width;
                                 label: "Path";
                                 placeholder: root.item-type == "Directory" ? "/home/user/Documents" : "/home/user/Documents/file.pdf";
                                 text <=> root.url-or-path;
@@ -2767,7 +2892,10 @@ export component Launcher inherits Window {
                                 edited => { root.path-error = ""; }
                                 accepted => { root.submit-form(); }
                             }
-                            AddOption {
+                            VerticalLayout {
+                                width: 148px; spacing: 0px; alignment: start;
+                                if root.editing < 0 && root.sheet-content-width >= 420px: Rectangle { height: 24px; }
+                            AddOption { add-style: root.editing < 0;
                                 label: root.busy && root.sheet-operation == "choosing" ? "Choose…" : (root.item-type == "Directory" ? "Choose directory" : "Choose file");
                                 option-width: 148px;
                                 enabled: !root.busy;
@@ -2778,6 +2906,9 @@ export component Launcher inherits Window {
                                     root.choose-path(root.item-type == "Directory");
                                 }
                             }
+                            }
+                            }
+                            if root.editing < 0: Text { text: root.item-type == "File" ? "Choose a file, or paste its full path." : "Choose a directory, or paste its full path."; color: Theme.add-secondary; font-size: 12px; }
                             HorizontalLayout {
                                 width: root.sheet-content-width; height: 48px; spacing: 12px; alignment: start;
                                 Rectangle {
@@ -2788,7 +2919,7 @@ export component Launcher inherits Window {
                                     }
                                     if !root.icon-preview-present: Text { text: root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.focus; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
                                 }
-                                AddOption { label: "Change icon"; option-width: 136px; height: 48px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
+                                AddOption { add-style: root.editing < 0; label: "Change icon"; option-width: 136px; height: 48px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
                             }
                         }
                         if root.sheet-status != "": Text {
@@ -2800,19 +2931,21 @@ export component Launcher inherits Window {
                         }
                     }
                 }
+                if root.editing < 0: Rectangle { height: 1px; background: Theme.add-border; }
                 HorizontalLayout {
-                    spacing: 8px;
-                    AddOption {
+                    spacing: 10px;
+                    Rectangle { horizontal-stretch: 1;
+                        if root.editing < 0: Text { width: parent.width; height: parent.height; text: root.item-type == "App" && root.app-source == "Custom command" ? "Enter a name and a command to save." : root.item-type == "Website" ? "Enter a name and a URL to save." : root.item-type == "Folder" ? "Enter a name to save." : ""; color: Theme.add-secondary; font-size: 12px; wrap: word-wrap; vertical-alignment: center; }
+                    }
+                    AddOption { add-style: root.editing < 0;
                         label: "Cancel";
                         enabled: !root.busy;
-                        horizontal-stretch: 1;
                         clicked => { root.close-top-layer(); }
                     }
-                    Rectangle { horizontal-stretch: 1; }
-                    if root.item-type == "Website" || root.item-type == "Folder" || root.item-type == "File" || root.item-type == "Directory" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command")): AddOption {
+                    if root.item-type == "Website" || root.item-type == "Folder" || root.item-type == "File" || root.item-type == "Directory" || (root.item-type == "App" && (root.editing >= 0 || root.app-source == "Custom command")): AddOption { add-style: root.editing < 0;
                         label: root.busy && root.sheet-operation == "saving" ? "Saving…" : "Save";
                         primary: true;
-                        enabled: !root.busy;
+                        enabled: !root.busy && !(root.item-type == "Website" && root.website-auto-icon && root.website-icon-loading) && (root.editing >= 0 || (root.item-type == "File" || root.item-type == "Directory" ? root.valid-name(root.url-or-path) : root.valid-name(root.app-name) && (root.item-type == "Website" ? root.valid-url(root.url-or-path) : root.item-type == "App" && root.custom ? root.valid-command(root.command) : true)));
                         clicked => { root.submit-form(); }
                     }
                 }

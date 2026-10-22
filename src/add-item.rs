@@ -137,7 +137,9 @@ pub fn valid_url(url: &str) -> bool {
 fn valid_port(suffix: &str) -> bool {
     suffix
         .strip_prefix(':')
-        .and_then(|port| port.parse::<u16>().ok())
+        .unwrap_or(suffix)
+        .parse::<u16>()
+        .ok()
         .is_some_and(|port| port > 0)
 }
 
@@ -186,6 +188,9 @@ mod tests {
         assert!(!valid_command("foot 'unfinished"));
         assert!(valid_url("https://example.com/path"));
         assert!(valid_url("http://[::1]:8080"));
+        assert!(valid_url("http://127.0.0.1:8080/"));
+        assert!(!valid_url("http://example.com:0"));
+        assert!(!valid_url("http://example.com:65536"));
         assert!(!valid_url("file:///tmp/document"));
         assert!(!valid_url("https://"));
         assert!(!valid_url("https://example.com/path with spaces"));

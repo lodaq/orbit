@@ -51,6 +51,7 @@ enum Action {
     SaveAppearance(i32, i32, i32, usize, usize),
     SaveDefaultSearchEngine(i32),
     SaveSmoothCursor(bool),
+    SaveEnglish(bool, String),
     SaveLayoutLocked(bool),
     DeletePage,
     SaveShortcut(i32, String, String),
@@ -70,7 +71,7 @@ enum Action {
     Unpin(String),
     RemoveRecent(String),
     Save(i32, String, String, String, u64),
-    SaveWebsite(i32, String, String, u64),
+    SaveWebsite(i32, String, String, crate::website_icons::Draft, u64),
     ChoosePath(bool, u64),
     SavePath(i32, String, bool, String, u64),
     SaveFolder(i32, String, u64),
@@ -387,6 +388,10 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             crate::search_cursor::sync(ui.window(), hidden);
         }
     });
+    let english_sender = send.clone();
+    launcher.on_save_english(move |suggestions, address| {
+        let _ = english_sender.send(Action::SaveEnglish(suggestions, address.into()));
+    });
     let lock_sender = send.clone();
     launcher.on_save_layout_locked(move |locked| {
         let _ = lock_sender.send(Action::SaveLayoutLocked(locked));
@@ -533,9 +538,16 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     });
     let sender = send.clone();
     let requests_for_website = requests.clone();
-    launcher.on_save_website(move |index, name, url| {
+    let website_icons = crate::website_icons::connect(launcher);
+    launcher.on_save_website(move |index, name, url, value, automatic| {
         let request = requests_for_website.issue();
-        let _ = sender.send(Action::SaveWebsite(index, name.into(), url.into(), request));
+        let _ = sender.send(Action::SaveWebsite(
+            index,
+            name.into(),
+            url.to_string(),
+            crate::website_icons::draft(&website_icons, &url, value.into(), automatic),
+            request,
+        ));
     });
     let sender = send.clone();
     let requests_for_path = requests.clone();
@@ -789,6 +801,24 @@ impl Apps {
             Action::SearchWeb(query, engine) => {
                 let url = url_action_url(self.config.search_engine_template(&engine), &query)?;
                 open_url(&url).map_err(|error| format!("Couldn't open web search: {error}"))
+            }
+            Action::SaveEnglish(suggestions, address) => {
+                let settings = crate::english_assistance::Settings {
+                    suggestions,
+                    address,
+                };
+                if !settings.valid() {
+                    return Err("Use a local Ollama address such as http://127.0.0.1:11434".into());
+                }
+                if self.config.english_assistance != settings {
+                    let mut config = self.config.clone();
+                    config.english_assistance = settings;
+                    config
+                        .save()
+                        .map_err(|error| format!("Couldn't save English assistance: {error}"))?;
+                    self.config = config;
+                }
+                Ok(())
             }
             Action::SaveSmoothCursor(enabled) => {
                 if self.config.smooth_cursor != enabled {
@@ -1469,8 +1499,8 @@ impl Apps {
             Action::DeleteSearchPath(directory, index) => self.delete_search_path(directory, index),
             Action::AddFileSearchExclusion(name) => self.edit_file_search_exclusion(&name, false),
             Action::RemoveFileSearchExclusion(name) => self.edit_file_search_exclusion(&name, true),
-            Action::SaveWebsite(index, name, url, request) => {
-                self.save_website(index, name, url, requests, request)
+            Action::SaveWebsite(index, name, url, draft, request) => {
+                self.save_website(index, name, url, draft, requests, request)
             }
             Action::TransferData(import) => {
                 let mut result = platform::transfer_data(import);
@@ -1815,6 +1845,7 @@ impl Apps {
                 (
                     app.id.clone(),
                     app.name.clone(),
+                    app.command.clone(),
                     self.icons.get(&app.id).cloned(),
                 )
             })
@@ -1823,9 +1854,10 @@ impl Apps {
         let _ = weak.upgrade_in_event_loop(move |launcher| {
             let installed_apps = installed_apps
                 .into_iter()
-                .map(|(id, name, icon)| {
+                .map(|(id, name, command, icon)| {
                     let icon_present = icon.is_some();
                     InstalledAppTile {
+                        command: command.into(),
                         letter: name
                             .chars()
                             .next()
@@ -1945,6 +1977,7 @@ impl Apps {
         index: i32,
         name: String,
         url: String,
+        draft: crate::website_icons::Draft,
         requests: &RequestSequence,
         request: u64,
     ) -> Result<(), String> {
@@ -1971,25 +2004,23 @@ impl Apps {
             }) => Some(name.clone()),
             _ => None,
         };
-        let keep_icon = unchanged_url
-            && matches!(existing, Some(Item::Website { icon, .. }) if !matches!(icon, Icon::Letter));
-        let icon = if keep_icon {
-            match existing {
-                Some(Item::Website { icon, .. }) => icon.clone(),
-                _ => Icon::Letter,
+        let current = match existing {
+            Some(Item::Website { icon, .. })
+                if unchanged_url
+                    && draft.automatic
+                    && !draft.attempted
+                    && crate::website_icons::automatic(
+                        &serde_json::to_string(icon).unwrap_or_default(),
+                    ) =>
+            {
+                Some(icon)
             }
-        } else if let Some((extension, data)) = platform::fetch_icon(url.trim()) {
-            let file = format!("{}.{extension}", new_id()?);
-            if decode_icon(&data, &file).is_ok() && platform::write_icon(&file, &data).is_ok() {
-                Icon::File(file)
-            } else {
-                Icon::Letter
-            }
-        } else {
-            Icon::Letter
+            _ => None,
         };
+        let new_file = draft.automatic && draft.fetched.is_some();
+        let icon = crate::website_icons::save(draft, current)?;
         if !requests.is_current(request) {
-            if let Icon::File(file) = &icon {
+            if new_file && let Icon::File(file) = &icon {
                 platform::remove_icon(file);
             }
             return Ok(());
@@ -2001,15 +2032,19 @@ impl Apps {
             icon: icon.clone(),
         };
         if let Err(error) = self.store(index, item) {
-            if let Icon::File(file) = &icon {
+            if new_file && let Icon::File(file) = &icon {
                 platform::remove_icon(file);
             }
             return Err(error);
         }
         if let Some(old_icon) = old_icon
+            && !old_icon.starts_with("chosen-")
             && !matches!(&icon, Icon::File(file) if file == &old_icon)
         {
             platform::remove_icon(&old_icon);
+        }
+        if matches!(icon, Icon::Letter | Icon::Text(_)) {
+            self.icons.remove(&id);
         }
         self.load_icon(&id, &icon)?;
         Ok(())
@@ -2268,6 +2303,7 @@ impl Apps {
         let size = self.config.item_size;
         let gap = self.config.grid_gap;
         let smooth_cursor = self.config.smooth_cursor;
+        let english = self.config.english_assistance.clone();
         let layout_locked = self.config.layout_locked;
         let search_engine_index = self.config.default_search_engine_index() as i32;
         let saved_columns = self.config.columns as i32;
@@ -2401,6 +2437,7 @@ impl Apps {
                 (
                     app.id.clone(),
                     app.name.clone(),
+                    app.command.clone(),
                     self.icons.get(&app.id).cloned(),
                 )
             })
@@ -2516,9 +2553,10 @@ impl Apps {
         let _ = weak.upgrade_in_event_loop(move |launcher| {
             let installed_apps: Vec<_> = installed_apps
                 .into_iter()
-                .map(|(id, name, icon)| {
+                .map(|(id, name, command, icon)| {
                     let icon_present = icon.is_some();
                     InstalledAppTile {
+                        command: command.into(),
                         letter: name
                             .chars()
                             .next()
@@ -2581,6 +2619,8 @@ impl Apps {
                 .into(),
             );
             launcher.set_smooth_cursor(smooth_cursor);
+            launcher.set_english_address(english.address.into());
+            launcher.set_english_suggestions_enabled(english.suggestions);
             launcher.set_layout_locked(layout_locked);
             launcher.set_default_search_engine_index(search_engine_index);
             launcher.invoke_default_search_engine_saved(search_engine_index);
@@ -2711,7 +2751,7 @@ fn prepare_app(
     })
 }
 
-fn new_id() -> Result<String, String> {
+pub(crate) fn new_id() -> Result<String, String> {
     let time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| error.to_string())?;
@@ -3391,7 +3431,13 @@ mod tests {
             Action::AddInstalledApp("app".into(), 0),
             Action::TransferData(true),
             Action::Save(-1, "".into(), "".into(), "".into(), 0),
-            Action::SaveWebsite(-1, "".into(), "".into(), 0),
+            Action::SaveWebsite(
+                -1,
+                "".into(),
+                "".into(),
+                crate::website_icons::Draft::default(),
+                0,
+            ),
             Action::SavePath(-1, "".into(), false, "".into(), 0),
             Action::SaveFolder(-1, "".into(), 0),
         ] {
@@ -3407,7 +3453,13 @@ mod tests {
             Action::Open(0),
             Action::SelectTickTickList("widget".into(), "list".into()),
             Action::Save(0, "".into(), "".into(), "".into(), 0),
-            Action::SaveWebsite(0, "".into(), "".into(), 0),
+            Action::SaveWebsite(
+                0,
+                "".into(),
+                "".into(),
+                crate::website_icons::Draft::default(),
+                0,
+            ),
             Action::SavePath(0, "".into(), false, "".into(), 0),
             Action::SaveFolder(0, "".into(), 0),
             Action::SaveLayoutLocked(false),

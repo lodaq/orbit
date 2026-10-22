@@ -28,6 +28,8 @@ pub struct Config {
     #[serde(default = "default_smooth_cursor")]
     pub smooth_cursor: bool,
     #[serde(default)]
+    pub english_assistance: crate::english_assistance::Settings,
+    #[serde(default)]
     pub layout_locked: bool,
     #[serde(default = "crate::shortcuts::defaults")]
     pub shortcuts: Vec<crate::shortcuts::Shortcut>,
@@ -376,6 +378,7 @@ impl Default for Config {
             grid_gap: default_grid_gap(),
             default_search_engine: default_search_engine(),
             smooth_cursor: true,
+            english_assistance: Default::default(),
             layout_locked: false,
             shortcuts: crate::shortcuts::defaults(),
             file_search_paths: Vec::new(),

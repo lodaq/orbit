@@ -202,6 +202,14 @@ fn fetch_url(address: &str, extension: &str) -> Option<(String, Vec<u8>)> {
         ])
         .output()
         .ok()?;
+    let extension = if extension.is_empty() {
+        ["svg", "png", "jpg", "ico"]
+            .into_iter()
+            .find(|extension| is_icon(&output.stdout, extension))
+            .unwrap_or("")
+    } else {
+        extension
+    };
     (output.status.success() && is_icon(&output.stdout, extension))
         .then_some((extension.into(), output.stdout))
 }

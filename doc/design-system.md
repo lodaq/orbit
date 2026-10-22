@@ -1,6 +1,6 @@
 # Orbit design system
 
-The launcher reference remains authoritative for pages and the dock. The Slint atlas and three PNGs in `add-item/` define sheets and controls. The atlas is a static gallery, not application code. `ui/theme.slint` is the source of truth for colors, spacing, typography and common geometry; shared controls live in `ui/controls.slint`.
+The launcher reference remains authoritative for pages and the dock. The current `add-item/` HTML, PNG and PDF define Add item, with the retained behavior documented below; `doc/add-item/` supplies the earlier sheet atlas. These are references, not application code. `ui/theme.slint` is the source of truth for colors, spacing, typography and common geometry; shared controls live in `ui/controls.slint`.
 
 ## Tokens and components
 
@@ -64,3 +64,11 @@ The wrapped text width reserves the entire blue block width plus 2 px inset on e
 Shortcut chips have a removal × followed by confirmation; Add records a replacement. Chip labels are display-only. Exclusion chips remove a file-search pattern immediately and persist the list. All controls retain visible keyboard focus and accessible labels. Status and inventory text use real state, never mockup values.
 
 Settings chip removal buttons are vertically centered. Settings steppers have spaced, inset minus and plus buttons; Item size uses the same stepper with an 80–176 px range and 8 px increments. Widgets keep their original size while being dragged; app and folder lift feedback remains unchanged.
+
+## Add item redesign
+
+`add-item/Main.dc.html`, `Add item@1x.png` and `Add item dialog redesign.pdf` define the Add item visual reference. Implement it natively with `add-*` Theme tokens, AddOption/AddField's opt-in `add-style`, and AddItemRow. These styles do not change Edit sheets, the Icon picker or Settings. The exported JavaScript and its sample inventory are reference material only.
+
+Add item retains a 560 px maximum width, content-fitting height capped at 760 px, and a scrolling body between its fixed header and separated footer. Its six icon type tiles wrap on narrow windows. App source tabs use an underline; Custom command remains first and selected by default and retains Change icon. Actions are grouped into System, Audio and Media with explicit Add buttons; Installed apps uses cached system icons, real command descriptions and explicit Add buttons. Refresh remains manual. All successful additions close the sheet and duplicates remain allowed. Incomplete or locally invalid forms disable Save; worker validation failures retain the draft. File and Directory place the native chooser alongside Path when space permits, otherwise below it. Widget previews retain the actual Tasks 2×2 and Focus Task 4×2 dimensions at the current Item size.
+
+Add item anchors its top edge at the position of a centered maximum-height sheet (760 px, or the viewport height minus 32 px). Changing type or App source animates only the height over 180 ms; the header remains stationary and the body scrolls beneath it. Website and Edit website offer Automatic (the default for fetched icons), Custom icon, a preview and retry feedback. Automatic fetches after a 400 ms URL typing pause on a background worker. Save waits for that preview, then reuses its bytes rather than fetching again; failed fetches allow a letter icon. Preview bytes stay in memory until Save. Picker Cancel preserves the current choice, and Automatic restores fetching. Existing fetched files and chosen-* custom images retain their mode through folder conversion without changing the config format.

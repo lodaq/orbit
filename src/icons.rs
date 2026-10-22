@@ -100,6 +100,10 @@ fn save_callback(launcher: &Launcher) {
                 ui.set_icon_busy(false);
                 match result {
                     Ok((icon, preview)) => {
+                        if ui.get_item_type() == "Website" {
+                            ui.set_website_auto_icon(false);
+                            ui.set_website_icon_loading(false);
+                        }
                         ui.set_icon_value(serde_json::to_string(&icon).unwrap_or_default().into());
                         ui.set_icon_letter(match icon {
                             Icon::Text(text) => text.into(),

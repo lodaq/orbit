@@ -3,6 +3,8 @@ mod add_item;
 mod apps;
 mod config;
 mod daemon;
+#[path = "english-assistance.rs"]
+mod english_assistance;
 mod icons;
 #[path = "item-drop.rs"]
 mod item_drop;
@@ -14,6 +16,8 @@ mod platform;
 mod recent;
 #[path = "search-cursor.rs"]
 mod search_cursor;
+#[path = "search-edit.rs"]
+mod search_edit;
 mod shortcuts;
 mod spatial;
 mod storage;
@@ -21,6 +25,8 @@ mod ticktick;
 #[path = "ticktick-ui.rs"]
 mod ticktick_ui;
 mod toast;
+#[path = "website-icons.rs"]
+mod website_icons;
 
 slint::include_modules!();
 

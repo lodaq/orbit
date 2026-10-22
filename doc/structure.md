@@ -19,6 +19,7 @@ The approved supplied UI update adds the reference launcher appearance, search a
 - `ui/theme.slint`: shared colors and design tokens for spacing, type, sizes, radii and borders.
 - `ui/controls.slint`: shared buttons, result rows and labeled fields, plus Settings cards, navigation, tabs, switches, selectors, steppers and removable chips built from the design tokens.
 - `doc/design-system.md`: shared appearance and interaction rules.
+- `doc/widgets.md`: widget purpose, current TickTick support, widget behavior, and future widget proposals.
 
 - `src/icons.rs`: icon drafts, visible-character validation, worker decoding and native icon chooser callbacks.
 
@@ -47,3 +48,9 @@ The approved v2 UX specification is `Orbit_Desktop_Launcher_UX_Spec_v2.md`; it s
 - Shared `Kbd` labels in `ui/controls.slint` render shortcut hints, Settings bindings and recorder previews. `tests/caret-ui-check.rs` also checks complete cursor bounds at long Prefix query ends.
 
 - `ui/assets/lock.svg` and `ui/assets/unlock.svg`: top-bar layout lock states. `src/config.rs` persists the lock; `src/apps.rs` guards layout actions and synchronizes it with `ui/launcher.slint`.
+
+- `ui/assets/add-*.svg`: embedded type and System action line icons from the Add item reference, with matching media controls. `AddItemRow` in `ui/controls.slint` presents cached app details and explicit Add controls.
+
+- `src/website-icons.rs`: debounced Website icon preview worker, stale-result checks, in-memory fetched drafts and custom/automatic icon selection for Save.
+
+- `doc/english-assistance.md`: proposed Search anything spelling, grammar, completion and rephrasing feature, with local/cloud settings, implementation stages and acceptance checks; documentation only.

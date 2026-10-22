@@ -290,3 +290,7 @@ Patterns match whole descendant file or directory names case-sensitively. Only `
 ## Layout lock (2026-10-22)
 
 Lock layout / Unlock layout is the padlock immediately left of Settings. One saved state applies to all pages, folder contents and the pinned dock; existing configurations default to unlocked. While locked, disable dragging, resizing, Move to Page, pin/unpin, adding, duplicating, deleting and reordering items/pages, layout sizing controls and Import data. Rust handlers reject these operations as well as the interface. Navigation, launching, search, scrolling, Recent updates, widget interactions and editing existing content remain available. Locking cancels pending drag/resize and placement previews. The lock survives hiding and restarting Orbit; no default shortcut is added.
+
+### Website icon drafts and anchored Add item (2026-10-22)
+
+Add item has a stationary top edge based on its maximum height (760 px, viewport permitting); type changes animate the bottom edge over 180 ms. Website and Edit website show an icon preview before saving. Automatic fetch is the default, debounced while editing URL and performed on a worker; users can choose/change a custom icon or return to Automatic. Save reuses the completed preview, and fetch failures permit saving a letter fallback. Closing or changing sheets invalidates obsolete previews. Custom image names retain the existing chosen-* convention, so mode is inferred without a config migration.

@@ -174,3 +174,8 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | **Lock layout** | The top-bar padlock that prevents changes to page, folder and pinned dock arrangement, additions, deletions and sizing. Its state is saved for all pages. |
 | **Unlock layout** | The same padlock action that permits layout changes again. |
+
+| **Automatic** | Website icon option that fetches and previews the URL's icon before Save. |
+| **Custom icon** | Website icon option that uses the Letter, SVG or chosen image from the Icon picker. |
+| **Fetched icon** | The preview of a Website icon retrieved automatically. |
+| **Retry** | Fetch the Website icon again after a completed attempt. |

@@ -22,6 +22,10 @@ export component Kbd inherits Rectangle {
 }
 
 export component AddOption inherits Rectangle {
+    in property <bool> add-style;
+    in property <bool> type-tile;
+    in property <bool> source-tab;
+
     in property <bool> settings-style;
     in property <bool> navigation-style;
     in property <bool> tab-style;
@@ -42,17 +46,17 @@ export component AddOption inherits Rectangle {
     private property <bool> hovered: hit-area.has-hover;
     private property <bool> focused: keyboard-focus.has-focus;
     width: full-width ? available-width : option-width;
-    height: full-width ? Theme.control-row-height : Theme.control-height;
+    height: type-tile ? 68px : add-style ? (full-width ? 64px : Theme.add-control-height) : full-width ? Theme.control-row-height : Theme.control-height;
     accessible-role: button;
     accessible-label: shortcut != "" ? shortcut : label;
     accessible-enabled: enabled;
     accessible-checked: selected;
     forward-focus: keyboard-focus;
-    border-radius: (root.settings-style ? Theme.settings-r-control : Theme.radius-control);
-    border-width: focused ? Theme.focus-width : root.navigation-style || root.tab-style || root.dashed-style ? 0px : Theme.border-width;
-    border-color: focused ? (root.settings-style ? Theme.settings-icon-accent : Theme.focus) : root.settings-style && root.destructive ? Theme.settings-danger-border : (selected ? (root.settings-style ? Theme.settings-border-control : Theme.primary) : (root.settings-style ? Theme.settings-border-control : Theme.border));
-    opacity: enabled || settings-style ? 1 : 0.45;
-    background: root.settings-style
+    border-radius: root.source-tab ? 0px : root.type-tile ? 12px : root.add-style ? Theme.add-radius : (root.settings-style ? Theme.settings-r-control : Theme.radius-control);
+    border-width: focused ? Theme.focus-width : root.source-tab ? 0px : root.navigation-style || root.tab-style || root.dashed-style ? 0px : Theme.border-width;
+    border-color: root.add-style ? (focused || selected ? Theme.add-focus : Theme.add-border) : focused ? (root.settings-style ? Theme.settings-icon-accent : Theme.focus) : root.settings-style && root.destructive ? Theme.settings-danger-border : (selected ? (root.settings-style ? Theme.settings-border-control : Theme.primary) : (root.settings-style ? Theme.settings-border-control : Theme.border));
+    opacity: enabled || settings-style || add-style ? 1 : 0.45;
+    background: root.add-style ? (root.source-tab ? transparent : !root.enabled ? #1f2647 : root.primary ? Theme.add-primary : root.selected ? Theme.add-selected : root.hovered ? Theme.add-hover : Theme.add-field) : root.settings-style
         ? !enabled ? Theme.settings-disabled-bg
             : hit-area.pressed ? Theme.settings-bg-inset
             : destructive ? Theme.settings-danger-bg
@@ -61,13 +65,15 @@ export component AddOption inherits Rectangle {
             : hovered ? Theme.settings-disabled-bg
             : root.dashed-style ? Theme.settings-bg-inset : root.navigation-style || root.tab-style ? transparent : Theme.settings-bg-control
         : destructive ? Theme.error-background : primary ? Theme.primary : selected ? Theme.selection : hovered ? Theme.raised : Theme.field;
-    if icon-present: Image { x: root.settings-style && root.width <= 40px ? 10px : Theme.space-3; y: (parent.height - self.height) / 2; width: root.settings-style ? 18px : Theme.icon-control-size; height: self.width; source: root.icon; image-fit: contain; }
+    if root.source-tab && root.selected: Rectangle { y: parent.height - 2px; height: 2px; width: parent.width; background: Theme.add-focus; }
+    if icon-present: Image { x: root.type-tile ? (parent.width - self.width) / 2 : root.settings-style && root.width <= 40px ? 10px : Theme.space-3; y: root.type-tile ? 13px : (parent.height - self.height) / 2; width: root.type-tile ? 22px : root.settings-style ? 18px : Theme.icon-control-size; height: self.width; source: root.icon; image-fit: contain; }
     option-label := Text {
-        x: root.settings-style && root.width <= 40px ? 0px : root.icon-present ? Theme.space-3 + (root.settings-style ? 18px : Theme.icon-control-size) + Theme.space-3 : Theme.space-3;
-        width: max(0px, parent.width - self.x - (root.settings-style && root.width <= 40px ? 0px : root.trailing == "" ? Theme.space-3 : root.settings-style ? 32px : 72px));
-        height: parent.height;
+        x: root.type-tile ? 2px : root.settings-style && root.width <= 40px ? 0px : root.icon-present ? Theme.space-3 + (root.settings-style ? 18px : Theme.icon-control-size) + Theme.space-3 : Theme.space-3;
+        y: root.type-tile ? 39px : 0px;
+        width: root.type-tile ? parent.width - 4px : max(0px, parent.width - self.x - (root.settings-style && root.width <= 40px ? 0px : root.trailing == "" ? Theme.space-3 : root.settings-style ? 32px : 72px));
+        height: root.type-tile ? 22px : parent.height;
         text: root.label;
-        color: root.settings-style && !root.enabled ? Theme.settings-disabled-text : root.dashed-style ? Theme.settings-text-accent : root.navigation-style && !root.selected ? Theme.settings-text-muted : root.destructive ? (root.settings-style ? Theme.settings-danger-text : Theme.error) : root.primary ? Theme.on-primary : (root.settings-style ? Theme.settings-text : Theme.text);
+        color: root.add-style ? (!root.enabled ? Theme.add-secondary : root.selected || root.primary ? white : Theme.add-text) : root.settings-style && !root.enabled ? Theme.settings-disabled-text : root.dashed-style ? Theme.settings-text-accent : root.navigation-style && !root.selected ? Theme.settings-text-muted : root.destructive ? (root.settings-style ? Theme.settings-danger-text : Theme.error) : root.primary ? Theme.on-primary : (root.settings-style ? Theme.settings-text : Theme.text);
         font-size: (root.settings-style ? Theme.type-body : Theme.type-control);
         font-weight: root.selected || root.primary ? 600 : 500;
         horizontal-alignment: root.full-width || root.trailing != "" ? left : center;
@@ -107,6 +113,7 @@ export component AddOption inherits Rectangle {
 }
 
 export component AddField inherits VerticalLayout {
+    in property <bool> add-style;
     in property <bool> settings-style;
     in property <string> label;
     in property <string> placeholder;
@@ -122,30 +129,32 @@ export component AddField inherits VerticalLayout {
     horizontal-stretch: 1;
     forward-focus: input-field;
 
-    Text {
+    if root.label != "": Text {
         text: root.label;
-        color: (root.settings-style ? Theme.settings-text-muted : Theme.text);
+        color: (root.add-style ? Theme.add-text : root.settings-style ? Theme.settings-text-muted : Theme.text);
         font-size: Theme.type-control;
-        font-weight: 500;
+        font-weight: root.add-style ? 600 : 500;
     }
     Rectangle {
-        height: root.multiline ? Theme.field-multiline-height : Theme.control-height;
+        height: root.add-style ? (root.multiline ? 132px : Theme.add-control-height) : root.multiline ? Theme.field-multiline-height : Theme.control-height;
         horizontal-stretch: 1;
-        border-radius: (root.settings-style ? Theme.settings-r-control : Theme.radius-control);
-        background: (root.settings-style ? Theme.settings-bg-inset : Theme.field);
+        border-radius: (root.add-style ? Theme.add-radius : root.settings-style ? Theme.settings-r-control : Theme.radius-control);
+        background: (root.add-style ? Theme.add-field : root.settings-style ? Theme.settings-bg-inset : Theme.field);
         border-width: input-field.has-focus ? Theme.focus-width : Theme.border-width;
-        border-color: root.error != "" ? (root.settings-style ? Theme.settings-danger-text : Theme.error) : input-field.has-focus ? (root.settings-style ? Theme.settings-icon-accent : Theme.focus) : (root.settings-style ? Theme.settings-border-control : Theme.border);
-        Text { x: Theme.space-3; y: Theme.space-2; width: parent.width - 2 * Theme.space-3; visible: root.text == ""; text: root.placeholder; color: (root.settings-style ? Theme.settings-text-muted : Theme.secondary); font-size: Theme.type-body; }
+        border-color: root.error != "" ? (root.settings-style ? Theme.settings-danger-text : Theme.error) : input-field.has-focus ? (root.add-style ? Theme.add-focus : root.settings-style ? Theme.settings-icon-accent : Theme.focus) : (root.add-style ? Theme.add-border : root.settings-style ? Theme.settings-border-control : Theme.border);
+        Text { x: Theme.space-3; y: Theme.space-2; width: parent.width - 2 * Theme.space-3; visible: root.text == ""; text: root.placeholder; color: (root.add-style ? Theme.add-secondary : root.settings-style ? Theme.settings-text-muted : Theme.secondary); font-size: Theme.type-body;
+            font-family: root.add-style && root.multiline ? "monospace" : "Inter"; }
         input-field := TextInput {
             x: Theme.space-3; y: Theme.space-2; width: parent.width - 2 * Theme.space-3; height: parent.height - 2 * Theme.space-2;
             text <=> root.text;
             enabled: root.enabled;
             single-line: !root.multiline;
             input-type: root.secret ? InputType.password : InputType.text;
-            color: (root.settings-style ? Theme.settings-text : Theme.text);
+            color: (root.add-style ? Theme.add-text : root.settings-style ? Theme.settings-text : Theme.text);
             font-size: Theme.type-body;
+            font-family: root.add-style && root.multiline ? "monospace" : "Inter";
             selection-background-color: (root.settings-style ? Theme.settings-bg-nav-active : Theme.selection);
-            selection-foreground-color: (root.settings-style ? Theme.settings-text : Theme.text);
+            selection-foreground-color: (root.add-style ? Theme.add-text : root.settings-style ? Theme.settings-text : Theme.text);
             edited => { root.edited(); }
             key-pressed(event) => {
                 if root.multiline && event.text == "\n" {
@@ -418,4 +427,29 @@ export component SettingsSelect inherits Rectangle {
         }
         }
     }
+}
+
+// Cached app and System action rows share one explicit Add control.
+export component AddItemRow inherits Rectangle {
+    in property <string> label;
+    in property <string> description;
+    in property <string> letter;
+    in property <image> icon;
+    in property <bool> icon-present;
+    in property <bool> enabled: true;
+    callback clicked;
+    height: 64px;
+    background: Theme.add-field;
+    border-width: 1px;
+    border-color: Theme.add-border;
+    border-radius: 12px;
+    Rectangle {
+        x: 12px; y: 12px; width: 40px; height: 40px;
+        background: Theme.add-selected; border-radius: 10px;
+        if root.icon-present: Image { source: root.icon; image-fit: contain; width: 22px; height: 22px; x: 9px; y: 9px; }
+        if !root.icon-present: Text { text: root.letter; color: Theme.add-focus; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+    }
+    Text { x: 64px; y: root.description == "" ? 0px : 10px; width: max(0px, parent.width - 160px); height: root.description == "" ? parent.height : 22px; text: root.label; color: Theme.add-text; font-size: 14px; font-weight: 500; vertical-alignment: center; overflow: elide; }
+    if root.description != "": Text { x: 64px; y: 34px; width: max(0px, parent.width - 160px); height: 18px; text: root.description; color: Theme.add-secondary; font-size: 12px; overflow: elide; }
+    AddOption { add-style: true; x: parent.width - 88px; y: 12px; width: 76px; height: 40px; label: "+ Add"; accessible-label: "Add " + root.label; enabled: root.enabled; clicked => { root.clicked(); } }
 }
