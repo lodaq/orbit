@@ -52,6 +52,15 @@ Native caret suppression uses cursor-visible, not width: both 0 px and a tiny po
 
 The search bar keeps its approved position and 560 px maximum width, with a 48 px minimum height, 16 px input text, consistent 12 px outer padding and a quiet focus border. The Prefix badge aligns with the first text row. The keycap addon uses the first saved Focus Search anything binding; footer and close hints likewise follow the saved shortcuts, including removal.
 
-Opening a folder moves its panel from the source tile to the center over 220 ms while the backdrop and content fade in. Closing reverses the movement. The timing comes from `Theme.folder-transition`.
+Opening a folder moves its panel from the source tile to the center over 150 ms while scaling it from 0% to 100%; panel width and height do not animate. The backdrop and content fade in. Closing reverses the movement. The timing comes from `Theme.folder-transition`.
 
 The wrapped text width reserves the entire blue block width plus 2 px inset on each side. Text measurement uses exactly the input width. Cursor coordinates include the input inset and Flickable offset. Vertical scroll decisions use the actual full cursor height and retain 2 px bottom clearance, including the final line at the maximum search height. The overlay stays clipped to its viewport while the whole resting block remains visible.
+
+
+## Settings
+
+`settings-*` tokens in `ui/theme.slint` and shared Settings controls in `ui/controls.slint` implement `settings/DESIGN.md` and its handoff palette. These tokens apply only to Settings; the top bar, dock, footer hints and other sheets retain their existing appearance. The sidebar is 232 px wide, the content scrolls below its fixed title and Search bar segmented control, and Back stays at the bottom of the sidebar. Prefix and Action grids use three columns at 1100 px content width, two at 640 px and one below; General and Shortcuts split at 900 px.
+
+Shortcut chips have a removal × followed by confirmation; Add records a replacement. Chip labels are display-only. Exclusion chips remove a file-search pattern immediately and persist the list. All controls retain visible keyboard focus and accessible labels. Status and inventory text use real state, never mockup values.
+
+Settings chip removal buttons are vertically centered. Settings steppers have spaced, inset minus and plus buttons; Item size uses the same stepper with an 80–176 px range and 8 px increments. Widgets keep their original size while being dragged; app and folder lift feedback remains unchanged.

@@ -198,7 +198,7 @@ Settings has General, Shortcuts and Search bar tabs. Shortcuts lists each Orbit 
 The authoritative visual reference is `doc/orbit-ui/orbit.png` and `orbit.svg` (1440 × 1080). The user approved this design replacing the previous light theme restrictions on 2026-10-18.
 
 - Use the reference radial background, lavender artwork, logo, search field, Settings and Close controls, page dots, labeled dock and footer hints.
-- Embed Inter. Page labels are 14 px, dock labels 11 px. Page icons are 80 px; dock icons are 48 px.
+- Embed Inter. Page labels are 14 px, dock labels 11 px. Page icons are 92 px in the default 128 px tile, leaving a compact label gap; dock icons are 48 px.
 - Top bar: logo at (48,40), 360 × 44 px centered search at y=34, controls 48 px apart at the right.
 - Grid: 144 px between item centers at reference width (128 px item size + 16 px default Item Gap). The page area fills the available width and height, and the grid adds columns as width permits. The page and its 128 × 128 px item tiles have 1 px borders. Item tiles have a lighter background on hover. The gaps between tiles do not select items. Settings lets the user change Item Gap from 0 to 64 px.
 - Page dots are centered 146 px above the bottom. The dock is 98 px tall, 26 px above the bottom, with rounded corners and 100 px per item. It can grow to 1400 px wide and scrolls horizontally when its Recent and Pinned items overflow. Side controls sit outside the scroll viewport. Each dock item's hover area is inset 6 px on all sides. The separator divides Recent from Pinned when both are present.
@@ -253,7 +253,7 @@ Each step ends with an app that runs on Arch.
 
 ## 14. Assumptions to confirm
 
-1. Item size: Use 80 px icons, 14 px labels and 144 px spacing between item centers. Settings can change square page tiles from 80 to 240 px; icons scale to fit.
+1. Item size: Use 92 px icons in the default 128 px tile, 14 px labels and 144 px spacing between item centers. Settings can change square page tiles from 80 to 240 px; icons scale to fit.
 2. Editing an installed app changes its name and icon, not what it launches.
 3. If an installed app is gone from the Installed apps list after a refresh, its item stays on its page. Launching it shows a banner such as "Couldn't start 'X': not found".
 
@@ -276,3 +276,17 @@ Settings → Shortcuts includes Delete previous word (Ctrl+W by default), scoped
 Shortcut displays use shared native Kbd keycaps, including search, footer, Settings bindings and recording. Search and close/page hints reflect saved bindings. Search anything reserves full cursor space at wrapped line ends and scrolls the entire final block into view, with or without a Prefix.
 
 Search anything uses 16 px text for the query and placeholder. Opening a folder animates its panel from the tile to the centered overlay over 220 ms while the backdrop fades in; closing reverses the movement.
+
+
+### Settings redesign and file-search exclusions (2026-10-22)
+
+Settings follows `settings/DESIGN.md` with General, Shortcuts, Search bar and Back in a sidebar, and General, Prefixes and Actions in Search bar’s segmented control. The top bar, dock and bottom hints retain their existing appearance. Existing actions, sizing preview, Save, Reset and unsaved-sizing cancellation remain available. Shortcuts use display-only key chips with × and confirmation; use Add after removing a binding to change it.
+
+Search bar → General includes Excluded from file search. `config.json` version 3 adds `file_search_exclusions`, defaulting when missing to `.git`, `node_modules`, `.*`, `.local`, `.claude`, `.agent`, `.cache`, `.venv`, `__pycache__`, `dist`, `build`, `.next`, `target`, `.idea`, `.vscode`, `.npm`. An explicitly empty list stays empty. Trim entries and ignore blanks and duplicates; successful edits save atomically and invalidate the worker’s cached path index. Errors preserve the draft and saved list.
+
+Patterns match whole descendant file or directory names case-sensitively. Only `*` is special and matches zero or more characters; `.*` matches dot-prefixed names. Matching directories are not descended into. Explicitly configured search roots are still entered. Directory search and saved launcher items are unaffected. Index rebuilding stays on the worker and does no work when showing Orbit.
+
+
+## Layout lock (2026-10-22)
+
+Lock layout / Unlock layout is the padlock immediately left of Settings. One saved state applies to all pages, folder contents and the pinned dock; existing configurations default to unlocked. While locked, disable dragging, resizing, Move to Page, pin/unpin, adding, duplicating, deleting and reordering items/pages, layout sizing controls and Import data. Rust handlers reject these operations as well as the interface. Navigation, launching, search, scrolling, Recent updates, widget interactions and editing existing content remain available. Locking cancels pending drag/resize and placement previews. The lock survives hiding and restarting Orbit; no default shortcut is added.

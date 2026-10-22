@@ -396,3 +396,15 @@ Use the attached Claude timeline as **reference test fixtures for 1×1 sparse-gr
 **Definition of done:** I can customize item size in Settings, drag any app/folder to an exact grid cell and leave holes, *create a folder from the center and reorder from the edges of another app*, manage folder contents without interrupted drag, slide between pages while carrying an item, rearrange the persistent dock, choose/place/move/resize an elementary random-text widget, and use configured Search Prefixes to dispatch text to named Actions. Every successful change survives a restart. The result feels like a desktop-friendly Android launcher inside Orbit, not a sortable card list or a phone emulator.
 
 Search anything wraps long queries and grows vertically, with results below the field. Backspace removes an active Prefix when its query is empty. When no local items match, show all available search engines with the saved default first and selected (Perplexity initially). Clicking an engine or pressing Enter searches the current query with that engine.
+
+
+### Approved Settings update (2026-10-22)
+
+The Settings redesign in `doc/settings/DESIGN.md` supersedes the earlier Settings navigation/card layout. General, Shortcuts and Search bar use a left sidebar; Back is pinned below it. Search bar uses General, Prefixes and Actions in a fixed segmented control. Keep the top bar, dock and bottom hints unchanged. Shortcuts use × with confirmation and Add for replacement, without clickable chip labels or Change buttons. Include the file-search exclusions described in `doc/spec.md`, persisted with the existing search settings and applied on the worker only to recursive file indexing.
+
+The 2026-10-22 Settings follow-up replaces the Item size slider with the shared number stepper (80–176 px, 8 px increments). Widgets retain their original rendered dimensions and grab offset while dragging, overriding lift enlargement for widgets only.
+
+
+## Layout lock (2026-10-22)
+
+Lock layout / Unlock layout is the padlock immediately left of Settings. One saved state applies to all pages, folder contents and the pinned dock; existing configurations default to unlocked. While locked, disable dragging, resizing, Move to Page, pin/unpin, adding, duplicating, deleting and reordering items/pages, layout sizing controls and Import data. Rust handlers reject these operations as well as the interface. Navigation, launching, search, scrolling, Recent updates, widget interactions and editing existing content remain available. Locking cancels pending drag/resize and placement previews. The lock survives hiding and restarting Orbit; no default shortcut is added.

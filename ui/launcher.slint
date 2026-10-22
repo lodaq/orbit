@@ -1,5 +1,5 @@
 import { Theme } from "theme.slint";
-import { AddOption, AddField, SmoothCaret, Kbd } from "controls.slint";
+import { SettingsAddButton, SettingsButton, SettingsField, SettingsCard, SettingsTitle, SettingsDescription, SettingsNav, SettingsTabGroup, SettingsTab, SettingsSwitch, SettingsChip, SettingsStepper, SettingsSelect, AddOption, AddField, SmoothCaret, Kbd } from "controls.slint";
 import "fonts/inter.ttf";
 import { Button, LineEdit, TextEdit, Palette, ComboBox, SpinBox, Slider } from "std-widgets.slint";
 
@@ -178,15 +178,25 @@ component PageTile inherits Rectangle {
     in property <AppTile> drag-preview-item;
     width: 128px;
     height: 128px;
-    background: index < items.length && items[index].ticktick ? transparent : hovered ? #ffffff16 : transparent;
-    border-radius: index < items.length && items[index].widget ? 16px : min(self.width,self.height) * 0.15625;
+    background: index < items.length && items[index].widget && !items[index].ticktick && hovered ? #ffffff16 : transparent;
+    border-radius: index < items.length && items[index].widget ? 16px : Theme.radius-control;
     border-width: 0px;
     border-color: transparent;
     changed ticktick-next-completion-sequence => { if ticktick-next-completion-sequence > 0 { ticktick-next-completion-flash = true; completion-flash-timer.restart(); } }
     completion-flash-timer := Timer { running: root.ticktick-next-completion-flash; interval: 420ms; triggered => { root.ticktick-next-completion-flash = false; } }
+    private property <length> item-icon-size: min(self.width * 0.75, self.height - 36px);
+    private property <length> item-content-top: (self.height - item-icon-size - Theme.space-1 - 16px) / 2;
     if index < items.length && !items[index].widget: Rectangle {
-        x: (parent.width - self.width) / 2; y: parent.height * 0.09;
-        width: min(parent.width * 0.625, parent.height - 44px); height: self.width;
+        x: (parent.width - self.width) / 2;
+        width: root.item-icon-size + 2 * root.item-content-top;
+        // The label line box includes space below the visible letters.
+        height: parent.height - Theme.space-1;
+        background: root.hovered ? #ffffff16 : transparent;
+        border-radius: Theme.radius-control;
+    }
+    if index < items.length && !items[index].widget: Rectangle {
+        x: (parent.width - self.width) / 2; y: root.item-content-top;
+        width: root.item-icon-size; height: self.width;
         border-radius: 20px;
         if index < items.length && !folder-preview: ItemIcon { width: parent.width; height: parent.height; item: items[index]; }
         if index < items.length && folder-preview && !items[index].folder: ItemIcon {
@@ -298,10 +308,11 @@ component PageTile inherits Rectangle {
         }
     }
     if index < items.length && !items[index].ticktick: Text {
-        y: parent.height - 28px;
+        y: items[index].widget ? parent.height - 28px : root.item-content-top + root.item-icon-size + Theme.space-1;
         x: 6px;
         width: parent.width - 12px;
-        height: 24px;
+        height: items[index].widget ? 24px : 16px;
+        vertical-alignment: center;
         text: folder-preview ? (items[index].folder ? "Add to folder" : "Create folder") : items[index].name;
         color: #e0e3f4;
         font-size: folder-preview ? 14px : min(14px, max(10px, min(parent.width - 12px, parent.height) * 0.105));
@@ -408,7 +419,7 @@ export component Launcher inherits Window {
         triggered => {
             // The first frames report the default window size, so a grid that is
             // smaller than the saved one is not a real resize and is ignored.
-            if root.launcher-visible && !root.settings && !root.dragging && !root.busy
+            if root.launcher-visible && !root.layout-locked && !root.settings && !root.dragging && !root.busy
                 && (root.known-columns != grid.columns || root.known-rows != grid.rows)
                 && (root.known-columns != 0
                     || (grid.columns >= root.saved-columns && grid.rows >= root.saved-rows)) {
@@ -452,6 +463,12 @@ export component Launcher inherits Window {
     in property <[AppTile]> recent-items;
     in property <[AppTile]> search-results;
     in property <[string]> file-search-paths;
+    in property <[string]> file-search-exclusions;
+    private property <string> file-search-exclusion-draft;
+    callback add-file-search-exclusion(string);
+    callback remove-file-search-exclusion(string);
+    callback file-search-exclusion-saved();
+    file-search-exclusion-saved => { root.file-search-exclusion-draft = ""; }
     in property <[string]> directory-search-paths;
     in-out property <string> search-text;
     in-out property <bool> settings;
@@ -468,8 +485,8 @@ export component Launcher inherits Window {
     private property <string> action-tokens-draft;
     private property <bool> action-used;
     private property <bool> action-editor-open;
-    private property <int> action-columns: max(1, floor((root.width - 160px) / 300px));
-    private property <int> shortcut-columns: max(1, floor((root.width - 160px) / 450px));
+    private property <int> action-columns: root.width - 392px >= 1100px ? 3 : root.width - 392px >= 640px ? 2 : 1;
+    private property <int> shortcut-columns: root.width - 392px >= 900px ? 2 : 1;
     private property <string> prefix-id-draft;
     private property <string> prefix-name-draft;
     private property <string> prefix-token-draft;
@@ -540,6 +557,13 @@ export component Launcher inherits Window {
         root.default-search-engine-index = index;
         root.saved-default-search-engine-index = index;
     }
+    in property <bool> layout-locked;
+    callback save-layout-locked(bool);
+    changed layout-locked => {
+        root.cancel-drag(); root.placing-widget = -1;
+        root.context-index = -1; root.page-context = false; root.dock-context = "";
+        root.move-id = ""; root.page-delete-confirm = false;
+    }
     callback save-appearance(int, int, int, int, int);
     callback appearance-saved(int,int,int);
     appearance-saved(margin,size,gap) => { root.saved-margin = margin; root.saved-size = size; root.saved-grid-gap = gap; }
@@ -558,7 +582,7 @@ export component Launcher inherits Window {
     private property <bool> page-delete-confirm;
     callback delete-page();
     callback confirm-delete-page();
-    confirm-delete-page => { if root.page-count > 1 && !root.busy && !root.sheet && !root.folder-open { root.page-delete-confirm = true; } }
+    confirm-delete-page => { if !root.layout-locked && root.page-count > 1 && !root.busy && !root.sheet && !root.folder-open { root.page-delete-confirm = true; } }
     private property <int> search-selection;
     private property <length> search-offset;
     private property <int> search-columns: max(1, floor(min(1316px, root.width - 96px) / 160px));
@@ -885,7 +909,7 @@ export component Launcher inherits Window {
     function clear-merge() {
         root.merge-target = -1;
         root.merge-ready = false;
-        root.drag-scale = root.dragging ? 1.08 : 1;
+        root.drag-scale = root.dragging && !root.drag-item.widget ? 1.08 : 1;
         merge-timer.stop();
     }
     function cancel-drag() {
@@ -959,15 +983,19 @@ export component Launcher inherits Window {
         if root.drag-index < 0 || root.drop-pending { return; }
         root.drag-x = x;
         root.drag-y = y;
+        if root.layout-locked {
+            if abs(x - root.drag-start-x) >= 8px || abs(y - root.drag-start-y) >= 8px { root.cancel-drag(); }
+            return;
+        }
         if root.ticktick-control-pressed {
             if sqrt((x - root.drag-start-x)*(x - root.drag-start-x)/1px/1px + (y - root.drag-start-y)*(y - root.drag-start-y)/1px/1px) < 8 { return; }
             root.ticktick-control-pressed = false;
             root.dragging = true;
-            root.drag-scale = 1.08;
+            root.drag-scale = root.drag-item.widget ? 1 : 1.08;
         }
         if root.resizing {
             root.dragging = true;
-            root.drag-scale = 1.08;
+            root.drag-scale = root.drag-item.widget ? 1 : 1.08;
             root.resize-width = min(min(root.drag-item.max-span-x,grid.columns - root.drag-item.col),max(root.drag-item.min-span-x,floor(root.drag-item.span-x + (x - root.drag-start-x) / 1px)));
             root.resize-height = min(min(root.drag-item.max-span-y,grid.rows - root.drag-item.row),max(root.drag-item.min-span-y,floor(root.drag-item.span-y + (y - root.drag-start-y) / 1px)));
             return;
@@ -1254,6 +1282,7 @@ export component Launcher inherits Window {
 
     }
     function add-item(kind: string) {
+        if root.layout-locked { return; }
         root.page-context = false;
         sheet-scroll.content-x = 0px; sheet-scroll.content-y = 0px;
         root.icon-preview-present = false; root.icon-letter = "";
@@ -1506,11 +1535,27 @@ export component Launcher inherits Window {
             label: root.shortcut-hints[0]; available-width: parent.width / 3;
         }
     }
-    for index in 2: Rectangle {
-        x: root.width - 132px + index * 48px; y: 36px; width: 36px; height: 40px;
-        border-radius: 10px; background: top-button.has-hover ? #ffffff10 : transparent;
-        Image { x: 8px; y: 10px; width: 20px; height: 20px; source: index == 0 ? @image-url("assets/settings.svg") : @image-url("assets/close.svg"); }
-        top-button := TouchArea { mouse-cursor: pointer; clicked => { if index == 0 { root.settings = !root.settings; } else { root.hide-launcher(); } } }
+    for index in 3: Rectangle {
+        x: root.width - 180px + index * 48px; y: 36px; width: 36px; height: 40px;
+        property <string> label: index == 0 ? (root.layout-locked ? "Unlock layout" : "Lock layout") : index == 1 ? "Settings" : "Close";
+        accessible-role: button; accessible-label: self.label;
+        accessible-action-default => { top-button.clicked(); }
+        border-radius: 10px;
+        background: index == 0 && root.layout-locked ? Theme.search-focus-border : top-button.has-hover ? #ffffff10 : transparent;
+        Image { x: 8px; y: 10px; width: 20px; height: 20px;
+            source: index == 0 ? (root.layout-locked ? @image-url("assets/lock.svg") : @image-url("assets/unlock.svg")) : index == 1 ? @image-url("assets/settings.svg") : @image-url("assets/close.svg"); }
+        top-button := TouchArea {
+            enabled: !root.busy; mouse-cursor: pointer;
+            clicked => {
+                if index == 0 { root.cancel-drag(); root.busy = true; root.save-layout-locked(!root.layout-locked); }
+                else if index == 1 { root.settings = !root.settings; } else { root.hide-launcher(); }
+            }
+        }
+        if index == 0 && top-button.has-hover: Rectangle {
+            x: -72px; y: parent.height + 4px; width: 108px; height: 28px;
+            background: Theme.raised; border-radius: 6px;
+            Text { text: root.layout-locked ? "Unlock layout" : "Lock layout"; color: Theme.text; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+        }
     }
     VerticalLayout {
         padding-left: 0px; padding-right: 0px; padding-top: 78px; padding-bottom: 134px;
@@ -1658,7 +1703,7 @@ export component Launcher inherits Window {
                             if !root.ticktick-scrollbar-dragging && index >= 0 && index < root.items.length && root.items[index].widget {
                                 let right = grid.absolute-position.x + (root.items[index].col + root.items[index].span-x) * grid.tile-size - root.grid-gap * 0.5px;
                                 let bottom = grid.absolute-position.y + (root.items[index].row + root.items[index].span-y) * grid.tile-size - root.grid-gap * 0.5px;
-                                root.resizing = x >= right - 32px && x <= right + 8px && y >= bottom - 32px && y <= bottom + 8px;
+                                root.resizing = !root.layout-locked && x >= right - 32px && x <= right + 8px && y >= bottom - 32px && y <= bottom + 8px;
                                 root.resize-width = root.items[index].span-x; root.resize-height = root.items[index].span-y;
                                 if root.items[index].ticktick && !root.resizing {
                                     let tile-y = grid.absolute-position.y + root.items[index].row * grid.tile-size + root.grid-gap * 0.5px;
@@ -1727,8 +1772,8 @@ export component Launcher inherits Window {
         }
         if root.page-count < 9: Rectangle {
             width: 16px; height: 24px;
-            Text { text: "+"; width: parent.width; height: parent.height; color: #a8b3ff; font-size: 17px; horizontal-alignment: center; vertical-alignment: center; }
-            TouchArea { mouse-cursor: pointer; enabled: !root.busy; clicked => { root.busy = true; root.add-page(); } }
+            Text { text: "+"; width: parent.width; height: parent.height; color: root.layout-locked ? Theme.secondary : #a8b3ff; opacity: root.layout-locked ? 0.45 : 1; font-size: 17px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { mouse-cursor: pointer; enabled: !root.layout-locked && !root.busy; clicked => { root.busy = true; root.add-page(); } }
         }
     }
     dock := Rectangle {
@@ -1852,258 +1897,354 @@ export component Launcher inherits Window {
         }
     }
     if root.settings: Rectangle {
-        x: 48px; y: 112px;
-        width: root.width - 96px; height: root.height - 192px;
-        background: #20243b; border-color: #a6b1ed26; border-width: 1px; border-radius: 20px;
+        x: 40px; y: 112px;
+        width: root.width - 80px; height: root.height - 264px;
+        background: Theme.settings-bg-panel; border-color: Theme.settings-border-panel; border-width: 1px; border-radius: Theme.settings-r-panel;
+        Rectangle { x: Theme.settings-sidebar-w; y: 1px; width: 1px; height: parent.height - 2px; background: Theme.settings-border-panel; }
         VerticalLayout {
-            padding: 28px; spacing: 16px;
-            HorizontalLayout {
-                Text { text: "Settings"; font-size: 24px; color: #e0e3f4; vertical-alignment: center; }
-                Rectangle { horizontal-stretch: 1; }
-                Kbd { label: root.shortcut-hints[1]; }
-                Text { text: root.shortcut-hints[1] == "" ? "" : "to close"; color: Theme.secondary; font-size: Theme.type-hint; vertical-alignment: center; }
+            x: 16px; y: 28px; width: Theme.settings-sidebar-w - 32px; height: parent.height - 48px;
+            spacing: 4px;
+            Text { text: "Settings"; color: Theme.settings-text; font-size: 22px; font-weight: 600; height: 46px; }
+            SettingsNav { label: "General"; icon: @image-url("assets/settings.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 0; clicked => { root.settings-tab = 0; root.shortcuts-tab = false; root.shortcut-recording = false; } }
+            SettingsNav { label: "Shortcuts"; icon: @image-url("assets/keyboard.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 1; clicked => { root.settings-tab = 1; root.shortcuts-tab = true; } }
+            SettingsNav { label: "Search bar"; icon: @image-url("assets/search.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab >= 2; clicked => { root.settings-tab = 4; root.shortcuts-tab = false; root.shortcut-recording = false; } }
+            Rectangle { vertical-stretch: 1; }
+            SettingsNav { label: "Back"; icon: @image-url("assets/arrow-left.svg"); icon-present: true; available-width: parent.width; hint: root.shortcut-hints[1]; clicked => { root.search-path-editor = false; root.settings = false; } }
+        }
+        VerticalLayout {
+            x: Theme.settings-sidebar-w + 40px; y: 28px;
+            width: parent.width - Theme.settings-sidebar-w - 80px; height: parent.height - 56px;
+            spacing: 20px;
+            VerticalLayout { spacing: 6px; vertical-stretch: 0; alignment: start;
+                Text { text: root.settings-tab == 0 ? "General" : root.settings-tab == 1 ? "Shortcuts" : "Search bar"; color: Theme.settings-text; font-size: Theme.settings-title-size; font-weight: 600; }
+                SettingsDescription { text: root.settings-tab == 0 ? "Home screen layout, integrations and app data." : root.settings-tab == 1 ? "Choose an action, then record its shortcut. Changes are saved automatically." : root.settings-tab == 2 ? "Prefixes route a token to an action. Type one before your query to use it." : root.settings-tab == 3 ? "Choose an action to edit it, or create a new one." : "Control how Orbit finds things and where it looks."; }
             }
-            HorizontalLayout {
-                spacing: 8px;
-                AddOption { label: "General"; selected: root.settings-tab == 0; clicked => { root.settings-tab = 0; root.shortcuts-tab = false; root.shortcut-recording = false; } }
-                AddOption { label: "Shortcuts"; selected: root.settings-tab == 1; clicked => { root.settings-tab = 1; root.shortcuts-tab = true; } }
-                AddOption { label: "Search bar"; option-width: 120px; selected: root.settings-tab >= 2; clicked => { root.settings-tab = 4; root.shortcuts-tab = false; root.shortcut-recording = false; } }
+            if root.settings-tab >= 2: GridLayout {
+                spacing: 12px;
+                SettingsTabGroup { row: 0; col: 0; width: 322px;
+                    SettingsTab { label: "General"; selected: root.settings-tab == 4; clicked => { root.settings-tab = 4; } }
+                    SettingsTab { label: "Prefixes"; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; } }
+                    SettingsTab { label: "Actions"; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; } }
+                }
+                Rectangle { row: 0; col: 1; horizontal-stretch: 1; }
+                if root.settings-tab == 3 && !root.action-editor-open: SettingsButton { row: root.width - 392px < 500px ? 1 : 0; col: root.width - 392px < 500px ? 0 : 2; label: "New action"; option-width: 132px; primary: true; enabled: !root.busy; clicked => { root.action-id-draft = ""; root.action-name-draft = ""; root.action-kind-draft = "Shell"; root.action-source-draft = ""; root.action-description-draft = ""; root.action-tokens-draft = ""; root.action-used = false; root.action-editor-open = true; } }
             }
-            Flickable {
-                width: root.width - 154px;
+            settings-body := Flickable {
+                width: root.width - 392px;
                 vertical-stretch: 1;
                 content-width: self.width;
                 content-height: settings-content.preferred-height;
                 settings-content := VerticalLayout {
-                    width: root.width - 154px;
-                    spacing: 16px;
-            if root.settings-tab >= 2: HorizontalLayout {
-                spacing: Theme.space-2;
-                AddOption { label: "General"; selected: root.settings-tab == 4; clicked => { root.settings-tab = 4; } }
-                AddOption { label: "Prefixes"; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; } }
-                AddOption { label: "Actions"; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; } }
-            }
-            if root.banner != "": Text { text: root.banner; color: Theme.error; wrap: word-wrap; }
-            if root.settings-tab == 0: VerticalLayout {
-            horizontal-stretch: 1;
-            spacing: 16px;
-            Text { text: "Home Screen"; color: Theme.text; font-size: Theme.type-title; font-weight: 600; }
-            HorizontalLayout {
-                spacing: 12px;
-                Text { text: "Page margin (px)"; color: Theme.text; vertical-alignment: center; }
-                SpinBox { minimum: 0; maximum: 64; value <=> root.page-margin; }
-                Text { text: "Item Gap (px)"; color: Theme.text; vertical-alignment: center; }
-                SpinBox { minimum: 0; maximum: 64; value <=> root.grid-gap; }
-                Rectangle { horizontal-stretch: 1; }
-            }
-            HorizontalLayout {
-                spacing: Theme.space-3;
-                Text { text: "Home Screen > Item Size"; color: Theme.text; vertical-alignment: center; }
-                Slider { minimum: 80; maximum: 176; value: root.item-size; changed => { root.item-size = round(self.value / 8) * 8; } }
-                Text { text: root.item-size + " px"; color: Theme.text; }
-                AddOption { label: "Reset to default"; option-width: 144px; clicked => { root.item-size = 128; root.grid-gap = 16; } }
-                AddOption { label: "Save"; enabled: !root.busy; clicked => { root.busy = true; root.save-appearance(root.page-margin, root.item-size, root.grid-gap, grid.columns, grid.rows); } }
-                Rectangle { horizontal-stretch: 1; }
-            }
-            HorizontalLayout {
-                spacing: 12px;
-                PageTile { width: root.item-size * 1px; height: self.width; items: root.items; index: 0; }
-                Text { text: "Live preview · " + grid.columns + " columns × " + grid.rows + " rows. Save reflows displaced items; Back cancels unsaved sizing."; wrap: word-wrap; color: Theme.secondary; }
-            }
-            Text { text: "TickTick account"; color: #e0e3f4; font-size: 16px; }
-            AddField { label: "Personal API token"; placeholder: "Paste a replacement token"; text <=> root.ticktick-token-draft; secret: true; }
-            HorizontalLayout {
-                spacing: 8px;
-                AddOption { label: "Connect TickTick"; option-width: 160px; primary: true; enabled: !root.ticktick-loading && root.ticktick-token-draft != ""; clicked => { root.save-ticktick-token(root.ticktick-token-draft); root.ticktick-token-draft = ""; } }
-                AddOption { label: "Disconnect"; option-width: 112px; destructive: true; enabled: !root.ticktick-loading && root.ticktick-connected; clicked => { root.remove-ticktick-token(); } }
-                Text { text: root.ticktick-connected ? "Connected" : "Not connected"; color: Theme.secondary; vertical-alignment: center; }
-            }
-            Text { text: root.ticktick-status; color: Theme.secondary; wrap: word-wrap; font-size: 12px; }
-            Text { text: "Data"; color: Theme.text; font-size: Theme.type-title; font-weight: 600; }
-            HorizontalLayout {
-                spacing: 10px;
-                AddOption { label: "Refresh installed apps"; option-width: 190px; enabled: !root.busy; clicked => { root.busy = true; root.refresh-installed-apps(); } }
-                AddOption { label: "Export data"; option-width: 132px; enabled: !root.busy; clicked => { root.busy = true; root.data-busy = true; root.data-status = ""; root.transfer-data(false); } }
-                AddOption { label: "Import data"; option-width: 132px; enabled: !root.busy; clicked => { root.busy = true; root.data-busy = true; root.data-status = ""; root.transfer-data(true); } }
-            }
-            if root.data-status != "": Text { text: root.data-status; color: Theme.secondary; wrap: word-wrap; font-size: 12px; }
-            Text { text: root.installed-status; color: #a7adc7; }
-            }
-            if root.settings-tab == 4: VerticalLayout {
-                spacing: Theme.space-4;
-                AddOption {
-                    label: "Smooth cursor"; selected: root.smooth-cursor;
-                    trailing: root.smooth-cursor ? "On" : "Off";
-                    full-width: true; available-width: parent.width;
-                    enabled: !root.busy;
-                    clicked => { root.busy = true; root.save-smooth-cursor(!root.smooth-cursor); }
-                }
-            HorizontalLayout {
-                spacing: 12px;
-                Text { text: "Search engine when no items match"; color: Theme.text; vertical-alignment: center; }
-                ComboBox { model: root.search-engine-names; current-index <=> root.default-search-engine-index; enabled: !root.busy; }
-                AddOption {
-                    label: "Save"; primary: true;
-                    enabled: !root.busy && root.default-search-engine-index != root.saved-default-search-engine-index;
-                    clicked => { root.busy = true; root.save-default-search-engine(root.default-search-engine-index); }
-                }
-            }
-            HorizontalLayout {
-                horizontal-stretch: 1; spacing: 20px;
-                VerticalLayout {
-                    width: (root.width - 172px) / 2; horizontal-stretch: 1; spacing: 10px; alignment: start;
-                    Text { text: "File search paths"; color: #e0e3f4; font-size: 16px; font-weight: 600; }
-                    for path[index] in root.file-search-paths: HorizontalLayout {
-                        min-height: 40px; spacing: 8px; horizontal-stretch: 1;
-                        Text { min-width: 250px; text: path; color: #a7adc7; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
-                        AddOption { label: "Edit"; option-width: 64px; enabled: !root.busy; clicked => { root.search-path-directory = false; root.search-path-index = index; root.search-path-draft = path; root.search-path-editor = true; } }
-                        AddOption { label: "Delete"; option-width: 72px; destructive: true; enabled: !root.busy; clicked => { root.busy = true; root.delete-search-path(false, index); } }
-                    }
-                    AddOption { label: "Add file path"; option-width: 144px; enabled: !root.busy; clicked => { root.search-path-directory = false; root.search-path-index = -1; root.search-path-draft = ""; root.search-path-editor = true; } }
-                }
-                VerticalLayout {
-                    width: (root.width - 172px) / 2; horizontal-stretch: 1; spacing: 10px; alignment: start;
-                    Text { text: "Directory search paths"; color: #e0e3f4; font-size: 16px; font-weight: 600; }
-                    for path[index] in root.directory-search-paths: HorizontalLayout {
-                        min-height: 40px; spacing: 8px; horizontal-stretch: 1;
-                        Text { min-width: 250px; text: path; color: #a7adc7; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
-                        AddOption { label: "Edit"; option-width: 64px; enabled: !root.busy; clicked => { root.search-path-directory = true; root.search-path-index = index; root.search-path-draft = path; root.search-path-editor = true; } }
-                        AddOption { label: "Delete"; option-width: 72px; destructive: true; enabled: !root.busy; clicked => { root.busy = true; root.delete-search-path(true, index); } }
-                    }
-                    AddOption { label: "Add directory path"; option-width: 176px; enabled: !root.busy; clicked => { root.search-path-directory = true; root.search-path-index = -1; root.search-path-draft = ""; root.search-path-editor = true; } }
-                }
-            }
-            if root.search-path-editor: Rectangle {
-                height: 116px; border-radius: 12px; background: #ffffff08;
-                VerticalLayout {
-                    padding: 12px; spacing: 8px;
-                    AddField {
-                        label: root.search-path-directory ? "Directory search path" : "File search path";
-                        placeholder: "/home/user/Documents"; text <=> root.search-path-draft;
-                        accepted => { root.busy = true; root.save-search-path(root.search-path-directory, root.search-path-index, root.search-path-draft); }
-                    }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        AddOption { label: "Cancel"; option-width: 80px; enabled: !root.busy; clicked => { root.search-path-editor = false; } }
-                        AddOption { label: "Save"; option-width: 80px; primary: true; enabled: !root.busy; clicked => { root.busy = true; root.save-search-path(root.search-path-directory, root.search-path-index, root.search-path-draft); } }
-                    }
-                }
-            }
-            }
-            if root.settings-tab == 1: VerticalLayout {
-                spacing: 16px;
-                Text { text: "Choose an action, then record its shortcut. Changes are saved automatically."; color: Theme.secondary; font-size: 13px; }
-                Flickable {
-                    height: max(300px, ceil(root.shortcut-groups.length / root.shortcut-columns) * 164px);
-                    content-height: max(self.height, ceil(root.shortcut-groups.length / root.shortcut-columns) * 164px);
-                    content-width: self.width;
-                    for group[index] in root.shortcut-groups: Rectangle {
-                        x: mod(index, root.shortcut-columns) * ((parent.width - (root.shortcut-columns - 1) * 12px) / root.shortcut-columns + 12px);
-                        y: floor(index / root.shortcut-columns) * 164px;
-                        width: (parent.width - (root.shortcut-columns - 1) * 12px) / root.shortcut-columns;
-                        height: 152px;
-                        background: Theme.field; border-color: Theme.border; border-width: 1px; border-radius: 10px;
-                        Text { x: 12px; y: 8px; width: parent.width - 100px; height: 32px; vertical-alignment: center; text: root.shortcut-actions[group.action]; color: Theme.text; font-size: 14px; wrap: word-wrap; }
-                        AddOption { x: parent.width - 80px; y: 8px; label: "Add"; option-width: 68px; enabled: !root.busy; clicked => { root.shortcut-action = group.action; root.shortcut-existing = ""; root.shortcut-draft = ""; root.shortcut-editor = true; } }
-                        Flickable {
-                            x: 10px; y: 48px; width: parent.width - 20px; height: 92px;
-                            content-width: max(self.width, group.entries.length * 240px); content-height: self.height;
-                            HorizontalLayout {
-                                spacing: 8px; width: max(parent.width, group.entries.length * 240px); height: parent.height;
-                                if group.entries.length == 0: Text { text: "No shortcut assigned"; color: Theme.secondary; vertical-alignment: center; }
-                                for binding in group.entries: Rectangle {
-                                    width: 232px; height: 76px; y: 8px;
-                                    background: #ffffff08; border-radius: 8px;
-                                    VerticalLayout {
-                                        padding: 6px; spacing: 4px;
-                                        Kbd { label: binding.keys; available-width: parent.width; }
-                                        HorizontalLayout {
-                                            spacing: 6px;
-                                            AddOption { label: "Change"; option-width: 82px; enabled: !root.busy; clicked => { root.shortcut-action = binding.action; root.shortcut-existing = binding.keys; root.shortcut-draft = binding.keys; root.shortcut-editor = true; } }
-                                            AddOption { label: root.shortcut-delete-action == binding.action && root.shortcut-delete-keys == binding.keys ? "Confirm" : "Delete"; option-width: 82px; destructive: true; enabled: !root.busy; clicked => { if root.shortcut-delete-action == binding.action && root.shortcut-delete-keys == binding.keys { root.busy = true; root.shortcut-delete-action = -1; root.delete-shortcut(binding.action, binding.keys); } else { root.shortcut-delete-action = binding.action; root.shortcut-delete-keys = binding.keys; } } }
-                                        }
-                                    }
+                    width: (root.width - 392px); height: self.preferred-height; alignment: start; spacing: 20px;
+                    if root.banner != "": SettingsDescription { text: root.banner; color: Theme.settings-danger-text; }
+            if root.settings-tab == 0: Rectangle {
+                property <bool> stacked: (root.width - 392px) < 900px;
+                height: self.stacked ? 1040px : max(520px, root.height - 416px);
+                SettingsCard {
+                    x: 0px; y: 0px;
+                    width: parent.stacked ? parent.width : (parent.width - 20px) * 1.3 / 2.3;
+                    height: parent.stacked ? 520px : parent.height;
+                    VerticalLayout {
+                        padding: 22px; spacing: 20px;
+                        SettingsTitle { text: "Home screen"; }
+                        HorizontalLayout { spacing: 16px;
+                            VerticalLayout { spacing: 6px;
+                                SettingsDescription { text: "Page margin (px)"; }
+                                SettingsStepper { enabled: !root.layout-locked; label: "Page margin"; value <=> root.page-margin; minimum: 0; maximum: 64; }
+                            }
+                            VerticalLayout { spacing: 6px;
+                                SettingsDescription { text: "Item gap (px)"; }
+                                SettingsStepper { enabled: !root.layout-locked; label: "Item gap"; value <=> root.grid-gap; minimum: 0; maximum: 64; }
+                            }
+                        }
+                        VerticalLayout { spacing: 6px; vertical-stretch: 0;
+                            SettingsDescription { text: "Item size (px)"; }
+                            SettingsStepper { enabled: !root.layout-locked; label: "Item size"; value <=> root.item-size; minimum: 80; maximum: 176; step: 8; }
+                        }
+                        HorizontalLayout { spacing: 10px;
+                            SettingsButton { label: "Reset to default"; option-width: 160px; enabled: !root.layout-locked; clicked => { root.item-size = 128; root.grid-gap = 16; } }
+                            SettingsButton { label: "Save"; primary: true; enabled: !root.layout-locked && !root.busy; clicked => { root.busy = true; root.save-appearance(root.page-margin, root.item-size, root.grid-gap, grid.columns, grid.rows); } }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                        Rectangle { vertical-stretch: 1; }
+                        Rectangle {
+                            min-height: root.item-size * 1px + 32px;
+                            background: Theme.settings-bg-inset; border-color: Theme.settings-border-panel; border-width: 1px; border-radius: Theme.settings-r-pill;
+                            HorizontalLayout { padding: 16px; spacing: 16px;
+                                if root.items.length > 0: PageTile { width: root.item-size * 1px; height: self.width; items: root.items; index: 0; }
+                                VerticalLayout { spacing: 4px; alignment: center;
+                                    SettingsTitle { text: "Live preview" + (root.items.length > 0 ? " · " + root.items[0].name : ""); wrap: word-wrap; }
+                                    SettingsDescription { text: grid.columns + " columns × " + grid.rows + " rows. Save reflows displaced items; Back cancels unsaved sizing."; }
                                 }
                             }
                         }
                     }
                 }
-                Text { text: "Toggle Orbit is configured in Hyprland. Text editing uses the text field’s shortcuts. Mouse: click to open, right-click for actions, drag to move items and wheel to scroll."; color: Theme.secondary; font-size: 12px; wrap: word-wrap; }
-                HorizontalLayout {
-                    spacing: Theme.space-2;
-                    Kbd { label: "Shift"; }
-                    Text { text: "+ wheel to switch pages"; color: Theme.secondary; font-size: Theme.type-hint; vertical-alignment: center; }
-                    Rectangle { horizontal-stretch: 1; }
+                VerticalLayout {
+                    x: parent.stacked ? 0px : (parent.width - 20px) * 1.3 / 2.3 + 20px;
+                    y: parent.stacked ? 540px : 0px;
+                    width: parent.stacked ? parent.width : (parent.width - 20px) / 2.3;
+                    height: parent.stacked ? 500px : parent.height;
+                    spacing: 20px;
+                    SettingsCard {
+                        height: 256px;
+                        VerticalLayout { padding: 22px; spacing: 14px;
+                            HorizontalLayout {
+                                SettingsTitle { text: "TickTick account"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Rectangle {
+                                    width: root.ticktick-connected ? 100px : 124px; height: 24px; border-radius: Theme.settings-r-pill;
+                                    background: root.ticktick-connected ? Theme.settings-success-bg : Theme.settings-bg-inset;
+                                    Text { text: root.ticktick-connected ? "Connected" : "Not connected"; color: root.ticktick-connected ? Theme.settings-success-text : Theme.settings-text-muted; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
+                                }
+                            }
+                            SettingsField { label: "Personal API token"; placeholder: "Paste a replacement token"; text <=> root.ticktick-token-draft; secret: true; }
+                            HorizontalLayout { spacing: 10px;
+                                SettingsButton { label: "Connect TickTick"; option-width: 160px; primary: true; enabled: !root.ticktick-loading && root.ticktick-token-draft != ""; clicked => { root.save-ticktick-token(root.ticktick-token-draft); root.ticktick-token-draft = ""; } }
+                                SettingsButton { label: "Disconnect"; option-width: 112px; destructive: true; enabled: !root.ticktick-loading && root.ticktick-connected; clicked => { root.remove-ticktick-token(); } }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            SettingsDescription { text: root.ticktick-status; }
+                        }
+                    }
+                    SettingsCard {
+                        vertical-stretch: 1; min-height: 220px;
+                        VerticalLayout { padding: 22px; spacing: 14px; alignment: start;
+                            SettingsTitle { text: "Data"; }
+                            SettingsDescription { text: root.installed-status; }
+                            SettingsButton { label: "Refresh installed apps"; option-width: 214px; enabled: !root.busy; clicked => { root.busy = true; root.refresh-installed-apps(); } }
+                            HorizontalLayout { spacing: 10px;
+                                SettingsButton { label: "Export data"; option-width: 132px; enabled: !root.busy; clicked => { root.busy = true; root.data-busy = true; root.data-status = ""; root.transfer-data(false); } }
+                                SettingsButton { label: "Import data"; option-width: 132px; enabled: !root.layout-locked && !root.busy; clicked => { root.busy = true; root.data-busy = true; root.data-status = ""; root.transfer-data(true); } }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            if root.data-status != "": SettingsDescription { text: root.data-status; }
+                        }
+                    }
                 }
-                if root.shortcut-editor: HorizontalLayout {
+            }
+            if root.settings-tab == 4: VerticalLayout {
+                spacing: 20px;
+                SettingsCard {
+                    height: (root.width - 392px) < 640px ? 252px : 158px;
+                    VerticalLayout {
+                        spacing: 0px;
+                        HorizontalLayout {
+                            padding: 20px; spacing: 16px;
+                            VerticalLayout { spacing: 3px;
+                                SettingsTitle { text: "Smooth cursor"; }
+                                SettingsDescription { text: "Animate the cursor while typing in Search anything."; }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            SettingsSwitch { checked: root.smooth-cursor; enabled: !root.busy; toggled => { root.busy = true; root.save-smooth-cursor(!root.smooth-cursor); } }
+                        }
+                        Rectangle { height: 1px; background: Theme.settings-border-card; }
+                        GridLayout {
+                            padding: 20px; spacing: 12px;
+                            VerticalLayout { row: 0; col: 0; spacing: 3px;
+                                SettingsTitle { text: "Fallback search engine"; }
+                                SettingsDescription { text: "Used when nothing in Orbit matches your query."; }
+                            }
+                            HorizontalLayout { row: (root.width - 392px) < 640px ? 1 : 0; col: (root.width - 392px) < 640px ? 0 : 1; spacing: 10px;
+                                SettingsSelect { label: "Fallback search engine"; model: root.search-engine-names; current-index <=> root.default-search-engine-index; enabled: !root.busy; }
+                                SettingsButton { label: "Save"; option-width: 82px; primary: true; enabled: !root.busy && root.default-search-engine-index != root.saved-default-search-engine-index; clicked => { root.busy = true; root.save-default-search-engine(root.default-search-engine-index); } }
+                            }
+                        }
+                    }
+                }
+                VerticalLayout { spacing: 4px;
+                    SettingsTitle { text: "Search locations"; }
+                    SettingsDescription { text: "Choose the directories Orbit searches for files and directories."; }
+                }
+                GridLayout {
+                    spacing: 20px;
+
+                    SettingsCard {
+                        row: (root.width - 392px) < 640px ? 0 : 0; col: (root.width - 392px) < 640px ? 0 : 0;
+                        min-height: 150px;
+                        VerticalLayout {
+                            padding: 20px; spacing: 12px; alignment: start;
+                            SettingsTitle { text: "File search paths"; }
+                            for path[index] in root.file-search-paths: HorizontalLayout {
+                                spacing: 8px;
+                                Rectangle {
+                                    horizontal-stretch: 1; min-width: 0px; height: 36px;
+                                    background: Theme.settings-bg-inset; border-width: 1px; border-color: Theme.settings-border-panel; border-radius: Theme.settings-r-control;
+                                    Text { x: 12px; width: parent.width - 24px; height: parent.height; text: path; font-family: "monospace"; color: Theme.settings-text-muted; font-size: 13px; overflow: elide; vertical-alignment: center; }
+                                }
+                                SettingsButton { label: ""; icon: @image-url("assets/pencil.svg"); icon-present: true; accessible-label: "Edit " + path; option-width: 36px; height: 36px; enabled: !root.busy; clicked => { root.search-path-directory = false; root.search-path-index = index; root.search-path-draft = path; root.search-path-editor = true; } }
+                                SettingsButton { label: ""; icon: @image-url("assets/trash.svg"); icon-present: true; accessible-label: "Delete " + path; option-width: 36px; height: 36px; destructive: true; enabled: !root.busy; clicked => { root.busy = true; root.delete-search-path(false, index); } }
+                            }
+                            SettingsAddButton { label: "+  Add file path"; full-width: true; available-width: ((root.width - 392px) < 640px ? (root.width - 392px) : ((root.width - 392px) - 20px) / 2) - 40px; height: 40px; border-color: Theme.settings-border-dashed; enabled: !root.busy; clicked => { root.search-path-directory = false; root.search-path-index = -1; root.search-path-draft = ""; root.search-path-editor = true; } }
+                        }
+                    }
+
+                    SettingsCard {
+                        row: (root.width - 392px) < 640px ? 1 : 0; col: (root.width - 392px) < 640px ? 0 : 1;
+                        min-height: 150px;
+                        VerticalLayout {
+                            padding: 20px; spacing: 12px; alignment: start;
+                            SettingsTitle { text: "Directory search paths"; }
+                            for path[index] in root.directory-search-paths: HorizontalLayout {
+                                spacing: 8px;
+                                Rectangle {
+                                    horizontal-stretch: 1; min-width: 0px; height: 36px;
+                                    background: Theme.settings-bg-inset; border-width: 1px; border-color: Theme.settings-border-panel; border-radius: Theme.settings-r-control;
+                                    Text { x: 12px; width: parent.width - 24px; height: parent.height; text: path; font-family: "monospace"; color: Theme.settings-text-muted; font-size: 13px; overflow: elide; vertical-alignment: center; }
+                                }
+                                SettingsButton { label: ""; icon: @image-url("assets/pencil.svg"); icon-present: true; accessible-label: "Edit " + path; option-width: 36px; height: 36px; enabled: !root.busy; clicked => { root.search-path-directory = true; root.search-path-index = index; root.search-path-draft = path; root.search-path-editor = true; } }
+                                SettingsButton { label: ""; icon: @image-url("assets/trash.svg"); icon-present: true; accessible-label: "Delete " + path; option-width: 36px; height: 36px; destructive: true; enabled: !root.busy; clicked => { root.busy = true; root.delete-search-path(true, index); } }
+                            }
+                            SettingsAddButton { label: "+  Add directory path"; full-width: true; available-width: ((root.width - 392px) < 640px ? (root.width - 392px) : ((root.width - 392px) - 20px) / 2) - 40px; height: 40px; border-color: Theme.settings-border-dashed; enabled: !root.busy; clicked => { root.search-path-directory = true; root.search-path-index = -1; root.search-path-draft = ""; root.search-path-editor = true; } }
+                        }
+                    }
+
+                }
+                if root.search-path-editor: SettingsCard {
+                    VerticalLayout { padding: 20px; spacing: 12px;
+                        SettingsField { label: root.search-path-directory ? "Directory search path" : "File search path"; placeholder: "/home/user/Documents"; text <=> root.search-path-draft; accepted => { root.busy = true; root.save-search-path(root.search-path-directory, root.search-path-index, root.search-path-draft); } }
+                        HorizontalLayout { spacing: 8px;
+                            SettingsButton { label: "Cancel"; enabled: !root.busy; clicked => { root.search-path-editor = false; } }
+                            SettingsButton { label: "Save"; primary: true; enabled: !root.busy; clicked => { root.busy = true; root.save-search-path(root.search-path-directory, root.search-path-index, root.search-path-draft); } }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                    }
+                }
+                SettingsCard {
+                    VerticalLayout { padding: 20px; spacing: 14px;
+                        SettingsTitle { text: "Excluded from file search"; }
+                        SettingsDescription { text: "Files and folders with these names are skipped. Use .* for anything that starts with a dot."; }
+                        HorizontalLayout { spacing: 10px;
+                            SettingsField { label: "Name or pattern"; placeholder: "e.g. dist"; text <=> root.file-search-exclusion-draft; enabled: !root.busy; accepted => { if !root.busy && root.file-search-exclusion-draft != "" { root.busy = true; root.add-file-search-exclusion(root.file-search-exclusion-draft); } } }
+                            VerticalLayout { Rectangle { height: 23px; } SettingsButton { label: "Exclude"; option-width: 100px; primary: true; enabled: !root.busy && root.file-search-exclusion-draft != ""; clicked => { root.busy = true; root.add-file-search-exclusion(root.file-search-exclusion-draft); } } }
+                        }
+                        Rectangle {
+                            property <int> columns: max(1, floor((self.width + 8px) / 160px));
+                            height: ceil(root.file-search-exclusions.length / self.columns) * 38px;
+                            for name[index] in root.file-search-exclusions: SettingsChip {
+                                x: mod(index, parent.columns) * ((parent.width + 8px) / parent.columns);
+                                y: floor(index / parent.columns) * 38px;
+                                width: (parent.width + 8px) / parent.columns - 8px;
+                                label: name; path-name: true; accent: name == ".*"; enabled: !root.busy;
+                                removed => { root.busy = true; root.remove-file-search-exclusion(name); }
+                            }
+                        }
+                    }
+                }
+            }
+            if root.settings-tab == 1: VerticalLayout {
+                spacing: 16px;
+                SettingsCard {
+                    height: shortcut-columns-layout.preferred-height;
+                    shortcut-columns-layout := HorizontalLayout {
+                        spacing: 0px;
+                        for column in root.shortcut-columns: VerticalLayout {
+                            spacing: 0px; alignment: start;
+                            for group[index] in root.shortcut-groups: Rectangle {
+                                visible: mod(index, root.shortcut-columns) == column;
+                                property <length> row-width: ((root.width - 392px) / root.shortcut-columns);
+                                property <length> name-width: min(190px, self.row-width * 0.35);
+                                property <length> keys-width: self.row-width - self.name-width - 120px;
+                                property <int> key-columns: max(1, floor((self.keys-width + 6px) / 140px));
+                                height: mod(index, root.shortcut-columns) != column ? 0px : max(56px, ceil(group.entries.length / self.key-columns) * 34px + 22px);
+                                width: self.row-width;
+                                Rectangle { y: parent.height - 1px; height: 1px; width: parent.width; background: Theme.settings-border-card; }
+                                SettingsTitle { x: 20px; width: parent.name-width; height: parent.height; text: root.shortcut-actions[group.action]; font-size: 14px; wrap: word-wrap; vertical-alignment: center; }
+                                if group.entries.length == 0: SettingsDescription { x: 32px + parent.name-width; width: parent.keys-width; height: parent.height; text: "No shortcut assigned"; font-italic: true; color: Theme.settings-text-none; vertical-alignment: center; }
+                                for binding[key-index] in group.entries: SettingsChip {
+                                    x: 32px + parent.name-width + mod(key-index, parent.key-columns) * (parent.keys-width + 6px) / parent.key-columns;
+                                    y: 12px + floor(key-index / parent.key-columns) * 34px;
+                                    width: (parent.keys-width + 6px) / parent.key-columns - 6px;
+                                    label: binding.keys == "Escape" ? "Esc" : binding.keys == "Left" ? "←" : binding.keys == "Right" ? "→" : binding.keys == "Up" ? "↑" : binding.keys == "Down" ? "↓" : binding.keys;
+                                    accessible-name: binding.keys;
+                                    enabled: !root.busy;
+                                    confirming: root.shortcut-delete-action == binding.action && root.shortcut-delete-keys == binding.keys;
+                                    removed => {
+                                        if root.shortcut-delete-action == binding.action && root.shortcut-delete-keys == binding.keys {
+                                            root.busy = true; root.shortcut-delete-action = -1; root.delete-shortcut(binding.action, binding.keys);
+                                        } else { root.shortcut-delete-action = binding.action; root.shortcut-delete-keys = binding.keys; }
+                                    }
+                                }
+                                SettingsButton { x: parent.width - 80px; y: 11px; label: "Add"; option-width: 60px; height: 34px; enabled: !root.busy; clicked => { root.shortcut-action = group.action; root.shortcut-existing = ""; root.shortcut-draft = ""; root.shortcut-editor = true; } }
+                            }
+                        }
+                    }
+                }
+                SettingsDescription { text: "Remove a shortcut with ×, then confirm with ✓. Use Add to record a replacement."; }
+                SettingsDescription { text: "Toggle Orbit is configured outside Orbit. Text editing uses the text field’s shortcuts. Shift + wheel switches pages."; }
+                if root.shortcut-editor: VerticalLayout {
                     spacing: 12px;
-                    ComboBox { model: root.shortcut-actions; current-index <=> root.shortcut-action; }
-                    AddOption { label: root.shortcut-recording ? "Press shortcut…" : root.shortcut-draft == "" ? "Record shortcut" : ""; shortcut: root.shortcut-recording ? "" : root.shortcut-draft; option-width: 220px; clicked => { root.shortcut-recording = true; } }
-                    AddOption { label: "Cancel"; clicked => { root.shortcut-editor = false; root.shortcut-recording = false; } }
-                    AddOption { label: "Save"; primary: true; enabled: !root.busy && !root.shortcut-recording && root.shortcut-draft != ""; clicked => { root.busy = true; root.save-shortcut(root.shortcut-action, root.shortcut-existing, root.shortcut-draft); } }
+                    SettingsSelect { width: min(360px, root.width - 392px); model: root.shortcut-actions; current-index <=> root.shortcut-action; }
+                    SettingsButton { label: root.shortcut-recording ? "Press shortcut…" : root.shortcut-draft == "" ? "Record shortcut" : ""; shortcut: root.shortcut-recording ? "" : root.shortcut-draft; option-width: 220px; clicked => { root.shortcut-recording = true; } }
+                    SettingsButton { label: "Cancel"; clicked => { root.shortcut-editor = false; root.shortcut-recording = false; } }
+                    SettingsButton { label: "Save"; primary: true; enabled: !root.busy && !root.shortcut-recording && root.shortcut-draft != ""; clicked => { root.busy = true; root.save-shortcut(root.shortcut-action, root.shortcut-existing, root.shortcut-draft); } }
                 }
             }
             if root.settings-tab == 2: VerticalLayout {
                 spacing: 12px;
-                Text { text: "Prefixes route a Token to an Action."; color: Theme.secondary; wrap: word-wrap; }
+
                 Flickable {
-                    height: max(144px, ceil(root.prefixes.length / root.action-columns) * 132px);
-                    content-height: max(self.height, ceil(root.prefixes.length / root.action-columns) * 132px);
+                    height: max(106px, ceil(root.prefixes.length / root.action-columns) * 106px);
+                    content-height: max(self.height, ceil(root.prefixes.length / root.action-columns) * 106px);
                     content-width: self.width;
-                    for prefix[index] in root.prefixes: Rectangle {
+                    for prefix[index] in root.prefixes: SettingsCard {
                         x: mod(index, root.action-columns) * ((parent.width - (root.action-columns - 1) * 12px) / root.action-columns + 12px);
-                        y: floor(index / root.action-columns) * 132px;
+                        y: floor(index / root.action-columns) * 106px;
                         width: (parent.width - (root.action-columns - 1) * 12px) / root.action-columns;
-                        height: 120px;
-                        background: Theme.field; border-color: Theme.border; border-width: 1px; border-radius: 10px;
-                        Text { x: 12px; y: 8px; width: parent.width - 24px; height: 24px; text: prefix.name; color: Theme.text; font-size: 15px; font-weight: 600; overflow: elide; }
-                        Text { x: 12px; y: 34px; width: parent.width - 24px; height: 20px; text: prefix.token + "  →  " + prefix.action-name; color: #a8b3ff; font-size: 13px; overflow: elide; }
+                        height: 92px;
+
+                        Text { x: 12px; y: 8px; width: parent.width - 112px; height: 24px; text: prefix.name; color: Theme.settings-text; font-size: 15px; font-weight: 500; overflow: elide; }
+                        Text { x: 12px; y: 34px; width: parent.width - 112px; height: 20px; font-family: "monospace"; text: "\u{2066}" + prefix.token + "  →  " + prefix.action-name + "\u{2069}"; color: Theme.settings-text-accent; font-size: 13px; overflow: elide; }
                         HorizontalLayout {
-                            x: 10px; y: 66px; spacing: 6px;
-                            AddOption { label: "Edit"; option-width: 72px; enabled: !root.busy; clicked => {
+                            x: parent.width - 90px; y: 10px; spacing: 6px;
+                            SettingsButton { label: ""; icon: @image-url("assets/pencil.svg"); icon-present: true; accessible-label: "Edit " + prefix.name; option-width: 36px; height: 36px; enabled: !root.busy; clicked => {
                                 root.prefix-id-draft = prefix.id; root.prefix-name-draft = prefix.name;
                                 root.prefix-token-draft = prefix.token; root.prefix-action-index = prefix.action-index;
                             } }
-                            AddOption { label: "Delete"; option-width: 76px; destructive: true; enabled: !root.busy; clicked => { root.busy = true; root.delete-prefix(prefix.id); } }
+                            SettingsButton { label: ""; icon: @image-url("assets/trash.svg"); icon-present: true; accessible-label: "Delete " + prefix.name; option-width: 36px; height: 36px; destructive: true; enabled: !root.busy; clicked => { root.busy = true; root.delete-prefix(prefix.id); } }
                         }
                     }
                 }
-                HorizontalLayout {
+                GridLayout {
                     spacing: 8px;
-                    AddField { label: "Name"; placeholder: "YouTube"; text <=> root.prefix-name-draft; }
-                    AddField { label: "Token"; placeholder: "y"; text <=> root.prefix-token-draft; }
-                    ComboBox { model: root.action-names; current-index <=> root.prefix-action-index; }
+                    SettingsField { row: 0; col: 0; label: "Name"; placeholder: "YouTube"; text <=> root.prefix-name-draft; }
+                    SettingsField { row: 0; col: 1; label: "Token"; placeholder: "y"; text <=> root.prefix-token-draft; }
+                    SettingsSelect { row: root.width - 392px < 640px ? 1 : 0; col: root.width - 392px < 640px ? 0 : 2; colspan: root.width - 392px < 640px ? 2 : 1; width: root.width - 392px < 640px ? root.width - 392px : 220px; label: "Action"; model: root.action-names; current-index <=> root.prefix-action-index; }
                 }
                 HorizontalLayout {
-                    AddOption { label: "New Prefix"; clicked => { root.prefix-id-draft = ""; root.prefix-name-draft = ""; root.prefix-token-draft = ""; root.prefix-action-index = 0; } }
-                    AddOption { label: "Save Prefix"; primary: true; enabled: !root.busy && root.prefix-name-draft != "" && root.prefix-token-draft != "" && root.user-actions.length > 0; clicked => { root.busy = true; root.save-prefix(root.prefix-id-draft, root.prefix-name-draft, root.prefix-token-draft, root.user-actions[root.prefix-action-index].id); } }
+                    spacing: 10px;
+                    SettingsButton { label: "New Prefix"; clicked => { root.prefix-id-draft = ""; root.prefix-name-draft = ""; root.prefix-token-draft = ""; root.prefix-action-index = 0; } }
+                    SettingsButton { label: "Save Prefix"; option-width: 132px; primary: true; enabled: !root.busy && root.prefix-name-draft != "" && root.prefix-token-draft != "" && root.user-actions.length > 0; clicked => { root.busy = true; root.save-prefix(root.prefix-id-draft, root.prefix-name-draft, root.prefix-token-draft, root.user-actions[root.prefix-action-index].id); } }
                 }
             }
             if root.settings-tab == 3: VerticalLayout {
                 spacing: 12px;
-                if !root.action-editor-open: HorizontalLayout {
-                    Text { text: "Choose an Action to edit it, or create a new one."; color: Theme.secondary; vertical-alignment: center; }
-                    Rectangle { horizontal-stretch: 1; }
-                    AddOption { label: "New Action"; option-width: 132px; primary: true; enabled: !root.busy; clicked => { root.action-id-draft = ""; root.action-name-draft = ""; root.action-kind-draft = "Shell"; root.action-source-draft = ""; root.action-description-draft = ""; root.action-tokens-draft = ""; root.action-used = false; root.action-editor-open = true; } }
-                }
                 if !root.action-editor-open: Flickable {
-                    height: max(320px, ceil(root.user-actions.length / root.action-columns) * 160px); content-height: max(self.height, ceil(root.user-actions.length / root.action-columns) * 160px); content-width: self.width;
-                    for action[index] in root.user-actions: Rectangle {
+                    height: max(320px, ceil(root.user-actions.length / root.action-columns) * 150px); content-height: max(self.height, ceil(root.user-actions.length / root.action-columns) * 150px); content-width: self.width;
+                    for action[index] in root.user-actions: SettingsCard {
                         x: mod(index, root.action-columns) * ((parent.width - (root.action-columns - 1) * 12px) / root.action-columns + 12px);
-                        y: floor(index / root.action-columns) * 160px;
+                        y: floor(index / root.action-columns) * 150px;
                         width: (parent.width - (root.action-columns - 1) * 12px) / root.action-columns;
-                        height: 148px;
-                        background: action-card.has-hover ? Theme.raised : Theme.field;
-                        border-width: action-card.has-hover ? 2px : 1px;
-                        border-color: action-card.has-hover ? Theme.focus : Theme.border;
-                        border-radius: 12px;
-                        Text { x: 14px; y: 10px; width: parent.width - 28px; height: 42px; text: action.name; color: Theme.text; font-size: 15px; font-weight: 600; wrap: word-wrap; vertical-alignment: center; }
-                        Text { x: 14px; y: 54px; width: parent.width - 28px; height: 18px; text: action.kind; color: #a8b3ff; font-size: 11px; font-weight: 600; }
-                        Text { x: 14px; y: 73px; width: parent.width - 28px; height: 18px; text: action.tokens == "" ? "" : "Tokens · " + action.tokens; color: #a8b3ff; font-size: 11px; overflow: elide; }
-                        Text { x: 14px; y: 94px; width: parent.width - 28px; height: 44px; text: action.description; color: Theme.secondary; font-size: 11px; wrap: word-wrap; overflow: elide; }
+                        height: 136px;
+                        background: Theme.settings-bg-card;
+                        border-width: action-focus.has-focus ? 2px : 1px;
+                        border-color: action-focus.has-focus ? Theme.settings-icon-accent : Theme.settings-border-card;
+                        border-radius: Theme.settings-r-card;
+                        Text { x: 14px; y: 14px; width: parent.width - 110px; height: 24px; text: action.name; color: Theme.settings-text; font-size: 15px; font-weight: 600; wrap: word-wrap; vertical-alignment: center; }
+                        Rectangle { x: parent.width - 86px; y: 14px; width: 72px; height: 22px; background: Theme.settings-bg-nav-active; border-radius: Theme.settings-r-kbd;
+                            Text { text: action.kind; color: Theme.settings-text-kbd; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
+                        }
+                        Text { x: 14px; y: 46px; width: parent.width - 28px; height: 18px; font-family: "monospace"; text: action.tokens == "" ? "" : "Tokens · " + action.tokens; color: Theme.settings-text-accent; font-size: 13px; overflow: elide; }
+                        Text { x: 14px; y: 72px; width: parent.width - 28px; height: 42px; text: action.description; color: Theme.settings-text-muted; font-size: 13px; wrap: word-wrap; overflow: elide; }
+                        callback edit;
+                        forward-focus: action-focus;
+                        accessible-role: button; accessible-label: "Edit " + action.name;
+                        accessible-action-default => { self.edit(); }
+                        action-focus := FocusScope { key-pressed(event) => { if event.text == "\n" || event.text == " " { parent.edit(); return accept; } reject; } }
+                        edit => { root.action-id-draft = action.id; root.action-name-draft = action.name; root.action-kind-draft = action.kind; root.action-source-draft = action.source; root.action-description-draft = action.description; root.action-tokens-draft = action.tokens; root.action-used = action.referenced; root.action-editor-open = true; }
                         action-card := TouchArea {
                             accessible-role: button; accessible-label: "Edit " + action.name;
-                            clicked => { root.action-id-draft = action.id; root.action-name-draft = action.name; root.action-kind-draft = action.kind; root.action-source-draft = action.source; root.action-description-draft = action.description; root.action-tokens-draft = action.tokens; root.action-used = action.referenced; root.action-editor-open = true; }
+                            clicked => { parent.edit(); }
                         }
                     }
                 }
@@ -2115,39 +2256,40 @@ export component Launcher inherits Window {
                         Rectangle { horizontal-stretch: 1; }
                         Rectangle {
                             width: min(760px, parent.width - 32px);
-                            height: max(220px, min(root.height - 400px, 560px));
-                            background: Theme.sheet; border-width: 1px; border-color: Theme.border; border-radius: 16px;
+                            height: max(220px, min(root.height - 500px, 560px));
+                            background: Theme.settings-bg-card; border-width: 1px; border-color: Theme.settings-border-card; border-radius: Theme.settings-r-card;
                             VerticalLayout {
                                 padding: 18px; spacing: 8px;
                                 HorizontalLayout {
-                                    Text { text: root.action-id-draft == "" ? "New Action" : "Edit Action"; color: Theme.text; font-size: 20px; vertical-alignment: center; }
+                                    Text { text: root.action-id-draft == "" ? "New Action" : "Edit Action"; color: Theme.settings-text; font-size: 20px; vertical-alignment: center; }
                                     Rectangle { horizontal-stretch: 1; }
                                 }
                                 Flickable {
                                     vertical-stretch: 1;
                                     content-width: self.width;
+                                    width: min(760px, root.width - 424px) - 36px;
                                     content-height: action-fields.preferred-height;
                                     action-fields := VerticalLayout {
-                                        width: parent.width; spacing: 10px;
-                                        AddField { label: "Name"; placeholder: "My action"; text <=> root.action-name-draft; }
-                                        AddField { label: "Description"; placeholder: "Explain what this Action does and how to use it"; text <=> root.action-description-draft; multiline: true; }
-                                        AddField { label: "Tokens · separate with commas"; placeholder: "g, ل"; text <=> root.action-tokens-draft; }
+                                        width: min(760px, root.width - 424px) - 36px; spacing: 10px;
+                                        SettingsField { label: "Name"; placeholder: "My action"; text <=> root.action-name-draft; }
+                                        SettingsField { label: "Description"; placeholder: "Explain what this Action does and how to use it"; text <=> root.action-description-draft; multiline: true; }
+                                        SettingsField { label: "Tokens · separate with commas"; placeholder: "g, ل"; text <=> root.action-tokens-draft; }
                                         HorizontalLayout {
                                             spacing: 8px;
-                                            AddOption { label: "Shell"; selected: root.action-kind-draft == "Shell"; clicked => { if root.action-kind-draft != "Shell" { root.action-kind-draft = "Shell"; root.action-source-draft = ""; } } }
-                                            AddOption { label: "URL"; selected: root.action-kind-draft == "URL"; clicked => { if root.action-kind-draft != "URL" { root.action-kind-draft = "URL"; root.action-source-draft = ""; } } }
-                                            AddOption { label: "TickTick"; selected: root.action-kind-draft == "TickTick"; clicked => { if root.action-kind-draft != "TickTick" { root.action-kind-draft = "TickTick"; root.action-source-draft = ""; } } }
+                                            SettingsButton { label: "Shell"; selected: root.action-kind-draft == "Shell"; clicked => { if root.action-kind-draft != "Shell" { root.action-kind-draft = "Shell"; root.action-source-draft = ""; } } }
+                                            SettingsButton { label: "URL"; selected: root.action-kind-draft == "URL"; clicked => { if root.action-kind-draft != "URL" { root.action-kind-draft = "URL"; root.action-source-draft = ""; } } }
+                                            SettingsButton { label: "TickTick"; selected: root.action-kind-draft == "TickTick"; clicked => { if root.action-kind-draft != "TickTick" { root.action-kind-draft = "TickTick"; root.action-source-draft = ""; } } }
                                         }
-                                        if root.action-kind-draft == "URL": AddField { label: "URL template · use %s for Search anything"; placeholder: "https://example.com/?q=%s"; text <=> root.action-source-draft; }
-                                        if root.action-kind-draft == "Shell": AddField { label: "Shell script · argument: $1 on Arch Linux, $OrbitQuery on Windows"; placeholder: "Write a script that reads the search argument"; text <=> root.action-source-draft; multiline: true; }
+                                        if root.action-kind-draft == "URL": SettingsField { label: "URL template · use %s for Search anything"; placeholder: "https://example.com/?q=%s"; text <=> root.action-source-draft; }
+                                        if root.action-kind-draft == "Shell": SettingsField { label: "Shell script · argument: $1 on Arch Linux, $OrbitQuery on Windows"; placeholder: "Write a script that reads the search argument"; text <=> root.action-source-draft; multiline: true; }
                                     }
                                 }
                                 HorizontalLayout {
                                     spacing: 8px;
-                                    AddOption { label: "Cancel"; option-width: 100px; enabled: !root.busy; clicked => { root.action-editor-open = false; } }
+                                    SettingsButton { label: "Cancel"; option-width: root.width < 900px ? 80px : 100px; enabled: !root.busy; clicked => { root.action-editor-open = false; } }
                                     Rectangle { horizontal-stretch: 1; }
-                                    if root.action-id-draft != "": AddOption { label: "Delete"; option-width: 100px; destructive: true; enabled: !root.busy && !root.action-used; clicked => { root.busy = true; root.delete-user-action(root.action-id-draft); } }
-                                    AddOption { label: "Save Action"; option-width: 132px; primary: true; enabled: !root.busy && root.action-name-draft != "" && (root.action-kind-draft == "TickTick" || root.action-source-draft != ""); clicked => { root.busy = true; root.save-user-action(root.action-id-draft, root.action-name-draft, root.action-kind-draft, root.action-source-draft, root.action-description-draft, root.action-tokens-draft); } }
+                                    if root.action-id-draft != "": SettingsButton { label: "Delete"; option-width: root.width < 900px ? 80px : 100px; destructive: true; enabled: !root.busy && !root.action-used; clicked => { root.busy = true; root.delete-user-action(root.action-id-draft); } }
+                                    SettingsButton { label: "Save Action"; option-width: root.width < 900px ? 116px : 132px; primary: true; enabled: !root.busy && root.action-name-draft != "" && (root.action-kind-draft == "TickTick" || root.action-source-draft != ""); clicked => { root.busy = true; root.save-user-action(root.action-id-draft, root.action-name-draft, root.action-kind-draft, root.action-source-draft, root.action-description-draft, root.action-tokens-draft); } }
                                 }
                             }
                         }
@@ -2156,10 +2298,8 @@ export component Launcher inherits Window {
                     Rectangle { vertical-stretch: 1; }
                 }
             }
+
                 }
-            }
-            HorizontalLayout {
-                AddOption { label: "Back"; option-width: 96px; clicked => { root.search-path-editor = false; root.settings = false; } }
             }
         }
     }
@@ -2306,36 +2446,36 @@ export component Launcher inherits Window {
             background: Theme.sheet; border-radius: 16px; border-width: 1px; border-color: Theme.border;
             VerticalLayout {
                 padding: 12px; spacing: 8px;
-                if root.page-context: AddOption { width: 176px; label: "Add item"; clicked => { root.add-item("App"); } }
-                if root.page-context: AddOption { width: 176px; label: "Add page"; enabled: root.page-count < 9 && !root.busy; clicked => { root.page-context = false; root.busy = true; root.add-page(); } }
-                if root.page-context: AddOption { width: 176px; label: "Move page left"; enabled: root.current-page > 0 && !root.busy; clicked => { root.page-context = false; root.busy = true; root.reorder-page(-1); } }
-                if root.page-context: AddOption { width: 176px; label: "Move page right"; enabled: root.current-page + 1 < root.page-count && !root.busy; clicked => { root.page-context = false; root.busy = true; root.reorder-page(1); } }
-                if root.page-context: AddOption { width: 176px; label: "Delete page"; destructive: true; enabled: root.page-count > 1 && !root.busy; clicked => { root.page-context = false; root.confirm-delete-page(); } }
+                if root.page-context: AddOption { width: 176px; label: "Add item"; enabled: !root.layout-locked; clicked => { root.add-item("App"); } }
+                if root.page-context: AddOption { width: 176px; label: "Add page"; enabled: !root.layout-locked && root.page-count < 9 && !root.busy; clicked => { root.page-context = false; root.busy = true; root.add-page(); } }
+                if root.page-context: AddOption { width: 176px; label: "Move page left"; enabled: !root.layout-locked && root.current-page > 0 && !root.busy; clicked => { root.page-context = false; root.busy = true; root.reorder-page(-1); } }
+                if root.page-context: AddOption { width: 176px; label: "Move page right"; enabled: !root.layout-locked && root.current-page + 1 < root.page-count && !root.busy; clicked => { root.page-context = false; root.busy = true; root.reorder-page(1); } }
+                if root.page-context: AddOption { width: 176px; label: "Delete page"; destructive: true; enabled: !root.layout-locked && root.page-count > 1 && !root.busy; clicked => { root.page-context = false; root.confirm-delete-page(); } }
                 if root.context-index >= 0 && root.items[root.context-index].ticktick && !root.items[root.context-index].ticktick-next: AddOption { width: 176px; label: "New task"; clicked => { root.open-ticktick-create(root.items[root.context-index].ticktick-project-id); root.context-index = -1; } }
-                if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Duplicate"; clicked => { root.busy = true; root.duplicate-widget(root.items[root.context-index].id); root.context-index = -1; } }
+                if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Duplicate"; enabled: !root.layout-locked; clicked => { root.busy = true; root.duplicate-widget(root.items[root.context-index].id); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Resize · wider";
-                    enabled: root.preview-valid(root.items,root.items[root.context-index].id,root.items[root.context-index].row * grid.columns + root.items[root.context-index].col,root.items[root.context-index].span-x + 1,root.items[root.context-index].span-y,grid.columns,grid.rows);
+                    enabled: !root.layout-locked && root.preview-valid(root.items,root.items[root.context-index].id,root.items[root.context-index].row * grid.columns + root.items[root.context-index].col,root.items[root.context-index].span-x + 1,root.items[root.context-index].span-y,grid.columns,grid.rows);
                     clicked => { root.busy = true; root.widget-action(root.items[root.context-index].id,root.items[root.context-index].span-x + 1,root.items[root.context-index].span-y); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Resize · taller";
-                    enabled: root.preview-valid(root.items,root.items[root.context-index].id,root.items[root.context-index].row * grid.columns + root.items[root.context-index].col,root.items[root.context-index].span-x,root.items[root.context-index].span-y + 1,grid.columns,grid.rows);
+                    enabled: !root.layout-locked && root.preview-valid(root.items,root.items[root.context-index].id,root.items[root.context-index].row * grid.columns + root.items[root.context-index].col,root.items[root.context-index].span-x,root.items[root.context-index].span-y + 1,grid.columns,grid.rows);
                     clicked => { root.busy = true; root.widget-action(root.items[root.context-index].id,root.items[root.context-index].span-x,root.items[root.context-index].span-y + 1); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].widget: AddOption { width: 176px; label: "Resize · smaller";
-                    enabled: (root.items[root.context-index].span-x > root.items[root.context-index].min-span-x || root.items[root.context-index].span-y > root.items[root.context-index].min-span-y)
+                    enabled: !root.layout-locked && (root.items[root.context-index].span-x > root.items[root.context-index].min-span-x || root.items[root.context-index].span-y > root.items[root.context-index].min-span-y)
                         && root.preview-valid(root.items,root.items[root.context-index].id,root.items[root.context-index].row * grid.columns + root.items[root.context-index].col,max(root.items[root.context-index].min-span-x,root.items[root.context-index].span-x - 1),max(root.items[root.context-index].min-span-y,root.items[root.context-index].span-y - 1),grid.columns,grid.rows);
                     clicked => { root.busy = true; root.widget-action(root.items[root.context-index].id,max(root.items[root.context-index].min-span-x,root.items[root.context-index].span-x - 1),max(root.items[root.context-index].min-span-y,root.items[root.context-index].span-y - 1)); root.context-index = -1; } }
                 if root.context-index >= 0 && !root.items[root.context-index].widget: AddOption { width: 176px; label: root.items[root.context-index].folder ? "Rename" : "Edit"; clicked => {
                     root.edit-item(root.context-index);
                 } }
-                if root.context-index >= 0 && !root.items[root.context-index].widget: AddOption { width: 176px; label: root.items[root.context-index].pinned ? "Unpin" : "Pin"; clicked => { root.busy = true; root.pin-item(root.context-index); root.context-index = -1; } }
-                if root.context-index >= 0: AddOption { width: 176px; label: "Move to Page"; clicked => { root.move-id = root.items[root.context-index].id; root.move-page = root.current-page; root.context-index = -1; } }
-                if root.context-index >= 0: AddOption { width: 176px; label: "Delete"; destructive: true; clicked => {
+                if root.context-index >= 0 && !root.items[root.context-index].widget: AddOption { width: 176px; label: root.items[root.context-index].pinned ? "Unpin" : "Pin"; enabled: !root.layout-locked; clicked => { root.busy = true; root.pin-item(root.context-index); root.context-index = -1; } }
+                if root.context-index >= 0: AddOption { width: 176px; label: "Move to Page"; enabled: !root.layout-locked; clicked => { root.move-id = root.items[root.context-index].id; root.move-page = root.current-page; root.context-index = -1; } }
+                if root.context-index >= 0: AddOption { width: 176px; label: "Delete"; destructive: true; enabled: !root.layout-locked; clicked => {
                     root.editing = root.context-index;
                     root.app-name = root.items[root.context-index].name;
                     root.context-index = -1;
                     root.banner = ""; root.alert = true;
                     cancel-delete.focus();
                 } }
-                if root.dock-context == "pinned": AddOption { width: 176px; label: "Unpin"; clicked => { root.busy = true; root.unpin-dock-item(root.context-id); root.dock-context = ""; } }
+                if root.dock-context == "pinned": AddOption { width: 176px; label: "Unpin"; enabled: !root.layout-locked; clicked => { root.busy = true; root.unpin-dock-item(root.context-id); root.dock-context = ""; } }
                 if root.dock-context == "recent": AddOption { width: 176px; label: "Remove from Recent"; clicked => { root.busy = true; root.remove-recent-item(root.context-id); root.dock-context = ""; } }
             }
         }
@@ -2705,14 +2845,17 @@ export component Launcher inherits Window {
         background: Theme.backdrop;
         TouchArea { enabled: root.folder-open; clicked => { root.close-folder-view(); } }
         folder-panel := Rectangle {
-            x: root.folder-open ? (parent.width - self.width) / 2 : grid.absolute-position.x + root.items[root.folder-index].col * grid.tile-size;
-            y: root.folder-open ? (parent.height - self.height) / 2 : grid.absolute-position.y + root.items[root.folder-index].row * grid.tile-size;
+            x: root.folder-open ? (parent.width - self.width) / 2 : grid.absolute-position.x + root.items[root.folder-index].col * grid.tile-size + (root.item-size * 1px - self.width) * 0.5;
+            y: root.folder-open ? (parent.height - self.height) / 2 : grid.absolute-position.y + root.items[root.folder-index].row * grid.tile-size + (root.item-size * 1px - self.height) * 0.5;
             width: root.folder-open ? min(560px, parent.width - 32px) : 128px;
             height: root.folder-open ? min(60px + ceil(root.folder-items.length / folder-grid.columns) * folder-grid.row-step, parent.height - 48px) : 128px;
             animate x { duration: Theme.folder-transition; easing: ease-out; }
             animate y { duration: Theme.folder-transition; easing: ease-out; }
-            animate width { duration: Theme.folder-transition; easing: ease-out; }
-            animate height { duration: Theme.folder-transition; easing: ease-out; }
+            transform-scale-x: root.folder-open ? 100% : 0%;
+            transform-scale-y: root.folder-open ? 100% : 0%;
+            transform-origin: { x: self.width / 2, y: self.height / 2 };
+            animate transform-scale-x { duration: Theme.folder-transition; easing: ease-out; }
+            animate transform-scale-y { duration: Theme.folder-transition; easing: ease-out; }
             background: Theme.sheet; border-radius: 16px;
             border-width: 1px; border-color: Theme.border;
             TouchArea { enabled: root.folder-open; }
@@ -2812,7 +2955,7 @@ export component Launcher inherits Window {
                     spacing: 12px;
                     cancel-delete := AddOption { label: "Cancel"; enabled: !root.busy; clicked => { root.alert = false; } }
                     AddOption {
-                        label: "Delete"; destructive: true; enabled: !root.busy;
+                        label: "Delete"; destructive: true; enabled: !root.layout-locked && !root.busy;
                         clicked => { root.busy = true; root.delete-item(root.editing); }
                     }
                 }
@@ -2843,6 +2986,12 @@ export component Launcher inherits Window {
             width: parent.width; height: parent.height; items: [root.drag-item]; index: 0; hovered: true;
             opacity: root.merge-ready ? 0.72 : 1;
             animate opacity { duration: 180ms; easing: ease-out; }
+        }
+        if root.drag-item.widget: Rectangle {
+            width: parent.width; height: parent.height;
+            border-width: 2px; border-radius: 16px;
+            border-color: root.placement-valid && root.reorder-ready ? #71ddcf : #ee9a8b;
+            background: transparent;
         }
     }
 }

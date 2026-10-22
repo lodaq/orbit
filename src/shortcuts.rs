@@ -158,8 +158,8 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
                 .dispatch_event(slint::platform::WindowEvent::KeyReleased { text: text.into() });
         }
         9 => launcher.set_settings(!launcher.get_settings()),
-        10 => launcher.invoke_add_page(),
-        11 => launcher.invoke_confirm_delete_page(),
+        10 if !launcher.get_layout_locked() => launcher.invoke_add_page(),
+        11 if !launcher.get_layout_locked() => launcher.invoke_confirm_delete_page(),
         12 if launcher.get_search_editing() => delete_previous_word(launcher.window()),
         12 => return false,
         _ => (),

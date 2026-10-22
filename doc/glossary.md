@@ -169,3 +169,8 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Delete previous word** | Configurable Search anything shortcut, Ctrl+W by default, that removes the word before the text cursor. |
 
 | **Keycap** | A small rounded label displaying a keyboard key or shortcut. Implemented by the shared Kbd control. |
+
+| **Excluded from file search** | Names or patterns skipped when indexing files under File search paths. Matching directory names also stop recursive descent; Directory search paths and saved items are unaffected. |
+
+| **Lock layout** | The top-bar padlock that prevents changes to page, folder and pinned dock arrangement, additions, deletions and sizing. Its state is saved for all pages. |
+| **Unlock layout** | The same padlock action that permits layout changes again. |

@@ -51,6 +51,7 @@ enum Action {
     SaveAppearance(i32, i32, i32, usize, usize),
     SaveDefaultSearchEngine(i32),
     SaveSmoothCursor(bool),
+    SaveLayoutLocked(bool),
     DeletePage,
     SaveShortcut(i32, String, String),
     DeleteShortcut(i32, String),
@@ -85,6 +86,8 @@ enum Action {
     RefreshInstalledApps(u64),
     SaveSearchPath(bool, i32, String),
     DeleteSearchPath(bool, usize),
+    AddFileSearchExclusion(String),
+    RemoveFileSearchExclusion(String),
 }
 
 struct Apps {
@@ -106,6 +109,32 @@ struct SearchPathResult {
 }
 
 impl Action {
+    fn changes_layout(&self) -> bool {
+        match self {
+            Self::Move(..)
+            | Self::ReorderPage(..)
+            | Self::Geometry(..)
+            | Self::Widget(..)
+            | Self::ChangeWidget(..)
+            | Self::DuplicateWidget(..)
+            | Self::SaveAppearance(..)
+            | Self::DeletePage
+            | Self::Pin(..)
+            | Self::Unpin(..)
+            | Self::Delete(..)
+            | Self::AddPage
+            | Self::Drop(..)
+            | Self::AddPredefined(..)
+            | Self::AddInstalledApp(..)
+            | Self::TransferData(true) => true,
+            Self::Save(index, ..)
+            | Self::SaveWebsite(index, ..)
+            | Self::SavePath(index, ..)
+            | Self::SaveFolder(index, ..) => *index < 0,
+            _ => false,
+        }
+    }
+
     fn request_id(&self) -> Option<u64> {
         match self {
             Self::Save(.., request)
@@ -186,6 +215,8 @@ pub fn connect(launcher: &Launcher) {
                     | Action::AddInstalledApp(..)
                     | Action::SaveSearchPath(..)
                     | Action::DeleteSearchPath(..)
+                    | Action::AddFileSearchExclusion(..)
+                    | Action::RemoveFileSearchExclusion(..)
                     | Action::SaveSmoothCursor(..)
                     | Action::SaveDefaultSearchEngine(..)
                     | Action::SaveNamedCommand(..)
@@ -199,6 +230,7 @@ pub fn connect(launcher: &Launcher) {
                 action,
                 Action::SaveNamedCommand(..) | Action::DeleteNamedCommand(..)
             );
+            let add_exclusion = matches!(action, Action::AddFileSearchExclusion(..));
             let save_search_path = matches!(action, Action::SaveSearchPath(..));
             let reset_after_save = saving
                 && !matches!(
@@ -207,6 +239,8 @@ pub fn connect(launcher: &Launcher) {
                         | Action::Drop(..)
                         | Action::SaveSearchPath(..)
                         | Action::DeleteSearchPath(..)
+                        | Action::AddFileSearchExclusion(..)
+                        | Action::RemoveFileSearchExclusion(..)
                         | Action::SaveSmoothCursor(..)
                         | Action::SaveDefaultSearchEngine(..)
                         | Action::SaveNamedCommand(..)
@@ -267,6 +301,11 @@ pub fn connect(launcher: &Launcher) {
             }
             if save_action && success {
                 let _ = weak.upgrade_in_event_loop(|launcher| launcher.invoke_action_saved());
+            }
+            if add_exclusion && success {
+                let _ = weak.upgrade_in_event_loop(|launcher| {
+                    launcher.invoke_file_search_exclusion_saved()
+                });
             }
             if save_search_path && success {
                 let _ = weak.upgrade_in_event_loop(|launcher| {
@@ -347,6 +386,10 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         if let Some(ui) = cursor_ui.upgrade() {
             crate::search_cursor::sync(ui.window(), hidden);
         }
+    });
+    let lock_sender = send.clone();
+    launcher.on_save_layout_locked(move |locked| {
+        let _ = lock_sender.send(Action::SaveLayoutLocked(locked));
     });
     launcher.on_save_smooth_cursor(move |enabled| {
         let _ = sender.send(Action::SaveSmoothCursor(enabled));
@@ -471,6 +514,14 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     let sender = send.clone();
     launcher.on_save_search_path(move |directory, index, path| {
         let _ = sender.send(Action::SaveSearchPath(directory, index, path.into()));
+    });
+    let sender = send.clone();
+    launcher.on_add_file_search_exclusion(move |name| {
+        let _ = sender.send(Action::AddFileSearchExclusion(name.into()));
+    });
+    let sender = send.clone();
+    launcher.on_remove_file_search_exclusion(move |name| {
+        let _ = sender.send(Action::RemoveFileSearchExclusion(name.into()));
     });
     let sender = send.clone();
     launcher.on_delete_search_path(move |directory, index| {
@@ -712,7 +763,21 @@ impl Apps {
         weak: &slint::Weak<Launcher>,
         open_url: &UrlOpener<'_>,
     ) -> Result<(), String> {
+        if self.config.layout_locked && action.changes_layout() {
+            return Err("Unlock layout to make changes".into());
+        }
         match action {
+            Action::SaveLayoutLocked(locked) => {
+                if self.config.layout_locked != locked {
+                    let mut config = self.config.clone();
+                    config.layout_locked = locked;
+                    config
+                        .save()
+                        .map_err(|error| format!("Couldn't save config.json: {error}"))?;
+                    self.config = config;
+                }
+                Ok(())
+            }
             Action::Search(query) => {
                 self.query = query.to_lowercase();
                 if !self.query.is_empty() {
@@ -1402,6 +1467,8 @@ impl Apps {
                 self.save_search_path(directory, index, path)
             }
             Action::DeleteSearchPath(directory, index) => self.delete_search_path(directory, index),
+            Action::AddFileSearchExclusion(name) => self.edit_file_search_exclusion(&name, false),
+            Action::RemoveFileSearchExclusion(name) => self.edit_file_search_exclusion(&name, true),
             Action::SaveWebsite(index, name, url, request) => {
                 self.save_website(index, name, url, requests, request)
             }
@@ -1644,6 +1711,22 @@ impl Apps {
         for (id, icon) in icons {
             let _ = self.load_icon(&id, &icon);
         }
+    }
+
+    fn edit_file_search_exclusion(&mut self, name: &str, remove: bool) -> Result<(), String> {
+        let mut config = self.config.clone();
+        if !edit_exclusions(&mut config.file_search_exclusions, name, remove) {
+            return Ok(());
+        }
+        config
+            .save()
+            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
+        self.config = config;
+        self.search_paths = None;
+        if !self.query.is_empty() {
+            self.load_search_paths();
+        }
+        Ok(())
     }
 
     fn load_search_paths(&mut self) {
@@ -2185,6 +2268,7 @@ impl Apps {
         let size = self.config.item_size;
         let gap = self.config.grid_gap;
         let smooth_cursor = self.config.smooth_cursor;
+        let layout_locked = self.config.layout_locked;
         let search_engine_index = self.config.default_search_engine_index() as i32;
         let saved_columns = self.config.columns as i32;
         let saved_rows = self.config.rows as i32;
@@ -2198,6 +2282,12 @@ impl Apps {
             .file_search_paths
             .iter()
             .map(|path| path.as_str().into())
+            .collect::<Vec<slint::SharedString>>();
+        let file_search_exclusions = self
+            .config
+            .file_search_exclusions
+            .iter()
+            .map(|name| name.as_str().into())
             .collect::<Vec<slint::SharedString>>();
         let directory_search_paths = self
             .config
@@ -2491,6 +2581,7 @@ impl Apps {
                 .into(),
             );
             launcher.set_smooth_cursor(smooth_cursor);
+            launcher.set_layout_locked(layout_locked);
             launcher.set_default_search_engine_index(search_engine_index);
             launcher.invoke_default_search_engine_saved(search_engine_index);
             launcher.set_saved_columns(saved_columns);
@@ -2540,6 +2631,9 @@ impl Apps {
             launcher.set_installed_apps_match(installed_apps_match);
             launcher.set_file_search_paths(
                 std::rc::Rc::new(slint::VecModel::from(file_search_paths)).into(),
+            );
+            launcher.set_file_search_exclusions(
+                std::rc::Rc::new(slint::VecModel::from(file_search_exclusions)).into(),
             );
             launcher.set_directory_search_paths(
                 std::rc::Rc::new(slint::VecModel::from(directory_search_paths)).into(),
@@ -2902,6 +2996,51 @@ fn finish(
     });
 }
 
+fn edit_exclusions(entries: &mut Vec<String>, name: &str, remove: bool) -> bool {
+    let name = name.trim();
+    if name.is_empty() {
+        return false;
+    }
+    if remove {
+        let before = entries.len();
+        entries.retain(|entry| entry != name);
+        before != entries.len()
+    } else if entries.iter().any(|entry| entry == name) {
+        false
+    } else {
+        entries.push(name.to_owned());
+        true
+    }
+}
+
+// Only '*' is special; matching a whole name cannot cross a path separator.
+fn exclusion_matches(pattern: &str, name: &str) -> bool {
+    let (pattern, name) = (pattern.as_bytes(), name.as_bytes());
+    let (mut p, mut n) = (0, 0);
+    let mut star = None;
+    let mut retry = 0;
+    while n < name.len() {
+        if p < pattern.len() && pattern[p] != b'*' && pattern[p] == name[n] {
+            p += 1;
+            n += 1;
+        } else if p < pattern.len() && pattern[p] == b'*' {
+            star = Some(p);
+            p += 1;
+            retry = n;
+        } else if let Some(index) = star {
+            retry += 1;
+            n = retry;
+            p = index + 1;
+        } else {
+            return false;
+        }
+    }
+    while p < pattern.len() && pattern[p] == b'*' {
+        p += 1;
+    }
+    p == pattern.len()
+}
+
 fn index_search_paths(config: &Config) -> Vec<SearchPathResult> {
     let mut results = Vec::new();
     for root in &config.file_search_paths {
@@ -2911,6 +3050,15 @@ fn index_search_paths(config: &Config) -> Vec<SearchPathResult> {
                 continue;
             };
             for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if config
+                    .file_search_exclusions
+                    .iter()
+                    .any(|pattern| exclusion_matches(pattern, &name))
+                {
+                    continue;
+                }
                 let Ok(kind) = entry.file_type() else {
                     continue;
                 };
@@ -3205,6 +3353,67 @@ mod tests {
     fn init_ui_for_test() {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(i_slint_backend_testing::init_no_event_loop);
+    }
+
+    #[test]
+    fn locked_layout_rejects_all_organization_actions_without_changes() {
+        let weak = slint::Weak::default();
+        let mut config = Config::default();
+        config.layout_locked = true;
+        let mut apps = Apps {
+            config,
+            page: 0,
+            icons: HashMap::new(),
+            open_folder: None,
+            inventory: Inventory::default(),
+            installed_filter: String::new(),
+            query: String::new(),
+            search_paths: None,
+            recent: recent::Recent::default(),
+        };
+        let before = serde_json::to_value(&apps.config).unwrap();
+        let requests = RequestSequence::default();
+        for action in [
+            Action::Move("item".into(), 1),
+            Action::ReorderPage(1),
+            Action::Geometry(800, 600),
+            Action::Widget(7, None),
+            Action::ChangeWidget("widget".into(), 200, 200),
+            Action::DuplicateWidget("widget".into()),
+            Action::SaveAppearance(10, 80, 0, 800, 600),
+            Action::DeletePage,
+            Action::Pin(0),
+            Action::Unpin("item".into()),
+            Action::Delete(0),
+            Action::AddPage,
+            Action::Drop("item".into(), 1, 0, "".into()),
+            Action::AddPredefined("lock".into(), 0),
+            Action::AddInstalledApp("app".into(), 0),
+            Action::TransferData(true),
+            Action::Save(-1, "".into(), "".into(), "".into(), 0),
+            Action::SaveWebsite(-1, "".into(), "".into(), 0),
+            Action::SavePath(-1, "".into(), false, "".into(), 0),
+            Action::SaveFolder(-1, "".into(), 0),
+        ] {
+            assert_eq!(
+                apps.apply(action, &requests, &weak).unwrap_err(),
+                "Unlock layout to make changes"
+            );
+            assert_eq!(serde_json::to_value(&apps.config).unwrap(), before);
+        }
+        for action in [
+            Action::Search("test".into()),
+            Action::Page(0),
+            Action::Open(0),
+            Action::SelectTickTickList("widget".into(), "list".into()),
+            Action::Save(0, "".into(), "".into(), "".into(), 0),
+            Action::SaveWebsite(0, "".into(), "".into(), 0),
+            Action::SavePath(0, "".into(), false, "".into(), 0),
+            Action::SaveFolder(0, "".into(), 0),
+            Action::SaveLayoutLocked(false),
+        ] {
+            assert!(!action.changes_layout());
+        }
     }
 
     #[test]
@@ -3591,5 +3800,82 @@ mod tests {
         );
         assert_eq!(created.title, title);
         assert_eq!(created.project_id, inbox.id);
+    }
+}
+
+#[cfg(test)]
+mod file_search_exclusion_tests {
+    use super::*;
+
+    #[test]
+    fn patterns_match_whole_names_case_sensitively() {
+        for (pattern, name, expected) in [
+            ("dist", "dist", true),
+            ("dist", "distance", false),
+            ("dist", "Dist", false),
+            (".*", ".git", true),
+            (".*", "file", false),
+            ("a*b*c", "axybzc", true),
+            ("a*b", "ab", true),
+            ("*", "", true),
+            ("a?", "ab", false),
+            ("*.rs", "main.rs", true),
+            ("*é", "café", true),
+            ("*é", "cafe", false),
+        ] {
+            assert_eq!(
+                exclusion_matches(pattern, name),
+                expected,
+                "{pattern}: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn edits_trim_ignore_duplicates_and_preserve_empty_lists() {
+        let mut entries = Vec::new();
+        assert!(!edit_exclusions(&mut entries, "  ", false));
+        assert!(edit_exclusions(&mut entries, " dist ", false));
+        assert!(!edit_exclusions(&mut entries, "dist", false));
+        assert!(edit_exclusions(&mut entries, "Dist", false));
+        assert!(edit_exclusions(&mut entries, " dist ", true));
+        assert!(edit_exclusions(&mut entries, "Dist", true));
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn file_index_prunes_descendants_but_not_explicit_roots_or_directory_search() {
+        let root = std::env::temp_dir().join(format!("orbit-exclusions-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("target/target")).unwrap();
+        std::fs::create_dir_all(root.join("target/keep")).unwrap();
+        std::fs::write(root.join("target/visible.txt"), "").unwrap();
+        std::fs::write(root.join("target/.hidden"), "").unwrap();
+        std::fs::write(root.join("target/target/skipped.txt"), "").unwrap();
+        std::fs::write(root.join("target/keep/kept.txt"), "").unwrap();
+        let mut config = Config::default();
+        config
+            .file_search_paths
+            .push(root.join("target").to_string_lossy().into_owned());
+        config
+            .directory_search_paths
+            .push(root.to_string_lossy().into_owned());
+        let results = index_search_paths(&config);
+        assert!(
+            results
+                .iter()
+                .any(|entry| entry.name == "target" && entry.directory)
+        );
+        assert!(results.iter().any(|entry| entry.name == "visible.txt"));
+        assert!(results.iter().any(|entry| entry.name == "kept.txt"));
+        assert!(
+            !results
+                .iter()
+                .any(|entry| entry.name == "skipped.txt" || entry.name == ".hidden")
+        );
+        config.file_search_exclusions.clear();
+        let results = index_search_paths(&config);
+        assert!(results.iter().any(|entry| entry.name == "skipped.txt"));
+        assert!(results.iter().any(|entry| entry.name == ".hidden"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

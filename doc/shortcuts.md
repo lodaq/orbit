@@ -4,7 +4,7 @@ The user approved `Orbit_Desktop_Launcher_UX_Spec_v2.md` on 2026-10-20 as author
 
 # Orbit shortcuts
 
-Orbit is mouse first. Settings → Shortcuts lists Orbit bindings and lets you add, change or delete them. Choose an action and record a key combination; duplicate combinations are rejected. The tables below are defaults. Text editing shortcuts are provided by text fields, and the global toggle remains in Hyprland. Ctrl+K returns focus to the search field; while results are visible, arrows navigate results and typing edits the query.
+Orbit is mouse first. Settings → Shortcuts lists Orbit bindings and lets you add or delete them. To change a binding, use its ×, confirm with ✓, then use Add to record a replacement. Chip labels do not start recording. Choose an action and record a key combination; duplicate combinations are rejected. The tables below are defaults. Text editing shortcuts are provided by text fields, and the global toggle remains in Hyprland. Ctrl+K returns focus to the search field; while results are visible, arrows navigate results and typing edits the query.
 
 ## Launcher
 
@@ -88,3 +88,5 @@ Search engines: `:br` Brave, `:g` Google, `:d` DuckDuckGo, `:q` Qwant, `:b` Bing
 9. **Any keyboard layout.** All keys here work the same on every layout.
 
 Search anything: **Ctrl+W** deletes the previous word using native text editing, including selected text and undo. Manage or remove **Delete previous word** in Settings → Shortcuts. It acts only while Search anything is focused with no Settings or layer open. Existing bindings are preserved; an already assigned Ctrl+W is not replaced.
+
+The top-bar Lock layout / Unlock layout button has no default shortcut. While locked, Add page and Delete page shortcuts are disabled; page navigation remains available.

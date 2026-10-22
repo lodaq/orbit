@@ -22,6 +22,10 @@ export component Kbd inherits Rectangle {
 }
 
 export component AddOption inherits Rectangle {
+    in property <bool> settings-style;
+    in property <bool> navigation-style;
+    in property <bool> tab-style;
+    in property <bool> dashed-style;
     in property <string> label;
     in property <string> trailing;
     in property <string> shortcut;
@@ -44,19 +48,27 @@ export component AddOption inherits Rectangle {
     accessible-enabled: enabled;
     accessible-checked: selected;
     forward-focus: keyboard-focus;
-    border-radius: Theme.radius-control;
-    border-width: focused ? Theme.focus-width : Theme.border-width;
-    border-color: focused ? Theme.focus : (selected ? Theme.primary : Theme.border);
-    opacity: enabled ? 1 : 0.45;
-    background: destructive ? Theme.error-background : primary ? Theme.primary : (selected ? Theme.selection : (hovered ? Theme.raised : Theme.field));
-    if icon-present: Image { x: Theme.space-3; y: (parent.height - Theme.icon-control-size) / 2; width: Theme.icon-control-size; height: Theme.icon-control-size; source: root.icon; image-fit: contain; }
+    border-radius: (root.settings-style ? Theme.settings-r-control : Theme.radius-control);
+    border-width: focused ? Theme.focus-width : root.navigation-style || root.tab-style || root.dashed-style ? 0px : Theme.border-width;
+    border-color: focused ? (root.settings-style ? Theme.settings-icon-accent : Theme.focus) : root.settings-style && root.destructive ? Theme.settings-danger-border : (selected ? (root.settings-style ? Theme.settings-border-control : Theme.primary) : (root.settings-style ? Theme.settings-border-control : Theme.border));
+    opacity: enabled || settings-style ? 1 : 0.45;
+    background: root.settings-style
+        ? !enabled ? Theme.settings-disabled-bg
+            : hit-area.pressed ? Theme.settings-bg-inset
+            : destructive ? Theme.settings-danger-bg
+            : primary ? Theme.settings-primary
+            : selected ? (root.tab-style ? Theme.settings-bg-tab-active : Theme.settings-bg-nav-active)
+            : hovered ? Theme.settings-disabled-bg
+            : root.dashed-style ? Theme.settings-bg-inset : root.navigation-style || root.tab-style ? transparent : Theme.settings-bg-control
+        : destructive ? Theme.error-background : primary ? Theme.primary : selected ? Theme.selection : hovered ? Theme.raised : Theme.field;
+    if icon-present: Image { x: root.settings-style && root.width <= 40px ? 10px : Theme.space-3; y: (parent.height - self.height) / 2; width: root.settings-style ? 18px : Theme.icon-control-size; height: self.width; source: root.icon; image-fit: contain; }
     option-label := Text {
-        x: root.icon-present ? Theme.space-3 + Theme.icon-control-size + Theme.space-3 : Theme.space-3;
-        width: parent.width - self.x - (root.trailing == "" ? Theme.space-3 : 72px);
+        x: root.settings-style && root.width <= 40px ? 0px : root.icon-present ? Theme.space-3 + (root.settings-style ? 18px : Theme.icon-control-size) + Theme.space-3 : Theme.space-3;
+        width: max(0px, parent.width - self.x - (root.settings-style && root.width <= 40px ? 0px : root.trailing == "" ? Theme.space-3 : root.settings-style ? 32px : 72px));
         height: parent.height;
         text: root.label;
-        color: root.destructive ? Theme.error : root.primary ? Theme.on-primary : Theme.text;
-        font-size: Theme.type-control;
+        color: root.settings-style && !root.enabled ? Theme.settings-disabled-text : root.dashed-style ? Theme.settings-text-accent : root.navigation-style && !root.selected ? Theme.settings-text-muted : root.destructive ? (root.settings-style ? Theme.settings-danger-text : Theme.error) : root.primary ? Theme.on-primary : (root.settings-style ? Theme.settings-text : Theme.text);
+        font-size: (root.settings-style ? Theme.type-body : Theme.type-control);
         font-weight: root.selected || root.primary ? 600 : 500;
         horizontal-alignment: root.full-width || root.trailing != "" ? left : center;
         vertical-alignment: center;
@@ -64,10 +76,10 @@ export component AddOption inherits Rectangle {
     }
     if trailing != "": Text {
         x: parent.width - self.width - Theme.space-3;
-        width: 72px;
+        width: root.settings-style ? 24px : 72px;
         height: parent.height;
         text: root.trailing;
-        color: root.primary ? Theme.on-primary : Theme.secondary;
+        color: root.primary ? Theme.on-primary : (root.settings-style ? Theme.settings-text-muted : Theme.secondary);
         font-size: Theme.type-hint;
         horizontal-alignment: right;
         vertical-alignment: center;
@@ -79,7 +91,7 @@ export component AddOption inherits Rectangle {
     hit-area := TouchArea {
         enabled: root.enabled;
         mouse-cursor: pointer;
-        clicked => { root.clicked(); }
+        clicked => { if root.settings-style { keyboard-focus.focus(); } root.clicked(); }
     }
     keyboard-focus := FocusScope {
         width: 0px;
@@ -95,6 +107,7 @@ export component AddOption inherits Rectangle {
 }
 
 export component AddField inherits VerticalLayout {
+    in property <bool> settings-style;
     in property <string> label;
     in property <string> placeholder;
     in property <string> error;
@@ -111,28 +124,28 @@ export component AddField inherits VerticalLayout {
 
     Text {
         text: root.label;
-        color: Theme.text;
+        color: (root.settings-style ? Theme.settings-text-muted : Theme.text);
         font-size: Theme.type-control;
         font-weight: 500;
     }
     Rectangle {
         height: root.multiline ? Theme.field-multiline-height : Theme.control-height;
         horizontal-stretch: 1;
-        border-radius: Theme.radius-control;
-        background: Theme.field;
+        border-radius: (root.settings-style ? Theme.settings-r-control : Theme.radius-control);
+        background: (root.settings-style ? Theme.settings-bg-inset : Theme.field);
         border-width: input-field.has-focus ? Theme.focus-width : Theme.border-width;
-        border-color: root.error != "" ? Theme.error : input-field.has-focus ? Theme.focus : Theme.border;
-        Text { x: Theme.space-3; y: Theme.space-2; width: parent.width - 2 * Theme.space-3; visible: root.text == ""; text: root.placeholder; color: Theme.secondary; font-size: Theme.type-body; }
+        border-color: root.error != "" ? (root.settings-style ? Theme.settings-danger-text : Theme.error) : input-field.has-focus ? (root.settings-style ? Theme.settings-icon-accent : Theme.focus) : (root.settings-style ? Theme.settings-border-control : Theme.border);
+        Text { x: Theme.space-3; y: Theme.space-2; width: parent.width - 2 * Theme.space-3; visible: root.text == ""; text: root.placeholder; color: (root.settings-style ? Theme.settings-text-muted : Theme.secondary); font-size: Theme.type-body; }
         input-field := TextInput {
             x: Theme.space-3; y: Theme.space-2; width: parent.width - 2 * Theme.space-3; height: parent.height - 2 * Theme.space-2;
             text <=> root.text;
             enabled: root.enabled;
             single-line: !root.multiline;
             input-type: root.secret ? InputType.password : InputType.text;
-            color: Theme.text;
+            color: (root.settings-style ? Theme.settings-text : Theme.text);
             font-size: Theme.type-body;
-            selection-background-color: Theme.selection;
-            selection-foreground-color: Theme.text;
+            selection-background-color: (root.settings-style ? Theme.settings-bg-nav-active : Theme.selection);
+            selection-foreground-color: (root.settings-style ? Theme.settings-text : Theme.text);
             edited => { root.edited(); }
             key-pressed(event) => {
                 if root.multiline && event.text == "\n" {
@@ -146,7 +159,7 @@ export component AddField inherits VerticalLayout {
     }
     if error != "": Text {
         text: "! " + root.error;
-        color: Theme.error;
+        color: (root.settings-style ? Theme.settings-danger-text : Theme.error);
         font-size: Theme.type-hint;
     }
 }
@@ -194,4 +207,215 @@ export component SmoothCaret inherits Rectangle {
     opacity: active ? 1 : 0;
     animate opacity { duration: Theme.cursor-selection-fade; }
     Rectangle { width: parent.width; height: parent.height; background: Theme.cursor-color; opacity: Theme.cursor-opacity * root.idle-opacity; }
+}
+
+
+export component SettingsButton inherits AddOption {
+    settings-style: true;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+}
+
+export component SettingsAddButton inherits SettingsButton {
+    dashed-style: true;
+    height: Theme.settings-h-control;
+    for segment in max(0, floor((root.width - 20px) / 10px)): Rectangle {
+        x: 10px + segment * 10px; y: 0px; width: 5px; height: 1px; background: Theme.settings-border-dashed;
+    }
+    for segment in max(0, floor((root.width - 20px) / 10px)): Rectangle {
+        x: 10px + segment * 10px; y: root.height - 1px; width: 5px; height: 1px; background: Theme.settings-border-dashed;
+    }
+    for segment in max(0, floor((root.height - 12px) / 10px)): Rectangle {
+        x: 0px; y: 6px + segment * 10px; width: 1px; height: 5px; background: Theme.settings-border-dashed;
+    }
+    for segment in max(0, floor((root.height - 12px) / 10px)): Rectangle {
+        x: root.width - 1px; y: 6px + segment * 10px; width: 1px; height: 5px; background: Theme.settings-border-dashed;
+    }
+}
+
+export component SettingsField inherits AddField {
+    settings-style: true;
+}
+
+export component SettingsCard inherits Rectangle {
+    background: Theme.settings-bg-card;
+    border-color: Theme.settings-border-card;
+    border-width: Theme.border-width;
+    border-radius: Theme.settings-r-card;
+}
+
+export component SettingsTitle inherits Text {
+    color: Theme.settings-text;
+    font-size: Theme.settings-card-title-size;
+    font-weight: 500;
+}
+
+export component SettingsDescription inherits Text {
+    color: Theme.settings-text-muted;
+    font-size: Theme.type-control;
+    wrap: word-wrap;
+}
+
+export component SettingsNav inherits SettingsButton {
+    in property <string> hint;
+    Kbd { label: root.hint; x: parent.width - self.width - 12px; y: (parent.height - self.height) / 2; }
+    height: Theme.settings-h-nav;
+    full-width: true;
+    navigation-style: true;
+}
+
+export component SettingsTabGroup inherits Rectangle {
+    background: Theme.settings-bg-track;
+    border-width: Theme.border-width; border-color: Theme.settings-border-panel; border-radius: 11px;
+    height: 44px;
+    HorizontalLayout { padding: 4px; spacing: 2px; @children }
+}
+
+export component SettingsTab inherits SettingsButton {
+    height: Theme.settings-h-control-sm;
+    border-radius: Theme.settings-r-small;
+    tab-style: true;
+}
+
+export component SettingsSwitch inherits Rectangle {
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled;
+    accessible-action-default => { if root.enabled { root.toggled(); } }
+    width: 46px; height: 26px; border-radius: 13px;
+    background: checked ? Theme.settings-primary : Theme.settings-border-control;
+    border-width: focus.has-focus ? Theme.focus-width : 0px; border-color: Theme.settings-icon-accent;
+    opacity: enabled ? 1 : 0.45;
+    accessible-role: switch; accessible-label: "Smooth cursor"; accessible-checked: checked; accessible-enabled: enabled;
+    forward-focus: focus;
+    Rectangle { x: root.checked ? 23px : 3px; y: 3px; width: 20px; height: 20px; border-radius: 10px; background: root.checked ? Theme.settings-primary-text : Theme.settings-text-muted; }
+    TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { focus.focus(); root.toggled(); } }
+    focus := FocusScope { key-pressed(event) => { if root.enabled && (event.text == " " || event.text == "\n") { root.toggled(); return accept; } reject; } }
+}
+
+export component SettingsChip inherits Rectangle {
+    in property <bool> path-name;
+    in property <string> accessible-name: label;
+    in property <string> label;
+    in property <bool> accent;
+    in property <bool> enabled: true;
+    in property <bool> confirming;
+    callback removed;
+    height: 30px;
+    background: Theme.settings-bg-inset; border-radius: Theme.settings-r-small;
+    border-width: Theme.border-width; border-color: accent ? Theme.settings-border-dashed : Theme.settings-border-panel;
+    Text {
+        x: 12px; y: 0px; width: max(0px, parent.width - 42px); height: parent.height;
+        text: root.label; font-family: root.path-name ? "monospace" : "Inter";
+        color: root.accent ? Theme.settings-text-accent : Theme.settings-text-chip;
+        font-size: Theme.type-hint; vertical-alignment: center; overflow: elide;
+    }
+    SettingsButton {
+        x: parent.width - self.width - 4px; y: (parent.height - self.height) / 2;
+        label: root.confirming ? "✓" : "×"; shortcut: "";
+        accessible-label: (root.confirming ? "Confirm removal of " : "Remove ") + root.accessible-name;
+        option-width: 22px; height: 22px; destructive: root.confirming; enabled: root.enabled;
+        clicked => { root.removed(); }
+    }
+}
+
+export component SettingsStepper inherits Rectangle {
+    in property <bool> enabled: true;
+    opacity: root.enabled ? 1 : 0.45;
+    in-out property <int> value;
+    in property <int> minimum: 0;
+    in property <int> maximum: 64;
+    in property <int> step: 1;
+    in property <string> label;
+    private property <string> draft;
+    init => { root.draft = root.value; }
+    changed value => { if !number.has-focus { root.draft = root.value; } }
+    height: Theme.settings-h-control;
+    background: Theme.settings-bg-inset; border-radius: Theme.settings-r-control;
+    border-width: Theme.border-width; border-color: Theme.settings-border-control;
+    HorizontalLayout {
+        padding-left: 14px; padding-right: Theme.space-1;
+        padding-top: Theme.space-1; padding-bottom: Theme.space-1; spacing: Theme.space-2;
+        number := TextInput {
+            enabled: root.enabled;
+            text <=> root.draft; color: Theme.settings-text; font-size: Theme.type-body;
+            vertical-alignment: center; input-type: InputType.number; accessible-label: root.label;
+            changed has-focus => { if !self.has-focus { root.draft = root.value; } }
+            key-pressed(event) => {
+                if event.text == Key.UpArrow { root.value = min(root.maximum, root.value + root.step); root.draft = root.value; return accept; }
+                if event.text == Key.DownArrow { root.value = max(root.minimum, root.value - root.step); root.draft = root.value; return accept; }
+                reject;
+            }
+            edited => {
+                if self.text.is-float() {
+                    root.value = min(root.maximum, max(root.minimum, root.minimum + round((self.text.to-float() - root.minimum) / root.step) * root.step));
+                }
+            }
+            accepted => { root.draft = root.value; }
+        }
+        SettingsButton {
+            label: "−"; accessible-label: "Decrease " + root.label;
+            option-width: 32px; height: 32px; enabled: root.enabled && root.value > root.minimum;
+            clicked => { root.value = max(root.minimum, root.value - root.step); }
+        }
+        SettingsButton {
+            label: "+"; accessible-label: "Increase " + root.label;
+            option-width: 32px; height: 32px; enabled: root.enabled && root.value < root.maximum;
+            clicked => { root.value = min(root.maximum, root.value + root.step); }
+        }
+    }
+}
+
+export component SettingsSelect inherits Rectangle {
+    in property <[string]> model;
+    in-out property <int> current-index;
+    in property <bool> enabled: true;
+    in property <string> label: "Choose";
+    width: 220px; height: Theme.settings-h-control;
+    background: hit.has-hover ? Theme.settings-bg-control : Theme.settings-bg-inset;
+    border-radius: Theme.settings-r-control;
+    border-width: focus.has-focus ? Theme.focus-width : Theme.border-width;
+    border-color: focus.has-focus ? Theme.settings-icon-accent : Theme.settings-border-control;
+    accessible-role: combobox; accessible-label: label;
+    accessible-action-expand => { if root.enabled { choices.show(); } }
+    accessible-value: model[current-index]; accessible-enabled: enabled;
+    forward-focus: focus;
+    Text { x: 14px; width: parent.width - 48px; height: parent.height; text: root.model[root.current-index]; color: root.enabled ? Theme.settings-text : Theme.settings-disabled-text; font-size: Theme.type-body; vertical-alignment: center; overflow: elide; }
+    Text { x: parent.width - 30px; width: 16px; height: parent.height; text: "⌄"; color: Theme.settings-text-muted; vertical-alignment: center; }
+    hit := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { choices.show(); } }
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == Key.UpArrow { root.current-index = max(0, root.current-index - 1); return accept; }
+            if event.text == Key.DownArrow { root.current-index = min(root.model.length - 1, root.current-index + 1); return accept; }
+            if event.text == "\n" || event.text == " " { choices.show(); return accept; }
+            reject;
+        }
+    }
+    choices := PopupWindow {
+        y: root.height + 4px; width: root.width; height: min(320px, root.model.length * 42px + 8px);
+        forward-focus: popup-focus;
+        popup-focus := FocusScope {
+            key-pressed(event) => {
+                if event.text == Key.UpArrow { root.current-index = max(0, root.current-index - 1); return accept; }
+                if event.text == Key.DownArrow { root.current-index = min(root.model.length - 1, root.current-index + 1); return accept; }
+                if event.text == "\n" || event.text == Key.Escape { choices.close(); focus.focus(); return accept; }
+                reject;
+            }
+        Rectangle {
+            background: Theme.settings-bg-panel; border-color: Theme.settings-border-control; border-width: 1px; border-radius: Theme.settings-r-control;
+            Flickable {
+                x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px;
+                content-width: self.width; content-height: root.model.length * 42px;
+                content-y: -max(0px, min(root.current-index * 42px, self.content-height - self.height));
+                VerticalLayout {
+                    width: root.width - 8px; spacing: 2px;
+                    for choice[index] in root.model: SettingsButton {
+                        label: choice; selected: root.current-index == index; option-width: root.width - 8px;
+                        clicked => { root.current-index = index; choices.close(); focus.focus(); }
+                    }
+                }
+            }
+        }
+        }
+    }
 }

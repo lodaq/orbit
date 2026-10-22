@@ -27,10 +27,14 @@ pub struct Config {
     pub default_search_engine: String,
     #[serde(default = "default_smooth_cursor")]
     pub smooth_cursor: bool,
+    #[serde(default)]
+    pub layout_locked: bool,
     #[serde(default = "crate::shortcuts::defaults")]
     pub shortcuts: Vec<crate::shortcuts::Shortcut>,
     #[serde(default)]
     pub file_search_paths: Vec<String>,
+    #[serde(default = "default_file_search_exclusions")]
+    pub file_search_exclusions: Vec<String>,
     #[serde(default)]
     pub directory_search_paths: Vec<String>,
     #[serde(default = "default_actions")]
@@ -330,6 +334,30 @@ fn default_widget_max() -> i32 {
     100
 }
 
+pub fn default_file_search_exclusions() -> Vec<String> {
+    [
+        ".git",
+        "node_modules",
+        ".*",
+        ".local",
+        ".claude",
+        ".agent",
+        ".cache",
+        ".venv",
+        "__pycache__",
+        "dist",
+        "build",
+        ".next",
+        "target",
+        ".idea",
+        ".vscode",
+        ".npm",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -348,8 +376,10 @@ impl Default for Config {
             grid_gap: default_grid_gap(),
             default_search_engine: default_search_engine(),
             smooth_cursor: true,
+            layout_locked: false,
             shortcuts: crate::shortcuts::defaults(),
             file_search_paths: Vec::new(),
+            file_search_exclusions: default_file_search_exclusions(),
             directory_search_paths: Vec::new(),
             user_actions: default_actions(),
             prefixes: default_prefixes(),
@@ -846,6 +876,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn layout_lock_defaults_to_unlocked_and_round_trips() {
+        let mut saved = serde_json::to_value(Config::default()).unwrap();
+        saved.as_object_mut().unwrap().remove("layout_locked");
+        let mut config: Config = serde_json::from_value(saved).unwrap();
+        assert!(!config.layout_locked);
+        for locked in [true, false] {
+            config.layout_locked = locked;
+            let restored: Config =
+                serde_json::from_slice(&serde_json::to_vec(&config).unwrap()).unwrap();
+            assert_eq!(restored.layout_locked, locked);
+        }
+    }
+
+    #[test]
     fn first_run_has_one_empty_page() {
         let config = Config::default();
         assert!(config.valid());
@@ -1091,5 +1135,53 @@ mod search_shortcut_tests {
         config.add_search_word_shortcut();
         assert!(!config.shortcuts.iter().any(|entry| entry.action == 12));
         assert_eq!(config.shortcuts[0].keys, "Ctrl+W");
+    }
+}
+
+#[cfg(test)]
+mod file_search_exclusion_tests {
+    use super::*;
+
+    #[test]
+    fn missing_exclusions_get_defaults_but_empty_lists_stay_empty() {
+        let mut value = serde_json::to_value(Config::default()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("file_search_exclusions");
+        let migrated: Config = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            migrated.file_search_exclusions,
+            default_file_search_exclusions()
+        );
+        let config = Config {
+            file_search_exclusions: Vec::new(),
+            ..Config::default()
+        };
+        let loaded: Config =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert!(loaded.file_search_exclusions.is_empty());
+        assert_eq!(loaded.version, config.version);
+    }
+}
+
+#[cfg(test)]
+mod exclusion_persistence_tests {
+    use super::*;
+
+    #[test]
+    fn custom_exclusions_round_trip_without_changing_search_roots_or_items() {
+        let mut config = Config {
+            file_search_exclusions: vec!["*.tmp".into(), "Build".into()],
+            ..Config::default()
+        };
+        config.file_search_paths.push("/documents".into());
+        config.directory_search_paths.push("/projects".into());
+        let saved = serde_json::to_vec(&config).unwrap();
+        let loaded: Config = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(loaded.file_search_exclusions, ["*.tmp", "Build"]);
+        assert_eq!(loaded.file_search_paths, config.file_search_paths);
+        assert_eq!(loaded.directory_search_paths, config.directory_search_paths);
+        assert_eq!(loaded.pages.len(), config.pages.len());
     }
 }

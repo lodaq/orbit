@@ -1,0 +1,39 @@
+/* Orbit settings: design tokens (extracted from the redesign) */
+:root{
+  /* surfaces */
+  --bg-app:#0C0E22;        /* behind the settings panel */
+  --bg-panel:#131633;      /* settings panel + dock */
+  --bg-card:#181B3B;       /* cards */
+  --bg-inset:#10132E;      /* inputs, path fields, chips, preview */
+  --bg-track:#0F1230;      /* tab group track */
+  --bg-control:#1C2048;    /* default buttons, icon buttons, kbd */
+  --bg-nav-active:#23285A;
+  --bg-tab-active:#2A2F6B;
+  /* borders */
+  --border-panel:#262B58;
+  --border-card:#2A2F5E;
+  --border-control:#2C3160;
+  --border-dashed:#3A4090;
+  /* text */
+  --text:#F1F2FF;
+  --text-muted:#A9AEDB;
+  --text-control:#E8EAFF;
+  --text-chip:#DADDFB;
+  --text-kbd:#C9CDF5;
+  --text-accent:#B7BCFF;
+  --icon-accent:#9AA2FF;
+  --text-none:#8D93C7;     /* "No shortcut assigned" (italic) */
+  /* actions */
+  --primary:#5058E0;       /* white text = 5.5:1 */
+  --primary-text:#FFFFFF;
+  --danger-bg:#33192B; --danger-border:#4C2640; --danger-text:#FFA3AE;
+  --success-bg:#12301F; --success-text:#7EE0A4;
+  --disabled-bg:#232750; --disabled-text:#8F95C8;
+  /* type */
+  --font:Inter,system-ui,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  /* radii */
+  --r-panel:20px; --r-card:14px; --r-control:10px; --r-small:8px; --r-kbd:6px; --r-pill:12px;
+  /* sizes */
+  --sidebar-w:232px; --h-control:40px; --h-control-sm:34px; --h-icon-btn:36px; --h-nav:44px;
+}
