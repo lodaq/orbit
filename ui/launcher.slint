@@ -40,6 +40,8 @@ export struct AppTile {
     preview-icons: [FolderPreview],
 }
 
+export struct EnglishIssue { original: string, replacement: string, explanation: string, start: int, end: int }
+
 export struct PageItems { items: [AppTile] }
 
 export struct InstalledAppTile {
@@ -455,6 +457,15 @@ export component Launcher inherits Window {
     private property <bool> search-cursor-overlay: root.smooth-cursor && root.launcher-visible && search-input.has-focus && search-input.preedit-text == "";
     changed search-text => { root.search-edit-generation += 1; root.english-dismissed = false; root.english-changed(); }
     in property <bool> english-suggestions-enabled;
+    in property <bool> english-autocomplete-enabled;
+    in property <bool> english-grammar-enabled;
+    in-out property <[EnglishIssue]> english-issues;
+    in-out property <bool> english-grammar-checked;
+    callback english-correct(int);
+    in-out property <string> english-completion;
+    out property <int> english-cursor: search-input.cursor-position-byte-offset;
+    out property <int> english-anchor: search-input.anchor-position-byte-offset;
+    callback accept-next-word();
     in property <string> english-address: "http://127.0.0.1:11434";
     private property <string> english-address-draft: root.english-address;
     in-out property <[string]> english-suggestions;
@@ -463,14 +474,31 @@ export component Launcher inherits Window {
     in-out property <string> english-connection: "English assistance disabled";
     in-out property <bool> english-loading;
     private property <bool> english-dismissed;
-    out property <bool> english-active: root.search-editing && !root.english-dismissed && root.english-suggestions-enabled && root.activated-prefix-id == "" && search-input.preedit-text == "";
+    out property <bool> english-active: root.search-editing && !root.english-dismissed && (root.english-suggestions-enabled || root.english-autocomplete-enabled || root.english-grammar-enabled) && search-input.preedit-text == "";
     callback english-changed();
     callback english-configure();
+    in property <string> english-model;
+    changed english-model => { root.english-configure(); }
+    in property <string> english-suggestions-prompt;
+    private property <string> english-suggestions-prompt-draft: root.english-suggestions-prompt;
+    changed english-suggestions-prompt => { root.english-configure(); }
+    in property <string> english-completion-prompt;
+    private property <string> english-completion-prompt-draft: root.english-completion-prompt;
+    changed english-completion-prompt => { root.english-configure(); }
+    in property <string> english-grammar-prompt;
+    private property <string> english-grammar-prompt-draft: root.english-grammar-prompt;
+    changed english-grammar-prompt => { root.english-configure(); }
+    in-out property <[string]> english-models;
+    in-out property <int> english-model-index;
+    callback english-refresh-models();
+    callback save-english-model(string,string,string,string);
     callback english-test();
     callback english-retry();
     callback english-apply(int);
-    callback save-english(bool, string);
+    callback save-english(bool, bool, bool, string);
     changed english-active => { root.english-changed(); }
+    changed english-grammar-enabled => { root.english-configure(); root.english-changed(); }
+    changed english-autocomplete-enabled => { root.english-configure(); root.english-changed(); }
     changed english-suggestions-enabled => { root.english-configure(); root.english-changed(); }
     changed english-address => { root.english-configure(); }
     in-out property <string> banner;
@@ -515,7 +543,8 @@ export component Launcher inherits Window {
     private property <int> action-kind-index;
     private property <[string]> action-kinds: ["Shell", "URL", "TickTick"];
     out property <string> activated-prefix-name;
-    private property <string> activated-prefix-id;
+    out property <string> activated-prefix-id;
+    changed activated-prefix-id => { root.english-changed(); }
     private property <length> activated-prefix-width: 78px;
     callback save-user-action(string, string, string, string, string, string);
     callback delete-user-action(string);
@@ -559,10 +588,12 @@ export component Launcher inherits Window {
     private property <int> saved-size: 128;
     private property <int> saved-margin: 10;
     private property <int> saved-grid-gap: 16;
+    private property <bool> engine-menu;
     in-out property <[string]> search-engine-names;
     in-out property <int> default-search-engine-index;
     private property <int> saved-default-search-engine-index;
     changed settings => {
+        root.engine-menu = false;
         if root.settings {
             root.saved-size = root.item-size; root.saved-margin = root.page-margin; root.saved-grid-gap = root.grid-gap;
             root.saved-default-search-engine-index = root.default-search-engine-index;
@@ -594,7 +625,7 @@ export component Launcher inherits Window {
     private property <int> shortcut-delete-action: -1;
     private property <string> shortcut-delete-keys;
     private property <int> shortcut-action;
-    private property <[string]> shortcut-actions: ["Focus Search anything", "Close the top layer", "Move left / previous page", "Move right / next page", "Move up", "Move down", "Open / Choose", "Next field", "Previous field", "Open Settings", "Add page", "Delete page", "Delete previous word"];
+    private property <[string]> shortcut-actions: ["Focus Search anything", "Close the top layer", "Move left / previous page", "Move right / next page", "Move up", "Move down", "Open / Choose", "Next field", "Previous field", "Open Settings", "Add page", "Delete page", "Delete previous word", "Accept next word"];
     callback save-shortcut(int, string, string);
     callback delete-shortcut(int, string);
     callback shortcut-saved();
@@ -1269,6 +1300,7 @@ export component Launcher inherits Window {
         root.transition-incoming-items = [];
         transition-timer.stop();
         page.content-x = 0px;
+        root.engine-menu = false;
         root.search-text = "";
         root.activated-prefix-id = "";
         root.activated-prefix-name = "";
@@ -1297,7 +1329,6 @@ export component Launcher inherits Window {
         search-input.focus();
     }
     close-top-layer => {
-        if english-panel.visible { root.english-dismissed = true; root.english-changed(); return; }
         if root.page-context { root.page-context = false; return; }
         if root.move-id != "" { root.move-id = ""; return; }
         if root.ticktick-confirm-delete { root.ticktick-confirm-delete = false; return; }
@@ -1320,6 +1351,8 @@ export component Launcher inherits Window {
         else if root.folder-open { root.close-folder-view(); }
         else if root.settings && root.search-path-editor { root.search-path-editor = false; }
         else if root.settings { root.settings = false; search-input.focus(); }
+        else if root.engine-menu { root.engine-menu = false; }
+        else if english-panel.visible { root.english-dismissed = true; root.english-changed(); }
         else if root.activated-prefix-id != "" { root.search-text = ""; root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); page-focus.focus(); }
         else if root.search-text != "" { root.search-text = ""; root.search(""); page-focus.focus(); }
         else { root.hide-launcher(); }
@@ -1539,7 +1572,7 @@ export component Launcher inherits Window {
     Image { x: 48px; y: 40px; width: 90px; height: 32px; source: @image-url("assets/orbit.svg"); }
     search-bar := Rectangle {
         x: (root.width - self.width) / 2; y: 34px; width: min(560px, root.width - 440px);
-        height: max(Theme.search-min-height, min(176px, search-measure.preferred-height + 2 * (Theme.search-padding + Theme.search-cursor-inset)));
+        height: max(Theme.search-min-height, min(176px, search-measure.preferred-height + 2 * (Theme.search-padding + Theme.search-cursor-inset) + (completion-ghost.visible && completion-ghost.next-line ? root.search-cursor-height : 0px)));
         background: Theme.search-background;
         border-color: root.search-focused ? Theme.search-focus-border : Theme.search-border;
         border-width: Theme.border-width; border-radius: Theme.radius-sheet - Theme.space-1;
@@ -1571,6 +1604,7 @@ export component Launcher inherits Window {
                 single-line: false; wrap: word-wrap;
                 cursor-position-changed(point) => {
                     root.search-edit-generation += 1;
+                    root.english-changed();
                     root.search-cursor-x = point.x;
                     root.search-cursor-y = point.y;
                     let top = self.y + point.y + search-scroll.content-y;
@@ -1588,7 +1622,12 @@ export component Launcher inherits Window {
                         root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); accept;
                     }
                     else if event.text == "\n" { if self.text != "" || root.activated-prefix-id != "" { root.run-activated-prefix(); } accept; }
-                    else if event.text == Key.Tab { if root.activated-prefix-id == "" { root.activate-prefix(); } accept; }
+                    else if event.text == Key.Tab {
+                        let matched = root.match-prefix(root.search-text);
+                        if root.activated-prefix-id == "" && matched.action-id != "" { root.activate-prefix(); }
+                        else if root.english-completion != "" { root.accept-next-word(); }
+                        accept;
+                    }
                     else if event.text == Key.Space && root.activated-prefix-id == "" {
                         let matched = root.match-prefix(root.search-text);
                         if matched.action-id != "" { root.activate-prefix(); accept; } else { reject; }
@@ -1596,6 +1635,16 @@ export component Launcher inherits Window {
                     else { reject; }
                 }
             }
+        }
+        completion-measure := Text { visible: false; text: root.english-completion; font-size: Theme.search-font-size; }
+        completion-ghost := Text {
+            visible: root.english-active && root.english-completion != "";
+            property <bool> next-line: completion-measure.preferred-width > search-input.width - root.search-cursor-x - 4px;
+            x: search-scroll.x + search-input.x + (self.next-line ? 0px : root.search-cursor-x + 2px);
+            y: search-scroll.y + search-input.y + root.search-cursor-y + search-scroll.content-y + (self.next-line ? root.search-cursor-height : 0px);
+            width: max(0px,search-input.width - (self.next-line ? 0px : root.search-cursor-x));
+            height: root.search-cursor-height;
+            text: root.english-completion; font-size: Theme.search-font-size; color: Theme.secondary; overflow: elide;
         }
         if root.search-cursor-overlay: Rectangle {
             x: search-scroll.x; y: search-scroll.y;
@@ -1986,25 +2035,76 @@ export component Launcher inherits Window {
             result-hit := TouchArea { mouse-cursor: pointer; enabled: !root.busy; clicked => { root.search-selection = index; root.activate-search-selection(); } }
         }
     }
+    if root.engine-menu: TouchArea { clicked => { root.engine-menu = false; } }
+    engine-select := Rectangle {
+        x: search-bar.x - self.width - 12px; y: search-bar.y;
+        width: 154px; height: 48px; visible: !root.settings;
+        accessible-role: combobox; accessible-label: "Default search engine";
+        accessible-value: root.search-engine-names[root.default-search-engine-index];
+        accessible-enabled: !root.busy;
+        accessible-action-expand => { if !root.busy { root.engine-menu = !root.engine-menu; } }
+        background: engine-select-hit.has-hover ? Theme.raised : Theme.field;
+        border-radius: Theme.radius-control; border-width: Theme.border-width; border-color: Theme.border;
+        Text { x: 14px; width: parent.width - 42px; height: parent.height; text: root.search-engine-names[root.default-search-engine-index]; color: Theme.text; font-size: Theme.type-control; vertical-alignment: center; overflow: elide; }
+        Text { x: parent.width - 28px; height: parent.height; text: "⌄"; color: Theme.secondary; vertical-alignment: center; }
+        engine-select-hit := TouchArea { enabled: !root.busy; mouse-cursor: pointer; clicked => { root.engine-menu = !root.engine-menu; } }
+    }
+    if root.engine-menu && !root.settings: Rectangle {
+        x: engine-select.x; y: engine-select.y + engine-select.height + 6px;
+        width: engine-select.width; height: min(root.search-engine-names.length * 36px + 38px, root.height - self.y - 24px);
+        background: Theme.sheet; border-width: Theme.border-width; border-color: Theme.border; border-radius: Theme.radius-control;
+        Flickable {
+            x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px;
+            content-width: self.width; content-height: root.search-engine-names.length * 36px + 26px;
+            VerticalLayout {
+                width: parent.width; spacing: 2px;
+                Text { x: 10px; height: 24px; text: "Search engine"; color: Theme.secondary; font-size: Theme.type-hint; vertical-alignment: center; }
+                for name[index] in root.search-engine-names: Rectangle {
+                    height: 34px; border-radius: 6px;
+                    background: engine-option-hit.has-hover || index == root.default-search-engine-index ? Theme.raised : transparent;
+                    Text { x: 10px; width: parent.width - 20px; height: parent.height; text: name; color: Theme.text; font-size: Theme.type-control; vertical-alignment: center; overflow: elide; }
+                    engine-option-hit := TouchArea {
+                        enabled: !root.busy; mouse-cursor: pointer;
+                        clicked => { root.engine-menu = false; root.busy = true; root.save-default-search-engine(index); }
+                    }
+                }
+            }
+        }
+    }
     english-panel := Rectangle {
-        visible: root.english-active && (root.english-loading || root.english-status != "" || root.english-suggestions.length > 0);
+        visible: root.english-active && (root.english-loading || root.english-status != "" || root.english-suggestions.length > 0 || root.english-grammar-checked);
         x: search-bar.x; y: search-bar.y + search-bar.height + 12px;
-        width: search-bar.width; height: min(280px, english-list.preferred-height + 24px);
+        width: search-bar.width; height: max(48px,min(400px, root.height - self.y - 160px, english-list.preferred-height + 24px));
         background: Theme.sheet; border-width: Theme.border-width; border-color: Theme.border; border-radius: Theme.radius-sheet; clip: true;
         Flickable {
             x: 12px; y: 12px; width: parent.width - 24px; height: parent.height - 24px;
             content-width: self.width; content-height: english-list.preferred-height;
             english-list := VerticalLayout {
                 width: parent.width; alignment: start; spacing: 8px;
-                HorizontalLayout { height: 24px; spacing: 8px;
-                    Text { horizontal-stretch: 1; text: root.english-loading ? "Thinking of suggestions…" : root.english-status; color: Theme.secondary; font-size: Theme.type-hint; overflow: elide; vertical-alignment: center; }
+                HorizontalLayout { height: max(24px,english-status-text.preferred-height); spacing: 8px;
+                    english-status-text := Text { horizontal-stretch: 1; wrap: word-wrap; text: root.english-loading ? "Preparing English assistance…" : root.english-status; color: Theme.secondary; font-size: Theme.type-hint; overflow: elide; vertical-alignment: center; }
+                    if root.english-completion != "": AddOption { label: "Accept word"; height: 24px; option-width: 112px; clicked => { root.accept-next-word(); } }
+                    if root.english-completion != "" && root.shortcut-hints[13] != "": Kbd { label: root.shortcut-hints[13]; }
                     if !root.english-loading && root.english-suggestions.length == 0: AddOption { label: "Retry"; height: 24px; option-width: 60px; clicked => { root.english-retry(); } }
                 }
+                if root.english-suggestions.length > 0: Text { text: "Suggestions"; color: Theme.text; font-size: Theme.type-control; font-weight: 600; }
                 for text[index] in root.english-suggestions: Rectangle {
                     height: max(44px,suggestion-text.preferred-height + 20px);
                     background: suggestion-hit.has-hover ? Theme.raised : Theme.field; border-radius: Theme.radius-control;
                     suggestion-text := Text { x: 12px; y: 10px; width: parent.width - 24px; text: text; wrap: word-wrap; color: Theme.text; font-size: Theme.type-body; }
                     suggestion-hit := TouchArea { mouse-cursor: pointer; clicked => { root.english-apply(index); } }
+                }
+                if root.english-grammar-checked: Text { text: "Grammar feedback"; color: Theme.text; font-size: Theme.type-control; font-weight: 600; }
+                if root.english-grammar-checked && root.english-issues.length == 0: Text { text: "No English mistakes found"; color: Theme.secondary; font-size: Theme.type-control; }
+                for issue[index] in root.english-issues: Rectangle {
+                    height: grammar-content.preferred-height + 20px;
+                    background: correction-hit.has-hover ? Theme.raised : Theme.field; border-radius: Theme.radius-control;
+                    grammar-content := VerticalLayout {
+                        x: 12px; y: 10px; width: parent.width - 24px; spacing: 6px;
+                        Text { text: issue.original + " → " + (issue.replacement == "" ? "Remove" : issue.replacement); wrap: word-wrap; color: Theme.focus; font-size: Theme.type-body; }
+                        Text { text: issue.explanation; wrap: word-wrap; color: Theme.secondary; font-size: Theme.type-control; }
+                    }
+                    correction-hit := TouchArea { mouse-cursor: pointer; clicked => { root.english-correct(index); } }
                 }
             }
         }
@@ -2038,7 +2138,7 @@ export component Launcher inherits Window {
                     SettingsTab { label: "General"; selected: root.settings-tab == 4; clicked => { root.settings-tab = 4; } }
                     SettingsTab { label: "Prefixes"; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; } }
                     SettingsTab { label: "Actions"; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; } }
-                    SettingsTab { label: "English assistance"; selected: root.settings-tab == 5; clicked => { root.settings-tab = 5; } }
+                    SettingsTab { label: "English assistance"; option-width: 170px; selected: root.settings-tab == 5; clicked => { root.settings-tab = 5; root.english-refresh-models(); } }
                 }
                 Rectangle { row: 0; col: 1; horizontal-stretch: 1; }
                 if root.settings-tab == 3 && !root.action-editor-open: SettingsButton { row: root.width - 392px < 500px ? 1 : 0; col: root.width - 392px < 500px ? 0 : 2; label: "New action"; option-width: 132px; primary: true; enabled: !root.busy; clicked => { root.action-id-draft = ""; root.action-name-draft = ""; root.action-kind-draft = "Shell"; root.action-source-draft = ""; root.action-description-draft = ""; root.action-tokens-draft = ""; root.action-used = false; root.action-editor-open = true; } }
@@ -2142,15 +2242,38 @@ export component Launcher inherits Window {
                 english-settings := VerticalLayout {
                     padding: 20px; spacing: 16px; alignment: start;
                     SettingsTitle { text: "English assistance"; }
-                    SettingsDescription { text: "Local qwen3:4b suggests better wording. Your text changes only when you choose a suggestion. The model stays loaded while enabled."; }
-                    CheckBox { text: "Suggestions"; checked: root.english-suggestions-enabled; enabled: !root.busy; toggled => { root.busy = true; root.save-english(self.checked,root.english-address); } }
+                    SettingsDescription { text: "Your selected local model suggests better wording. Your text changes only when you choose a suggestion. The model stays loaded while enabled."; }
+                    CheckBox { text: "Suggestions"; checked: root.english-suggestions-enabled; enabled: !root.busy; toggled => { root.busy = true; root.save-english(self.checked,root.english-autocomplete-enabled,root.english-grammar-enabled,root.english-address); } }
+                    CheckBox { text: "Autocomplete"; checked: root.english-autocomplete-enabled; enabled: !root.busy; toggled => { root.busy = true; root.save-english(root.english-suggestions-enabled,self.checked,root.english-grammar-enabled,root.english-address); } }
+                    CheckBox { text: "Grammar feedback"; checked: root.english-grammar-enabled; enabled: !root.busy; toggled => { root.busy = true; root.save-english(root.english-suggestions-enabled,root.english-autocomplete-enabled,self.checked,root.english-address); } }
                     SettingsField { label: "Local Ollama address"; text <=> root.english-address-draft; placeholder: "http://127.0.0.1:11434"; }
-                    SettingsDescription { text: "Model: qwen3:4b · English text stays on this computer"; }
+                    SettingsDescription { text: "English text stays on this computer"; }
                     HorizontalLayout { spacing: 12px; alignment: start;
-                        SettingsButton { label: "Save address"; option-width: 130px; enabled: !root.busy; clicked => { root.busy = true; root.save-english(root.english-suggestions-enabled,root.english-address-draft); } }
+                        SettingsButton { label: "Save address"; option-width: 130px; enabled: !root.busy; clicked => { root.busy = true; root.save-english(root.english-suggestions-enabled,root.english-autocomplete-enabled,root.english-grammar-enabled,root.english-address-draft); } }
                         SettingsButton { label: "Test connection"; option-width: 150px; clicked => { root.english-test(); } }
                     }
+                    SettingsDescription { text: "Selected model: " + root.english-model; }
+                    SettingsSelect { width: parent.width - 40px; label: "Local model"; model: root.english-models; current-index <=> root.english-model-index; }
+                    HorizontalLayout { spacing: 12px; alignment: start;
+                        SettingsButton { label: "Use model"; option-width: 130px; enabled: !root.busy && root.english-models.length > 0; clicked => {
+                            root.busy = true;
+                            root.save-english-model(root.english-models[root.english-model-index],root.english-suggestions-prompt,root.english-completion-prompt,root.english-grammar-prompt);
+                        } }
+                        SettingsButton { label: "Refresh models"; option-width: 160px; clicked => { root.english-refresh-models(); } }
+                    }
                     SettingsDescription { text: root.english-connection; }
+                    SettingsTitle { text: "Model prompts"; }
+                    SettingsDescription { text: "Edit the instructions sent with your query. The response format and correction validation remain enforced."; }
+                    SettingsDescription { text: "Suggestions"; }
+                    TextEdit { height: 140px; text <=> root.english-suggestions-prompt-draft; }
+                    SettingsDescription { text: "Autocomplete"; }
+                    TextEdit { height: 140px; text <=> root.english-completion-prompt-draft; }
+                    SettingsDescription { text: "Grammar feedback"; }
+                    TextEdit { height: 140px; text <=> root.english-grammar-prompt-draft; }
+                    SettingsButton { label: "Save prompts"; option-width: 240px; enabled: !root.busy; clicked => {
+                        root.busy = true;
+                        root.save-english-model(root.english-models.length > 0 ? root.english-models[root.english-model-index] : root.english-model, root.english-suggestions-prompt-draft,root.english-completion-prompt-draft,root.english-grammar-prompt-draft);
+                    } }
                 }
             }
             if root.settings-tab == 4: VerticalLayout {

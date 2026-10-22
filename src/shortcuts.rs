@@ -31,12 +31,16 @@ pub fn defaults() -> Vec<Shortcut> {
         action: 12,
         keys: "Ctrl+W".into(),
     }))
+    .chain(std::iter::once(Shortcut {
+        action: 13,
+        keys: "Ctrl+E".into(),
+    }))
     .collect()
 }
 
 pub fn valid(bindings: &[Shortcut]) -> bool {
     bindings.iter().enumerate().all(|(index, binding)| {
-        (0..13).contains(&binding.action)
+        (0..14).contains(&binding.action)
             && !binding.keys.is_empty()
             && binding.keys.len() < 80
             && !bindings[..index]
@@ -118,6 +122,16 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         .iter()
         .find(|binding| binding.keys == keys)
         .map(|binding| binding.action);
+    if action.is_none()
+        && launcher.get_search_editing()
+        && modifiers.control_key()
+        && matches!(key, Key::Character(text) if text.eq_ignore_ascii_case("z") || text.eq_ignore_ascii_case("y"))
+    {
+        let redo = modifiers.shift_key()
+            || matches!(key, Key::Character(text) if text.eq_ignore_ascii_case("y"));
+        crate::search_edit::history(launcher, redo);
+        return true;
+    }
     let Some(action) = action else {
         // Removed defaults must not fall through to native Slint shortcuts.
         return matches!(
@@ -144,6 +158,16 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         }
         6 if launcher.get_search_navigation() => launcher.invoke_run_activated_prefix(),
         6 if launcher.get_grid_navigation() => launcher.invoke_activate_grid(),
+        7 if launcher.get_search_editing()
+            && !launcher.get_english_completion().is_empty()
+            && (!launcher.get_activated_prefix_id().is_empty()
+                || launcher
+                    .invoke_match_prefix(launcher.get_search_text())
+                    .action_id
+                    .is_empty()) =>
+        {
+            launcher.invoke_accept_next_word();
+        }
         6..=8 => {
             let text = match action {
                 6 => "\n",
@@ -162,6 +186,8 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         11 if !launcher.get_layout_locked() => launcher.invoke_confirm_delete_page(),
         12 if launcher.get_search_editing() => delete_previous_word(launcher.window()),
         12 => return false,
+        13 if launcher.get_search_editing() => launcher.invoke_accept_next_word(),
+        13 => return false,
         _ => (),
     }
     true
@@ -277,7 +303,7 @@ mod tests {
         bindings.retain(|entry| entry.action != 12);
         assert!(valid(&bindings));
         assert!(!valid(&[Shortcut {
-            action: 13,
+            action: 14,
             keys: "Ctrl+W".into()
         }]));
     }

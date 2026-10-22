@@ -7,6 +7,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     platform::init()?;
     let launcher = Launcher::new()?;
+    ctrlc::set_handler(|| {
+        let _ = slint::quit_event_loop();
+    })?;
     crate::toast::init(&launcher);
     let _english = crate::english_assistance::connect(&launcher);
     apps::connect(&launcher);

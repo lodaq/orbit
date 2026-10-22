@@ -263,7 +263,7 @@ None at the moment.
 
 Settings groups Home Screen sizing, TickTick account and data under General. Search bar contains General (search engine and search paths), Prefixes and Actions. Page creation, deletion and Move page left/right are in the empty-space Context menu. TickTick widgets use the raised surface background.
 
-Search anything wraps long queries and grows vertically, with results below the field. Backspace removes an active Prefix when its query is empty. When no local items match, show all available search engines with the saved default first and selected (Perplexity initially). Clicking an engine or pressing Enter searches the current query with that engine.
+Search anything wraps long queries and grows vertically, with results below the field. Backspace removes an active Prefix when its query is empty. When local items match, show those results. If none match, show no search engine tiles; Enter still searches with the saved default engine (Perplexity initially). The default engine select beside Search anything opens the engine list.
 
 Search engine results use locally bundled brand icons in rounded tiles.
 
@@ -294,3 +294,9 @@ Lock layout / Unlock layout is the padlock immediately left of Settings. One sav
 ### Website icon drafts and anchored Add item (2026-10-22)
 
 Add item has a stationary top edge based on its maximum height (760 px, viewport permitting); type changes animate the bottom edge over 180 ms. Website and Edit website show an icon preview before saving. Automatic fetch is the default, debounced while editing URL and performed on a worker; users can choose/change a custom icon or return to Automatic. Save reuses the completed preview, and fetch failures permit saving a letter fallback. Closing or changing sheets invalidates obsolete previews. Custom image names retain the existing chosen-* convention, so mode is inferred without a config migration.
+
+## Local English assistance (2026-10-22)
+
+The approved staged behavior is in `english-assistance.md`: local Ollama qwen3:4b supplies sentence suggestions, then Ctrl+E next-word completion, then English grammar explanations with clickable corrections. Features are independent and default disabled in Search bar → English assistance. Sentence suggestions appear above ordinary search results after two words, and replace text only when clicked. Model work is asynchronous, text snapshots reject stale results, syntax is protected, and native undo remains available. Cloud support and automatic replacement are deferred.
+
+English assistance now supports choosing installed local Ollama generation models and editing the three system prompts in Settings → Search bar → English assistance. Ctrl+E and Tab accept a visible next word; exact Prefix Tokens retain Tab priority. The select outside the left of Search anything displays and saves the default search engine.

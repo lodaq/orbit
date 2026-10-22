@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# Use the already bundled Slint core to apply native text edits independently of held shortcut modifiers.
+i-slint-core = "=1.18.1"
+# Release the local model on normal process termination without platform-specific signal code.
+ctrlc = { version = "=3.5.2", features = ["termination"] }
 # Slint supplies the launcher and GPU-accelerated FemtoVG renderer.
 slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "unstable-winit-030"] }
 # Read and write saved data and parse Hyprland's monitor information.

@@ -139,7 +139,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **TickTick Action** | An Action that creates a TickTick task from the title, due date, priority, tags and list selectors in Search anything text. |
 | **Prefixes** | Settings tab for creating, editing and selecting Prefix Actions. |
 | **Actions** | Settings tab for creating and editing reusable Actions. |
-| **Default search engine** | The first and initially selected search engine shown when no local items match Search anything. |
+| **Default search engine** | The search engine used when Enter is pressed with no local matches; the select beside Search anything opens the engine list. |
 | **Add page** | Creates an empty page from the empty-space Context menu or the + beside the page dots. |
 | **Switch pages** | Footer hint for Left and Right. |
 | **Back to desktop** | Footer hint for Esc. |
@@ -179,3 +179,11 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Custom icon** | Website icon option that uses the Letter, SVG or chosen image from the Icon picker. |
 | **Fetched icon** | The preview of a Website icon retrieved automatically. |
 | **Retry** | Fetch the Website icon again after a completed attempt. |
+
+| **English assistance** | Search bar settings for local English suggestions, autocomplete and grammar feedback. |
+| **Suggestions** | Clickable improved versions of the sentence in Search anything; choosing one replaces text without submitting. |
+| **Autocomplete** | An optional next-word prediction accepted with the configured Accept next word shortcut. |
+| **Grammar feedback** | English mistakes with simple explanations and clickable corrections. |
+| **Accept next word** | The configurable action that inserts the visible predicted word. |
+
+- **Model prompts** — editable system instructions sent to the selected local model for each English assistance feature.

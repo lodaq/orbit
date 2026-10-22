@@ -51,7 +51,8 @@ enum Action {
     SaveAppearance(i32, i32, i32, usize, usize),
     SaveDefaultSearchEngine(i32),
     SaveSmoothCursor(bool),
-    SaveEnglish(bool, String),
+    SaveEnglish(bool, bool, bool, String),
+    SaveEnglishModel(String, String, String, String),
     SaveLayoutLocked(bool),
     DeletePage,
     SaveShortcut(i32, String, String),
@@ -389,8 +390,22 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         }
     });
     let english_sender = send.clone();
-    launcher.on_save_english(move |suggestions, address| {
-        let _ = english_sender.send(Action::SaveEnglish(suggestions, address.into()));
+    launcher.on_save_english(move |suggestions, autocomplete, grammar, address| {
+        let _ = english_sender.send(Action::SaveEnglish(
+            suggestions,
+            autocomplete,
+            grammar,
+            address.into(),
+        ));
+    });
+    let model_sender = send.clone();
+    launcher.on_save_english_model(move |model, suggestions, completion, grammar| {
+        let _ = model_sender.send(Action::SaveEnglishModel(
+            model.into(),
+            suggestions.into(),
+            completion.into(),
+            grammar.into(),
+        ));
     });
     let lock_sender = send.clone();
     launcher.on_save_layout_locked(move |locked| {
@@ -802,10 +817,42 @@ impl Apps {
                 let url = url_action_url(self.config.search_engine_template(&engine), &query)?;
                 open_url(&url).map_err(|error| format!("Couldn't open web search: {error}"))
             }
-            Action::SaveEnglish(suggestions, address) => {
+            Action::SaveEnglishModel(
+                model,
+                suggestions_prompt,
+                completion_prompt,
+                grammar_prompt,
+            ) => {
+                let settings = crate::english_assistance::Settings {
+                    model,
+                    suggestions_prompt,
+                    completion_prompt,
+                    grammar_prompt,
+                    ..self.config.english_assistance.clone()
+                };
+                if !settings.valid() {
+                    return Err(
+                        "Choose a local model and nonempty prompts (up to 16000 bytes each)."
+                            .into(),
+                    );
+                }
+                if self.config.english_assistance != settings {
+                    let mut config = self.config.clone();
+                    config.english_assistance = settings;
+                    config
+                        .save()
+                        .map_err(|error| format!("Couldn't save English assistance: {error}"))?;
+                    self.config = config;
+                }
+                Ok(())
+            }
+            Action::SaveEnglish(suggestions, autocomplete, grammar, address) => {
                 let settings = crate::english_assistance::Settings {
                     suggestions,
+                    autocomplete,
+                    grammar,
                     address,
+                    ..self.config.english_assistance.clone()
                 };
                 if !settings.valid() {
                     return Err("Use a local Ollama address such as http://127.0.0.1:11434".into());
@@ -2421,9 +2468,6 @@ impl Apps {
                     }),
             );
             results.extend(created_items);
-            if results.is_empty() {
-                results = search_engine_results(&self.config);
-            }
         }
         let installed_apps: Vec<_> = self
             .inventory
@@ -2504,7 +2548,7 @@ impl Apps {
                     .unwrap_or(0) as i32,
             })
             .collect::<Vec<_>>();
-        let shortcut_hints: Vec<slint::SharedString> = (0..13)
+        let shortcut_hints: Vec<slint::SharedString> = (0..14)
             .map(|action| {
                 shortcuts
                     .iter()
@@ -2514,7 +2558,7 @@ impl Apps {
                     })
             })
             .collect();
-        let shortcut_groups = (0..13)
+        let shortcut_groups = (0..14)
             .map(|action| {
                 (
                     action,
@@ -2619,8 +2663,14 @@ impl Apps {
                 .into(),
             );
             launcher.set_smooth_cursor(smooth_cursor);
+            launcher.set_english_model(english.model.into());
+            launcher.set_english_suggestions_prompt(english.suggestions_prompt.into());
+            launcher.set_english_completion_prompt(english.completion_prompt.into());
+            launcher.set_english_grammar_prompt(english.grammar_prompt.into());
             launcher.set_english_address(english.address.into());
             launcher.set_english_suggestions_enabled(english.suggestions);
+            launcher.set_english_autocomplete_enabled(english.autocomplete);
+            launcher.set_english_grammar_enabled(english.grammar);
             launcher.set_layout_locked(layout_locked);
             launcher.set_default_search_engine_index(search_engine_index);
             launcher.invoke_default_search_engine_saved(search_engine_index);
@@ -3145,22 +3195,6 @@ fn search_path_result(path: PathBuf, directory: bool) -> SearchPathResult {
 }
 
 // Pixel buffers can cross threads; Slint images stay on the interface thread.
-fn search_engine_results(config: &Config) -> Vec<Tile> {
-    let names = Config::search_engine_names();
-    let default = config.default_search_engine_index();
-    std::iter::once(default)
-        .chain((0..names.len()).filter(|index| *index != default))
-        .map(|index| Tile {
-            id: Config::search_engine_id(index).unwrap().into(),
-            name: names[index].into(),
-            page: -5,
-            index: index as i32,
-            app: true,
-            letter: crate::icons::first_letter(names[index]),
-            ..Tile::default()
-        })
-        .collect()
-}
 
 #[derive(Default)]
 struct Tile {
@@ -3465,21 +3499,6 @@ mod tests {
             Action::SaveLayoutLocked(false),
         ] {
             assert!(!action.changes_layout());
-        }
-    }
-
-    #[test]
-    fn search_engines_put_the_saved_default_first_without_duplicates() {
-        let mut config = Config::default();
-        for (engine, name) in [("perplexity", "Perplexity"), ("google-search", "Google")] {
-            config.default_search_engine = engine.into();
-            let results = search_engine_results(&config);
-            assert_eq!(results[0].id, engine);
-            assert_eq!(results[0].name, name);
-            let unique: std::collections::HashSet<_> =
-                results.iter().map(|item| &item.id).collect();
-            assert_eq!(results.len(), Config::search_engine_names().len());
-            assert_eq!(unique.len(), results.len());
         }
     }
 

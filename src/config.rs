@@ -47,6 +47,8 @@ pub struct Config {
     site_searches_initialized: bool,
     #[serde(default)]
     search_word_shortcut_initialized: bool,
+    #[serde(default)]
+    search_completion_shortcut_initialized: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -388,6 +390,7 @@ impl Default for Config {
             prefixes: default_prefixes(),
             site_searches_initialized: true,
             search_word_shortcut_initialized: true,
+            search_completion_shortcut_initialized: true,
         }
     }
 }
@@ -568,6 +571,19 @@ fn default_prefixes() -> Vec<Prefix> {
 }
 
 impl Config {
+    fn add_search_completion_shortcut(&mut self) {
+        if !self
+            .shortcuts
+            .iter()
+            .any(|entry| entry.action == 13 || entry.keys == "Ctrl+E")
+        {
+            self.shortcuts.push(crate::shortcuts::Shortcut {
+                action: 13,
+                keys: "Ctrl+E".into(),
+            });
+        }
+        self.search_completion_shortcut_initialized = true;
+    }
     fn add_search_word_shortcut(&mut self) {
         if !self
             .shortcuts
@@ -834,6 +850,10 @@ fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
                 config.version = 5;
                 changed = true;
             }
+            if !config.search_completion_shortcut_initialized {
+                config.add_search_completion_shortcut();
+                changed = true;
+            }
             if !config.search_word_shortcut_initialized {
                 config.add_search_word_shortcut();
                 changed = true;
@@ -877,6 +897,27 @@ fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completion_shortcut_migration_preserves_conflicts_and_removal() {
+        let mut config = Config::default();
+        config.shortcuts.retain(|entry| entry.action != 13);
+        config.shortcuts[0].keys = "Ctrl+E".into();
+        config.add_search_completion_shortcut();
+        assert!(!config.shortcuts.iter().any(|entry| entry.action == 13));
+        config.shortcuts[0].keys = "Ctrl+K".into();
+        config.add_search_completion_shortcut();
+        assert!(
+            config
+                .shortcuts
+                .iter()
+                .any(|entry| entry.action == 13 && entry.keys == "Ctrl+E")
+        );
+        config.shortcuts.retain(|entry| entry.action != 13);
+        let loaded: Config = serde_json::from_value(serde_json::to_value(config).unwrap()).unwrap();
+        assert!(loaded.search_completion_shortcut_initialized);
+        assert!(!loaded.shortcuts.iter().any(|entry| entry.action == 13));
+    }
 
     #[test]
     fn layout_lock_defaults_to_unlocked_and_round_trips() {
