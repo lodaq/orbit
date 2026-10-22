@@ -664,12 +664,22 @@ export component Launcher inherits Window {
     private property <bool> ticktick-create;
     private property <bool> ticktick-show-completed;
     private property <length> ticktick-focus-scroll;
-    animate ticktick-focus-scroll { duration: 120ms; easing: ease-out; }
+    private property <length> ticktick-focus-width: 300px;
+    focus-scroll-measure := Text {
+        visible: false;
+        width: root.ticktick-focus-width;
+        text: root.ticktick-visible-tasks(root.ticktick-tasks,"@today",false,0,1)[0].details;
+        font-size: 12px; wrap: word-wrap;
+    }
+    private property <bool> ticktick-content-pressed;
+    private property <bool> ticktick-content-scrolling;
+    private property <length> ticktick-scroll-start;
+    animate ticktick-focus-scroll { duration: root.ticktick-content-pressed ? 0ms : 120ms; easing: ease-out; }
     private property <string> ticktick-scroll-widget-id;
     private property <length> ticktick-scroll-offset;
     private property <bool> ticktick-scrollbar-dragging;
     private property <int> ticktick-scrollbar-index: -1;
-    animate ticktick-scroll-offset { duration: 80ms; easing: ease-out; }
+    animate ticktick-scroll-offset { duration: root.ticktick-content-pressed ? 0ms : 80ms; easing: ease-out; }
     private property <string> ticktick-popup-widget-id;
     private property <bool> ticktick-popup-options;
     private property <int> ticktick-list-page;
@@ -920,6 +930,7 @@ export component Launcher inherits Window {
         root.clear-merge();
         reorder-timer.stop(); root.reorder-ready = false; root.reorder-target = -1;
         root.drag-from-dock = false; root.resizing = false; root.ticktick-control-pressed = false;
+        root.ticktick-content-pressed = false; root.ticktick-content-scrolling = false;
         root.dragging = false;
         root.drag-scale = 1;
         root.drag-index = -1;
@@ -983,6 +994,13 @@ export component Launcher inherits Window {
         if root.drag-index < 0 || root.drop-pending { return; }
         root.drag-x = x;
         root.drag-y = y;
+        if root.ticktick-content-pressed {
+            if abs(x - root.drag-start-x) >= 8px || abs(y - root.drag-start-y) >= 8px { root.ticktick-content-scrolling = true; }
+            if root.ticktick-content-scrolling {
+                root.set-ticktick-scroll(root.drag-item,root.ticktick-scroll-start + root.drag-start-y - y);
+            }
+            return;
+        }
         if root.layout-locked {
             if abs(x - root.drag-start-x) >= 8px || abs(y - root.drag-start-y) >= 8px { root.cancel-drag(); }
             return;
@@ -1026,6 +1044,10 @@ export component Launcher inherits Window {
         edge-timer.stop();
         merge-timer.stop();
         if root.drag-index < 0 { return; }
+        if root.ticktick-content-pressed {
+            if !root.ticktick-content-scrolling { root.handle-ticktick-click(root.drag-index,root.drag-start-x,root.drag-start-y); }
+            root.cancel-drag(); return;
+        }
         if root.resizing {
             if root.resize-valid && (root.resize-width != root.drag-item.span-x || root.resize-height != root.drag-item.span-y) { root.busy = true; root.widget-action(root.drag-item.id,root.resize-width,root.resize-height); }
             root.cancel-drag(); return;
@@ -1126,19 +1148,22 @@ export component Launcher inherits Window {
         let index = root.page-item-at(x,y);
         if index < 0 || index >= root.items.length || !root.items[index].ticktick { return false; }
         let item = root.items[index];
-        if item.ticktick-next {
-            root.ticktick-focus-scroll = max(0px, root.ticktick-focus-scroll + (delta < 0px ? 48px : -48px));
-            return true;
-        }
-        if root.ticktick-scroll-widget-id != item.id {
-            root.ticktick-scroll-widget-id = root.items[index].id;
-            root.ticktick-scroll-offset = 0px;
-        }
-        let count = root.ticktick-task-count(root.ticktick-tasks,item.ticktick-project-id,root.ticktick-show-completed);
-        let visible = max(0,floor((item.span-y * grid.tile-size - 68px) / 36px));
-        let max-offset = max(0,count - visible) * 36px;
-        root.ticktick-scroll-offset = min(max-offset,max(0px,root.ticktick-scroll-offset + (delta < 0px ? 36px : -36px)));
+        let offset = item.ticktick-next ? root.ticktick-focus-scroll : root.ticktick-scroll-widget-id == item.id ? root.ticktick-scroll-offset : 0px;
+        let step = item.ticktick-next ? 48px : 36px;
+        root.set-ticktick-scroll(item,offset + (delta < 0px ? step : -step));
         return true;
+    }
+    function set-ticktick-scroll(item: AppTile, offset: length) {
+        let tile-height = item.span-y * grid.tile-size - root.grid-gap * 1px;
+        if item.ticktick-next {
+            root.ticktick-focus-width = max(1px,item.span-x * grid.tile-size - root.grid-gap * 1px - 32px);
+            root.ticktick-focus-scroll = min(max(0px,focus-scroll-measure.preferred-height - max(0px,tile-height - 106px)),max(0px,offset));
+        } else {
+            let count = root.ticktick-task-count(root.ticktick-tasks,item.ticktick-project-id,root.ticktick-show-completed);
+            let visible = max(1,floor((tile-height - 68px) / 36px));
+            root.ticktick-scroll-widget-id = item.id;
+            root.ticktick-scroll-offset = min(max(0,count - visible) * 36px,max(0px,offset));
+        }
     }
     function ticktick-scrollbar-at(index: int, x: length, y: length) -> bool {
         if index < 0 || index >= root.items.length || !root.items[index].ticktick || root.items[index].ticktick-next { return false; }
@@ -1720,6 +1745,11 @@ export component Launcher inherits Window {
                                     root.ticktick-control-pressed = root.items[index].ticktick-next
                                         ? (y - tile-y >= 36px && y - tile-y < root.items[index].span-y * grid.tile-size - root.grid-gap * 0.5px)
                                         : header-control || (y - tile-y >= 52px && row >= 0 && row < shown.length);
+                                    let local-y = y - tile-y;
+                                    let tile-height = root.items[index].span-y * grid.tile-size - root.grid-gap * 1px;
+                                    root.ticktick-content-pressed = local-x >= 12px && local-x < tile-width - 16px
+                                        && local-y >= (root.items[index].ticktick-next ? 98px : 52px) && local-y < tile-height - 12px;
+                                    root.ticktick-scroll-start = root.items[index].ticktick-next ? root.ticktick-focus-scroll : scroll-offset;
                                 }
                             }
                             root.page-swipe-pressed = index < 0;
