@@ -706,27 +706,6 @@ fn detached(command: &mut Command) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod shell_action_tests {
-    use super::*;
-
-    #[test]
-    fn shell_action_query_is_one_literal_argument() {
-        let marker = std::env::temp_dir().join(format!(
-            "orbit-shell-argument-{}.marker",
-            std::process::id()
-        ));
-        let _ = fs::remove_file(&marker);
-        let argument = format!("$(touch '{}'); 'quoted' 雪", marker.display());
-        let output = shell_action_command("printf '%s' \"$1\"", &argument)
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        assert_eq!(String::from_utf8(output.stdout).unwrap(), argument);
-        assert!(!marker.exists(), "query text was interpreted as shell code");
-    }
-}
-
 pub fn play_completion_sound() {
     let Ok(path) = config_path().map(|p| p.with_file_name("task-complete.wav")) else {
         return;
@@ -746,5 +725,26 @@ pub fn play_completion_sound() {
         {
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod shell_action_tests {
+    use super::*;
+
+    #[test]
+    fn shell_action_query_is_one_literal_argument() {
+        let marker = std::env::temp_dir().join(format!(
+            "orbit-shell-argument-{}.marker",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&marker);
+        let argument = format!("$(touch '{}'); 'quoted' 雪", marker.display());
+        let output = shell_action_command("printf '%s' \"$1\"", &argument)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), argument);
+        assert!(!marker.exists(), "query text was interpreted as shell code");
     }
 }

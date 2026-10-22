@@ -27,12 +27,16 @@ pub fn defaults() -> Vec<Shortcut> {
         action: action as i32,
         keys: (*keys).into(),
     })
+    .chain(std::iter::once(Shortcut {
+        action: 12,
+        keys: "Ctrl+W".into(),
+    }))
     .collect()
 }
 
 pub fn valid(bindings: &[Shortcut]) -> bool {
     bindings.iter().enumerate().all(|(index, binding)| {
-        (0..12).contains(&binding.action)
+        (0..13).contains(&binding.action)
             && !binding.keys.is_empty()
             && binding.keys.len() < 80
             && !bindings[..index]
@@ -156,7 +160,125 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         9 => launcher.set_settings(!launcher.get_settings()),
         10 => launcher.invoke_add_page(),
         11 => launcher.invoke_confirm_delete_page(),
+        12 if launcher.get_search_editing() => delete_previous_word(launcher.window()),
+        12 => return false,
         _ => (),
     }
     true
+}
+
+fn delete_previous_word(window: &slint::Window) {
+    use slint::private_unstable_api::re_exports::{TextChangeNotify, TextInput, WindowInner};
+    let window = WindowInner::from_pub(window);
+    let Some(item) = window.focus_item.borrow().upgrade() else {
+        return;
+    };
+    let Some(input) = item.downcast::<TextInput>() else {
+        return;
+    };
+    let input = input.as_pin_ref();
+    let adapter = window.window_adapter();
+    let (anchor, cursor) = input.selection_anchor_and_cursor();
+    if anchor == cursor {
+        if cursor == 0 {
+            return;
+        }
+        // Let Slint find the previous word, then retain only the part before
+        // the original cursor. Native deletion preserves undo and clipboard.
+        input.set_selection_offsets(&adapter, &item, (cursor - 1) as i32, (cursor - 1) as i32);
+        input.select_word(&adapter, &item);
+        let (start, _) = input.selection_anchor_and_cursor();
+        input.set_selection_offsets(&adapter, &item, start as i32, cursor as i32);
+    }
+    input.delete_selection(&adapter, &item, TextChangeNotify::TriggerCallbacks);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use slint::platform::WindowEvent;
+
+    fn input(ui: &Launcher, text: &str) {
+        ui.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: text.into() });
+        ui.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: text.into() });
+    }
+
+    #[test]
+    fn deletes_words_in_search_and_keeps_native_undo_and_rebinding() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = Launcher::new().unwrap();
+        ui.set_shortcuts(model(defaults()));
+        ui.show().unwrap();
+        ui.set_launcher_visible(true);
+        ui.invoke_focus_search();
+        for (text, remaining) in [
+            ("hello world", "hello "),
+            ("hello عالم", "hello "),
+            ("🙂 hello", "🙂 "),
+        ] {
+            ui.set_search_text("".into());
+            input(&ui, text);
+            ui.window().dispatch_event(WindowEvent::KeyPressed {
+                text: "\u{0011}".into(),
+            });
+            assert!(handle(
+                &ui,
+                &Key::Character("w".into()),
+                ModifiersState::CONTROL
+            ));
+            assert_eq!(ui.get_search_text(), remaining, "query: {text}");
+            input(&ui, "z");
+            assert_eq!(ui.get_search_text(), text);
+            // Deleting a word must not change which modifier keys are held.
+            ui.window().dispatch_event(WindowEvent::KeyReleased {
+                text: "\u{0011}".into(),
+            });
+        }
+        ui.set_settings(true);
+        assert!(!handle(
+            &ui,
+            &Key::Character("w".into()),
+            ModifiersState::CONTROL
+        ));
+        ui.set_settings(false);
+        let mut bindings = defaults();
+        bindings
+            .iter_mut()
+            .find(|entry| entry.action == 12)
+            .unwrap()
+            .keys = "Alt+W".into();
+        ui.set_shortcuts(model(bindings));
+        ui.set_search_text("".into());
+        input(&ui, "one two");
+        assert!(!handle(
+            &ui,
+            &Key::Character("w".into()),
+            ModifiersState::CONTROL
+        ));
+        assert!(handle(
+            &ui,
+            &Key::Character("w".into()),
+            ModifiersState::ALT
+        ));
+        assert_eq!(ui.get_search_text(), "one ");
+    }
+
+    #[test]
+    fn previous_word_default_is_valid_and_can_be_removed() {
+        let mut bindings = defaults();
+        assert!(valid(&bindings));
+        assert!(
+            bindings
+                .iter()
+                .any(|entry| entry.action == 12 && entry.keys == "Ctrl+W")
+        );
+        bindings.retain(|entry| entry.action != 12);
+        assert!(valid(&bindings));
+        assert!(!valid(&[Shortcut {
+            action: 13,
+            keys: "Ctrl+W".into()
+        }]));
+    }
 }

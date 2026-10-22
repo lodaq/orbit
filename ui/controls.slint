@@ -1,7 +1,30 @@
 import { Theme } from "theme.slint";
+// A native keycap for shortcut hints and editable shortcut displays.
+export component Kbd inherits Rectangle {
+    in property <string> label;
+    in property <length> available-width: 1000px;
+    private property <string> display: label == "Escape" ? "Esc" : label == "Left" ? "←" : label == "Right" ? "→" : label == "Up" ? "↑" : label == "Down" ? "↓" : label;
+    width: label == "" ? 0px : min(available-width, max(Theme.kbd-height, key-label.preferred-width + 2 * Theme.kbd-padding));
+    height: Theme.kbd-height;
+    horizontal-stretch: 0;
+    visible: label != "";
+    accessible-role: text;
+    accessible-label: label;
+    background: Theme.kbd-background;
+    border-color: Theme.kbd-border; border-width: Theme.border-width;
+    border-radius: Theme.kbd-radius;
+    Rectangle { x: Theme.kbd-radius; y: parent.height - Theme.border-width; width: max(0px, parent.width - 2 * self.x); height: Theme.border-width; background: Theme.kbd-shadow; }
+    key-label := Text {
+        x: Theme.kbd-padding; width: max(0px, parent.width - 2 * self.x); height: parent.height;
+        text: root.display; color: Theme.secondary; font-size: Theme.kbd-font-size; font-weight: 500;
+        horizontal-alignment: center; vertical-alignment: center; overflow: elide;
+    }
+}
+
 export component AddOption inherits Rectangle {
     in property <string> label;
     in property <string> trailing;
+    in property <string> shortcut;
     in property <bool> selected;
     in property <bool> primary;
     in property <bool> destructive;
@@ -17,7 +40,7 @@ export component AddOption inherits Rectangle {
     width: full-width ? available-width : option-width;
     height: full-width ? Theme.control-row-height : Theme.control-height;
     accessible-role: button;
-    accessible-label: label;
+    accessible-label: shortcut != "" ? shortcut : label;
     accessible-enabled: enabled;
     accessible-checked: selected;
     forward-focus: keyboard-focus;
@@ -48,6 +71,10 @@ export component AddOption inherits Rectangle {
         font-size: Theme.type-hint;
         horizontal-alignment: right;
         vertical-alignment: center;
+    }
+    if root.shortcut != "": Kbd {
+        label: root.shortcut; available-width: parent.width - 2 * Theme.space-3;
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
     }
     hit-area := TouchArea {
         enabled: root.enabled;
@@ -124,3 +151,47 @@ export component AddField inherits VerticalLayout {
     }
 }
 
+// The owner removes this component when hidden so no idle work survives.
+export component SmoothCaret inherits Rectangle {
+    in property <length> target-x;
+    in property <length> target-y;
+    in property <length> caret-height;
+    in property <length> caret-width;
+    in property <bool> active: true;
+    in property <bool> animated: true;
+    in property <bool> trail: true;
+    in property <int> edit-generation;
+    private property <bool> snapping: false;
+    private property <bool> idle: false;
+    private property <bool> dim: false;
+    private property <length> fast-x: target-x;
+    private property <length> slow-x: target-x;
+    out property <length> block-x: max(min(fast-x, slow-x), fast-x - Theme.cursor-max-stretch);
+    out property <length> block-width: min(abs(fast-x - slow-x), Theme.cursor-max-stretch) + caret-width;
+    out property <float> idle-opacity: dim ? Theme.cursor-idle-opacity : 1;
+    out property <bool> idle-running: idle-timer.running;
+    public function reset() {
+        root.idle = false;
+        root.dim = false;
+        idle-timer.stop();
+        if root.active { idle-timer.start(); }
+    }
+    changed target-x => { root.reset(); }
+    changed target-y => { root.snapping = true; snap-timer.start(); root.reset(); }
+    changed edit-generation => { root.reset(); }
+    changed active => { root.reset(); }
+    init => { root.reset(); }
+    snap-timer := Timer { running: false; interval: Theme.cursor-snap-delay; triggered => { root.snapping = false; self.stop(); } }
+    idle-timer := Timer {
+        running: false;
+        interval: root.idle ? Theme.cursor-idle-period : Theme.cursor-idle-delay;
+        triggered => { root.idle = true; root.dim = !root.dim; }
+    }
+    animate fast-x { duration: root.animated && !root.snapping && root.active ? Theme.cursor-lead : 0ms; easing: ease-out; }
+    animate slow-x { duration: root.animated && !root.snapping && root.active ? (root.trail ? Theme.cursor-trail : Theme.cursor-lead) : 0ms; easing: ease-out; }
+    animate idle-opacity { duration: root.idle && root.active ? Theme.cursor-idle-period : 0ms; easing: ease-in-out; }
+    x: block-x; y: target-y; width: block-width; height: caret-height;
+    opacity: active ? 1 : 0;
+    animate opacity { duration: Theme.cursor-selection-fade; }
+    Rectangle { width: parent.width; height: parent.height; background: Theme.cursor-color; opacity: Theme.cursor-opacity * root.idle-opacity; }
+}

@@ -266,3 +266,13 @@ Settings groups Home Screen sizing, TickTick account and data under General. Sea
 Search anything wraps long queries and grows vertically, with results below the field. Backspace removes an active Prefix when its query is empty. When no local items match, show all available search engines with the saved default first and selected (Perplexity initially). Clicking an engine or pressing Enter searches the current query with that engine.
 
 Search engine results use locally bundled brand icons in rounded tiles.
+
+## Smooth cursor
+
+Settings → Search bar → General → Smooth cursor saves immediately and defaults to On, including existing config files. Search anything uses a gliding block and bounded trail without delaying text or search. It fades softly while idle, hides for selection and snaps on line changes and reopening. Hidden or unfocused cursors perform no idle work. Native editing, selection, clipboard, shortcuts and IME are preserved; IME composition and Off use the native caret.
+
+Settings → Shortcuts includes Delete previous word (Ctrl+W by default), scoped to focused Search anything. Native word boundaries, selection and undo are preserved. Existing configs receive the default once when Ctrl+W is free; removing it keeps it removed.
+
+Shortcut displays use shared native Kbd keycaps, including search, footer, Settings bindings and recording. Search and close/page hints reflect saved bindings. Search anything reserves full cursor space at wrapped line ends and scrolls the entire final block into view, with or without a Prefix.
+
+Search anything uses 16 px text for the query and placeholder. Opening a folder animates its panel from the tile to the centered overlay over 220 ms while the backdrop fades in; closing reverses the movement.

@@ -37,3 +37,21 @@ Compare the real launcher against the supplied gallery: readable text on every p
 The Icon picker uses Letter, SVG, disabled URL and Choose icon tabs. Letter accepts one or two visible characters including emojis; SVG uses a labeled field; Choose icon opens the native file chooser. Save applies the draft, Cancel discards it. Custom command is the first and default App source. File and Directory sheets show Path, then Choose file or Choose directory, then a vertically centered Icon preview and Change icon control. Save is at the bottom right. Edit app also centers its Icon preview with Change icon.
 
 Toasts use compact raised cards with a small status icon, stacked at the bottom right with 24 px outer space and 8 px gaps. Confirmations and information dismiss after 3 seconds, warnings after 5 seconds and errors after 7 seconds, including while hovered. Clicking a Toast dismisses it immediately.
+
+## Search cursor
+
+Search anything retains the native TextInput for editing, wrapping, selection and IME. Smooth cursor overlays its final caret coordinates with a Theme.cursor-color blue block at 0.65 opacity. Theme cursor tokens define a 0.55 font-size width, 70 ms lead, 180 ms trail, 160 px maximum additional stretch, 450 ms idle delay, 1100 ms fade leg, 0.1 idle minimum and 80 ms selection fade. Line changes and window show snap. Edits reset idle even without position changes. The overlay is removed on hide, unfocus, disable or IME composition, stopping its timers and animations; native IME and disabled carets retain the style width. Selection fades only the overlay.
+
+Slint 1.18.1 exposes cursor/anchor byte offsets and preedit-text as undocumented properties. The event-driven Rust bridge in src/search-cursor.rs disables native caret visibility while the overlay exists and restores the native blink binding when disabled or composing IME text. It uses the pinned Slint version’s internal safe API. Recheck these APIs on upgrades.
+
+Native caret suppression uses cursor-visible, not width: both 0 px and a tiny positive width can still draw a blinking GPU hairline. The bridge runs only for input/focus/state changes; animation remains in Slint. Regression checks cover multiple native blink cycles.
+
+## Shortcut keycaps and search layout
+
+`Kbd` in ui/controls.slint is Orbit’s native Slint equivalent of the rounded, muted shadcn/ui Kbd visual (https://ui.shadcn.com/docs/components/base/kbd). Use it for displayed shortcut chords and keys throughout the app: search addon, footer hints, Settings close hint, saved bindings, recorder preview and Shift + wheel help. A chord can occupy one keycap. Escape and direction keys display as Esc and arrows; accessible labels retain the complete saved name. Keycaps have 22 px height, 6 px side padding, 5 px corners, 11 px type, subtle border and bottom edge; all colors and dimensions come from Theme. Long chords elide within their available space. They are labels, so mouse and keyboard events still reach the containing button or input.
+
+The search bar keeps its approved position and 560 px maximum width, with a 48 px minimum height, 16 px input text, consistent 12 px outer padding and a quiet focus border. The Prefix badge aligns with the first text row. The keycap addon uses the first saved Focus Search anything binding; footer and close hints likewise follow the saved shortcuts, including removal.
+
+Opening a folder moves its panel from the source tile to the center over 220 ms while the backdrop and content fade in. Closing reverses the movement. The timing comes from `Theme.folder-transition`.
+
+The wrapped text width reserves the entire blue block width plus 2 px inset on each side. Text measurement uses exactly the input width. Cursor coordinates include the input inset and Flickable offset. Vertical scroll decisions use the actual full cursor height and retain 2 px bottom clearance, including the final line at the maximum search height. The overlay stays clipped to its viewport while the whole resting block remains visible.

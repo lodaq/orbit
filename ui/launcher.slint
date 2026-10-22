@@ -1,5 +1,5 @@
 import { Theme } from "theme.slint";
-import { AddOption, AddField } from "controls.slint";
+import { AddOption, AddField, SmoothCaret, Kbd } from "controls.slint";
 import "fonts/inter.ttf";
 import { Button, LineEdit, TextEdit, Palette, ComboBox, SpinBox, Slider } from "std-widgets.slint";
 
@@ -426,6 +426,22 @@ export component Launcher inherits Window {
     in property <float> cursor-x;
     in property <float> cursor-y;
     in-out property <bool> launcher-visible;
+    in-out property <bool> smooth-cursor: true;
+    callback save-smooth-cursor(bool);
+    callback sync-native-search-cursor(bool);
+    changed search-edit-generation => {
+        if root.launcher-visible && search-input.has-focus { root.sync-native-search-cursor(root.search-cursor-overlay); }
+    }
+    changed search-cursor-overlay => {
+        if root.launcher-visible && search-input.has-focus { root.sync-native-search-cursor(root.search-cursor-overlay); }
+    }
+    private property <length> search-cursor-width: Theme.search-font-size * Theme.cursor-width-ratio;
+    private property <length> search-cursor-height: search-input.font-metrics.ascent - search-input.font-metrics.descent;
+    private property <length> search-cursor-x;
+    private property <length> search-cursor-y;
+    private property <int> search-edit-generation;
+    private property <bool> search-cursor-overlay: root.smooth-cursor && root.launcher-visible && search-input.has-focus && search-input.preedit-text == "";
+    changed search-text => { root.search-edit-generation += 1; }
     in-out property <string> banner;
     in property <int> page-count: 1;
     in property <int> current-page;
@@ -497,6 +513,7 @@ export component Launcher inherits Window {
         } else { root.activate-search-selection(); }
     }
     in property <[ShortcutEntry]> shortcuts;
+    in property <[string]> shortcut-hints: ["Ctrl+K", "Escape", "Left", "Right"];
     in property <[ShortcutGroup]> shortcut-groups;
     in property <[PageItems]> page-previews;
     in-out property <int> page-margin: 10;
@@ -533,7 +550,7 @@ export component Launcher inherits Window {
     private property <int> shortcut-delete-action: -1;
     private property <string> shortcut-delete-keys;
     private property <int> shortcut-action;
-    private property <[string]> shortcut-actions: ["Focus Search anything", "Close the top layer", "Move left / previous page", "Move right / next page", "Move up", "Move down", "Open / Choose", "Next field", "Previous field", "Open Settings", "Add page", "Delete page"];
+    private property <[string]> shortcut-actions: ["Focus Search anything", "Close the top layer", "Move left / previous page", "Move right / next page", "Move up", "Move down", "Open / Choose", "Next field", "Previous field", "Open Settings", "Add page", "Delete page", "Delete previous word"];
     callback save-shortcut(int, string, string);
     callback delete-shortcut(int, string);
     callback shortcut-saved();
@@ -590,6 +607,7 @@ export component Launcher inherits Window {
     callback unpin-dock-item(string);
     callback remove-recent-item(string);
     out property <bool> search-focused: search-input.has-focus;
+    out property <bool> search-editing: root.search-focused && root.launcher-visible && !root.settings && !root.sheet && !root.folder-open && !root.picker && !root.alert && !root.ticktick-open;
     callback focus-search();
     callback page-key(int);
     focus-search => { if !root.sheet && !root.folder-open && root.context-index < 0 && root.dock-context == "" { root.settings = false; search-input.focus(); } }
@@ -853,7 +871,7 @@ export component Launcher inherits Window {
         }
     }
     folder-close-timer := Timer {
-        interval: 220ms;
+        interval: Theme.folder-transition;
         triggered => { root.folder-closing = false; self.stop(); }
     }
     function close-folder-view() {
@@ -1407,27 +1425,46 @@ export component Launcher inherits Window {
     Image { x: 48px; y: 40px; width: 90px; height: 32px; source: @image-url("assets/orbit.svg"); }
     search-bar := Rectangle {
         x: (root.width - self.width) / 2; y: 34px; width: min(560px, root.width - 440px);
-        height: max(44px,min(176px,search-measure.preferred-height + 24px));
-        background: #ffffff04; border-color: #a6b1ed26; border-width: 1px; border-radius: 12px;
-        Image { x: 16px; y: 13px; width: 18px; height: 18px; source: @image-url("assets/search.svg"); }
-        Text { x: root.activated-prefix-name == "" ? 45px : 53px + root.activated-prefix-width; y: 0px; height: 44px; text: root.search-text == "" ? "Search anything" : ""; color: Theme.secondary; font-size: Theme.type-control; vertical-alignment: center; }
+        height: max(Theme.search-min-height, min(176px, search-measure.preferred-height + 2 * (Theme.search-padding + Theme.search-cursor-inset)));
+        background: Theme.search-background;
+        border-color: root.search-focused ? Theme.search-focus-border : Theme.search-border;
+        border-width: Theme.border-width; border-radius: Theme.radius-sheet - Theme.space-1;
+        Image { x: Theme.space-4; y: (Theme.search-min-height - self.height) / 2; width: 18px; height: 18px; source: @image-url("assets/search.svg"); }
+        Text {
+            x: search-scroll.x + search-input.x; y: search-scroll.y + search-input.y;
+            width: search-input.width; height: root.search-cursor-height;
+            text: root.search-text == "" ? "Search anything" : "";
+            color: Theme.secondary; font-size: Theme.search-font-size;
+        }
         search-measure := Text {
-            visible: false; width: search-scroll.width;
+            visible: false; width: search-input.width;
             text: root.search-text == "" ? " " : root.search-text;
-            font-size: Theme.type-control; wrap: word-wrap;
+            font-size: Theme.search-font-size; wrap: word-wrap;
         }
         search-scroll := Flickable {
             x: root.activated-prefix-name == "" ? 45px : 53px + root.activated-prefix-width;
-            y: 12px; width: parent.width - 109px - (root.activated-prefix-name == "" ? 0px : root.activated-prefix-width + 8px); height: parent.height - 24px;
-            content-width: self.width; content-height: max(self.height,search-measure.preferred-height);
+            y: Theme.search-padding;
+            width: max(40px, parent.width - self.x - Theme.search-padding - (search-hint.width > 0px ? search-hint.width + Theme.space-4 : 0px));
+            height: parent.height - 2 * Theme.search-padding;
+            content-width: self.width;
+            content-height: max(self.height, max(search-measure.preferred-height + 2 * Theme.search-cursor-inset, search-input.y + root.search-cursor-y + root.search-cursor-height + Theme.search-cursor-inset));
             search-input := TextInput {
-                width: parent.width; height: max(search-scroll.height,search-measure.preferred-height);
-                text <=> root.search-text; color: Theme.text; font-size: Theme.type-control; vertical-alignment: top;
+                x: Theme.search-cursor-inset; y: Theme.search-cursor-inset;
+                // Text wraps before the reserved block width, so the full cursor fits.
+                width: parent.width - root.search-cursor-width - 2 * Theme.search-cursor-inset;
+                height: max(search-scroll.height - self.y, search-measure.preferred-height + Theme.search-cursor-inset);
+                text <=> root.search-text; color: Theme.text; font-size: Theme.search-font-size; vertical-alignment: top;
                 single-line: false; wrap: word-wrap;
                 cursor-position-changed(point) => {
-                    if point.y + search-scroll.content-y < 0px { search-scroll.content-y = -point.y; }
-                    else if point.y + search-scroll.content-y > search-scroll.height - 18px {
-                        search-scroll.content-y = min(0px,max(search-scroll.height - self.height,search-scroll.height - point.y - 18px));
+                    root.search-edit-generation += 1;
+                    root.search-cursor-x = point.x;
+                    root.search-cursor-y = point.y;
+                    let top = self.y + point.y + search-scroll.content-y;
+                    let bottom = top + root.search-cursor-height;
+                    if top < Theme.search-cursor-inset {
+                        search-scroll.content-y = min(0px, Theme.search-cursor-inset - self.y - point.y);
+                    } else if bottom > search-scroll.height - Theme.search-cursor-inset {
+                        search-scroll.content-y = max(search-scroll.height - search-scroll.content-height, search-scroll.height - Theme.search-cursor-inset - self.y - point.y - root.search-cursor-height);
                     }
                 }
                 edited => { root.search-selection = 0; root.search-offset = 0px; root.search(self.text); }
@@ -1446,13 +1483,28 @@ export component Launcher inherits Window {
                 }
             }
         }
+        if root.search-cursor-overlay: Rectangle {
+            x: search-scroll.x; y: search-scroll.y;
+            width: search-scroll.width; height: search-scroll.height; clip: true;
+            SmoothCaret {
+                target-x: search-input.x + root.search-cursor-x;
+                target-y: search-input.y + root.search-cursor-y + search-scroll.content-y;
+                caret-width: root.search-cursor-width;
+                caret-height: root.search-cursor-height;
+                active: search-input.cursor-position-byte-offset == search-input.anchor-position-byte-offset;
+                edit-generation: root.search-edit-generation;
+            }
+        }
         if root.activated-prefix-name != "": Rectangle {
-            x: 45px; y: 8px; width: root.activated-prefix-width; height: 28px;
-            background: #a8b3ff20; border-width: 1px; border-color: #a8b3ff70; border-radius: 7px;
+            x: 45px; y: (Theme.search-min-height - self.height) / 2; width: root.activated-prefix-width; height: 28px;
+            background: Theme.search-prefix-background; border-width: Theme.border-width; border-color: Theme.search-focus-border; border-radius: Theme.radius-control;
             prefix-badge-label := Text { x: 6px; width: parent.width - 12px; height: parent.height; text: root.activated-prefix-name; accessible-label: root.activated-prefix-name; color: #cbd2ff; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
         }
-        Rectangle { x: parent.width - 58px; y: 14px; width: 1px; height: 16px; background: #a6b1ed26; }
-        Text { x: parent.width - 45px; y: 0px; height: 44px; text: "Ctrl K"; color: #7881a4; font-size: 11px; vertical-alignment: center; }
+        search-hint := Kbd {
+            x: parent.width - self.width - Theme.search-padding;
+            y: (Theme.search-min-height - self.height) / 2;
+            label: root.shortcut-hints[0]; available-width: parent.width / 3;
+        }
     }
     for index in 2: Rectangle {
         x: root.width - 132px + index * 48px; y: 36px; width: 36px; height: 40px;
@@ -1746,8 +1798,21 @@ export component Launcher inherits Window {
         y: dock.y + 8px; width: 4px; height: dock.height - 16px;
         background: !root.drag-item.widget && (root.dock-items.length < 10 || root.drag-item.pinned) ? #71ddcf : #ee9a8b;
     }
-    Image { x: 48px; y: root.height - 22px; width: 105px; height: 15px; source: @image-url("assets/page-hint.svg"); }
-    Image { x: root.width - 160px; y: root.height - 21px; width: 112px; height: 13px; source: @image-url("assets/close-hint.svg"); }
+    HorizontalLayout {
+        x: Theme.space-12; y: root.height - Theme.kbd-height - Theme.space-2;
+        width: self.preferred-width; visible: root.shortcut-hints[2] != "" || root.shortcut-hints[3] != "";
+        height: Theme.kbd-height; spacing: Theme.space-2;
+        Kbd { label: root.shortcut-hints[2]; }
+        Kbd { label: root.shortcut-hints[3]; }
+        Text { text: "Switch pages"; color: Theme.secondary; font-size: Theme.kbd-font-size; vertical-alignment: center; }
+    }
+    HorizontalLayout {
+        x: root.width - self.width - Theme.space-12; y: root.height - Theme.kbd-height - Theme.space-2;
+        width: self.preferred-width; visible: root.shortcut-hints[1] != "";
+        height: Theme.kbd-height; spacing: Theme.space-2;
+        Kbd { label: root.shortcut-hints[1]; }
+        Text { text: "Back to desktop"; color: Theme.secondary; font-size: Theme.kbd-font-size; vertical-alignment: center; }
+    }
     if root.search-text != "" && !root.settings && root.activated-prefix-id == "": Flickable {
         x: (root.width - self.width) / 2; y: search-bar.y + search-bar.height + 26px;
         width: min(1316px, root.width - 96px); height: root.height - self.y - 134px;
@@ -1795,7 +1860,8 @@ export component Launcher inherits Window {
             HorizontalLayout {
                 Text { text: "Settings"; font-size: 24px; color: #e0e3f4; vertical-alignment: center; }
                 Rectangle { horizontal-stretch: 1; }
-                Text { text: "Esc to close"; color: #7881a4; font-size: 12px; vertical-alignment: center; }
+                Kbd { label: root.shortcut-hints[1]; }
+                Text { text: root.shortcut-hints[1] == "" ? "" : "to close"; color: Theme.secondary; font-size: Theme.type-hint; vertical-alignment: center; }
             }
             HorizontalLayout {
                 spacing: 8px;
@@ -1865,6 +1931,13 @@ export component Launcher inherits Window {
             }
             if root.settings-tab == 4: VerticalLayout {
                 spacing: Theme.space-4;
+                AddOption {
+                    label: "Smooth cursor"; selected: root.smooth-cursor;
+                    trailing: root.smooth-cursor ? "On" : "Off";
+                    full-width: true; available-width: parent.width;
+                    enabled: !root.busy;
+                    clicked => { root.busy = true; root.save-smooth-cursor(!root.smooth-cursor); }
+                }
             HorizontalLayout {
                 spacing: 12px;
                 Text { text: "Search engine when no items match"; color: Theme.text; vertical-alignment: center; }
@@ -1943,7 +2016,7 @@ export component Launcher inherits Window {
                                     background: #ffffff08; border-radius: 8px;
                                     VerticalLayout {
                                         padding: 6px; spacing: 4px;
-                                        Text { text: binding.keys; color: #a8b3ff; vertical-alignment: center; }
+                                        Kbd { label: binding.keys; available-width: parent.width; }
                                         HorizontalLayout {
                                             spacing: 6px;
                                             AddOption { label: "Change"; option-width: 82px; enabled: !root.busy; clicked => { root.shortcut-action = binding.action; root.shortcut-existing = binding.keys; root.shortcut-draft = binding.keys; root.shortcut-editor = true; } }
@@ -1955,11 +2028,17 @@ export component Launcher inherits Window {
                         }
                     }
                 }
-                Text { text: "Toggle Orbit is configured in Hyprland. Text editing uses the text field’s shortcuts. Mouse: click to open, right-click for actions, drag to move items, wheel to scroll, Shift + wheel to switch pages."; color: Theme.secondary; font-size: 12px; wrap: word-wrap; }
+                Text { text: "Toggle Orbit is configured in Hyprland. Text editing uses the text field’s shortcuts. Mouse: click to open, right-click for actions, drag to move items and wheel to scroll."; color: Theme.secondary; font-size: 12px; wrap: word-wrap; }
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    Kbd { label: "Shift"; }
+                    Text { text: "+ wheel to switch pages"; color: Theme.secondary; font-size: Theme.type-hint; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                }
                 if root.shortcut-editor: HorizontalLayout {
                     spacing: 12px;
                     ComboBox { model: root.shortcut-actions; current-index <=> root.shortcut-action; }
-                    AddOption { label: root.shortcut-recording ? "Press shortcut…" : root.shortcut-draft == "" ? "Record shortcut" : root.shortcut-draft; option-width: 220px; clicked => { root.shortcut-recording = true; } }
+                    AddOption { label: root.shortcut-recording ? "Press shortcut…" : root.shortcut-draft == "" ? "Record shortcut" : ""; shortcut: root.shortcut-recording ? "" : root.shortcut-draft; option-width: 220px; clicked => { root.shortcut-recording = true; } }
                     AddOption { label: "Cancel"; clicked => { root.shortcut-editor = false; root.shortcut-recording = false; } }
                     AddOption { label: "Save"; primary: true; enabled: !root.busy && !root.shortcut-recording && root.shortcut-draft != ""; clicked => { root.busy = true; root.save-shortcut(root.shortcut-action, root.shortcut-existing, root.shortcut-draft); } }
                 }
@@ -2622,7 +2701,7 @@ export component Launcher inherits Window {
         width: root.width; height: root.height;
         visible: root.folder-open || root.folder-closing;
         opacity: root.folder-open && !root.drag-outside-folder ? 1 : 0;
-        animate opacity { duration: root.folder-open ? 0ms : 220ms; easing: ease-out; }
+        animate opacity { duration: Theme.folder-transition; easing: ease-out; }
         background: Theme.backdrop;
         TouchArea { enabled: root.folder-open; clicked => { root.close-folder-view(); } }
         folder-panel := Rectangle {
@@ -2630,17 +2709,17 @@ export component Launcher inherits Window {
             y: root.folder-open ? (parent.height - self.height) / 2 : grid.absolute-position.y + root.items[root.folder-index].row * grid.tile-size;
             width: root.folder-open ? min(560px, parent.width - 32px) : 128px;
             height: root.folder-open ? min(60px + ceil(root.folder-items.length / folder-grid.columns) * folder-grid.row-step, parent.height - 48px) : 128px;
-            animate x { duration: root.folder-open ? 0ms : 220ms; easing: ease-out; }
-            animate y { duration: root.folder-open ? 0ms : 220ms; easing: ease-out; }
-            animate width { duration: root.folder-open ? 0ms : 220ms; easing: ease-out; }
-            animate height { duration: root.folder-open ? 0ms : 220ms; easing: ease-out; }
+            animate x { duration: Theme.folder-transition; easing: ease-out; }
+            animate y { duration: Theme.folder-transition; easing: ease-out; }
+            animate width { duration: Theme.folder-transition; easing: ease-out; }
+            animate height { duration: Theme.folder-transition; easing: ease-out; }
             background: Theme.sheet; border-radius: 16px;
             border-width: 1px; border-color: Theme.border;
             TouchArea { enabled: root.folder-open; }
             VerticalLayout {
                 visible: root.folder-open || root.folder-closing;
                 opacity: root.folder-open && !root.drag-outside-folder ? 1 : 0;
-                animate opacity { duration: root.folder-open ? 220ms : 150ms; easing: ease-out; }
+                animate opacity { duration: Theme.folder-transition; easing: ease-out; }
                 padding: 16px; spacing: 16px;
                 Text { height: 28px; text: root.folder-name; color: Theme.text; font-size: 20px; font-weight: 600; overflow: elide; }
                 folder-scroll := Flickable {

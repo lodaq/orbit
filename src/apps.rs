@@ -50,6 +50,7 @@ enum Action {
     TransferData(bool),
     SaveAppearance(i32, i32, i32, usize, usize),
     SaveDefaultSearchEngine(i32),
+    SaveSmoothCursor(bool),
     DeletePage,
     SaveShortcut(i32, String, String),
     DeleteShortcut(i32, String),
@@ -185,6 +186,7 @@ pub fn connect(launcher: &Launcher) {
                     | Action::AddInstalledApp(..)
                     | Action::SaveSearchPath(..)
                     | Action::DeleteSearchPath(..)
+                    | Action::SaveSmoothCursor(..)
                     | Action::SaveDefaultSearchEngine(..)
                     | Action::SaveNamedCommand(..)
                     | Action::DeleteNamedCommand(..)
@@ -205,6 +207,7 @@ pub fn connect(launcher: &Launcher) {
                         | Action::Drop(..)
                         | Action::SaveSearchPath(..)
                         | Action::DeleteSearchPath(..)
+                        | Action::SaveSmoothCursor(..)
                         | Action::SaveDefaultSearchEngine(..)
                         | Action::SaveNamedCommand(..)
                         | Action::DeleteNamedCommand(..)
@@ -337,6 +340,16 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             columns as usize,
             rows as usize,
         ));
+    });
+    let sender = send.clone();
+    let cursor_ui = launcher.as_weak();
+    launcher.on_sync_native_search_cursor(move |hidden| {
+        if let Some(ui) = cursor_ui.upgrade() {
+            crate::search_cursor::sync(ui.window(), hidden);
+        }
+    });
+    launcher.on_save_smooth_cursor(move |enabled| {
+        let _ = sender.send(Action::SaveSmoothCursor(enabled));
     });
     let sender = send.clone();
     launcher.on_save_default_search_engine(move |index| {
@@ -711,6 +724,17 @@ impl Apps {
             Action::SearchWeb(query, engine) => {
                 let url = url_action_url(self.config.search_engine_template(&engine), &query)?;
                 open_url(&url).map_err(|error| format!("Couldn't open web search: {error}"))
+            }
+            Action::SaveSmoothCursor(enabled) => {
+                if self.config.smooth_cursor != enabled {
+                    let mut config = self.config.clone();
+                    config.smooth_cursor = enabled;
+                    config
+                        .save()
+                        .map_err(|error| format!("Couldn't save config.json: {error}"))?;
+                    self.config = config;
+                }
+                Ok(())
             }
             Action::SaveDefaultSearchEngine(index) => {
                 let index =
@@ -2160,6 +2184,7 @@ impl Apps {
         let margin = self.config.page_margin;
         let size = self.config.item_size;
         let gap = self.config.grid_gap;
+        let smooth_cursor = self.config.smooth_cursor;
         let search_engine_index = self.config.default_search_engine_index() as i32;
         let saved_columns = self.config.columns as i32;
         let saved_rows = self.config.rows as i32;
@@ -2352,7 +2377,17 @@ impl Apps {
                     .unwrap_or(0) as i32,
             })
             .collect::<Vec<_>>();
-        let shortcut_groups = (0..12)
+        let shortcut_hints: Vec<slint::SharedString> = (0..13)
+            .map(|action| {
+                shortcuts
+                    .iter()
+                    .find(|binding| binding.action == action)
+                    .map_or_else(slint::SharedString::default, |binding| {
+                        binding.keys.as_str().into()
+                    })
+            })
+            .collect();
+        let shortcut_groups = (0..13)
             .map(|action| {
                 (
                     action,
@@ -2455,6 +2490,7 @@ impl Apps {
                 ))
                 .into(),
             );
+            launcher.set_smooth_cursor(smooth_cursor);
             launcher.set_default_search_engine_index(search_engine_index);
             launcher.invoke_default_search_engine_saved(search_engine_index);
             launcher.set_saved_columns(saved_columns);
@@ -2474,6 +2510,8 @@ impl Apps {
                 .into(),
             );
             launcher.set_shortcuts(crate::shortcuts::model(shortcuts));
+            launcher
+                .set_shortcut_hints(std::rc::Rc::new(slint::VecModel::from(shortcut_hints)).into());
             launcher.set_user_actions(std::rc::Rc::new(slint::VecModel::from(user_actions)).into());
             launcher.set_action_names(std::rc::Rc::new(slint::VecModel::from(action_names)).into());
             launcher.set_prefixes(std::rc::Rc::new(slint::VecModel::from(prefixes)).into());

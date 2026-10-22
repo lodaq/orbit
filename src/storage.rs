@@ -293,47 +293,6 @@ fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     None
 }
 
-#[cfg(test)]
-mod icon_tests {
-    use super::icon_link;
-
-    #[test]
-    fn reads_site_icon_with_attributes_in_either_order() {
-        assert_eq!(
-            icon_link(
-                br#"<link rel="stylesheet" href="x.css"><link href="/brand.png" sizes="64x64" rel="icon">"#,
-                "https",
-                "example.com",
-            ),
-            Some("https://example.com/brand.png".into()),
-        );
-    }
-
-    #[test]
-    fn reads_shortcut_icon_rel_tokens() {
-        assert_eq!(
-            icon_link(
-                br#"<link rel="shortcut icon" href="/favicon.png">"#,
-                "https",
-                "example.com",
-            ),
-            Some("https://example.com/favicon.png".into()),
-        );
-    }
-
-    #[test]
-    fn reads_absolute_site_icon_url() {
-        assert_eq!(
-            icon_link(
-                br#"<link rel="icon" href="https://icons.example.com/brand.png">"#,
-                "https",
-                "example.com",
-            ),
-            Some("https://icons.example.com/brand.png".into()),
-        );
-    }
-}
-
 pub fn choose_path(directory: bool) -> Option<PathBuf> {
     let dialog = rfd::FileDialog::new();
     if directory {
@@ -391,4 +350,45 @@ pub fn read_chosen_icon(value: &str) -> Result<(String, Vec<u8>), String> {
     let mut hash = std::collections::hash_map::DefaultHasher::new();
     data.hash(&mut hash);
     Ok((format!("chosen-{:x}.{extension}", hash.finish()), data))
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::icon_link;
+
+    #[test]
+    fn reads_site_icon_with_attributes_in_either_order() {
+        assert_eq!(
+            icon_link(
+                br#"<link rel="stylesheet" href="x.css"><link href="/brand.png" sizes="64x64" rel="icon">"#,
+                "https",
+                "example.com",
+            ),
+            Some("https://example.com/brand.png".into()),
+        );
+    }
+
+    #[test]
+    fn reads_shortcut_icon_rel_tokens() {
+        assert_eq!(
+            icon_link(
+                br#"<link rel="shortcut icon" href="/favicon.png">"#,
+                "https",
+                "example.com",
+            ),
+            Some("https://example.com/favicon.png".into()),
+        );
+    }
+
+    #[test]
+    fn reads_absolute_site_icon_url() {
+        assert_eq!(
+            icon_link(
+                br#"<link rel="icon" href="https://icons.example.com/brand.png">"#,
+                "https",
+                "example.com",
+            ),
+            Some("https://icons.example.com/brand.png".into()),
+        );
+    }
 }

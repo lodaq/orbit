@@ -86,3 +86,5 @@ Search engines: `:br` Brave, `:g` Google, `:d` DuckDuckGo, `:q` Qwant, `:b` Bing
 7. **The focus ring is for keyboard use.** It is hidden when the launcher opens and appears when you press a key. Using the mouse hides it again.
 8. **Toggle Orbit is not a key in Orbit.** The toggle key lives in `hyprland.conf`.
 9. **Any keyboard layout.** All keys here work the same on every layout.
+
+Search anything: **Ctrl+W** deletes the previous word using native text editing, including selected text and undo. Manage or remove **Delete previous word** in Settings → Shortcuts. It acts only while Search anything is focused with no Settings or layer open. Existing bindings are preserved; an already assigned Ctrl+W is not replaced.

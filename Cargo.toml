@@ -41,7 +41,12 @@ slint-build = "=1.18.1"
 
 [dev-dependencies]
 # Exercise the real launcher key-event path without a desktop session.
-i-slint-backend-testing = "=1.18.1"
+i-slint-backend-testing = { version = "=1.18.1", features = ["renderer-software"] }
+# Encode reproducible headless cursor captures as PNG files.
+[dev-dependencies.image]
+version = "=0.25.10"
+default-features = false
+features = ["png"]
 
 [profile.release]
 strip = true

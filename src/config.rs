@@ -25,6 +25,8 @@ pub struct Config {
     pub grid_gap: i32,
     #[serde(default = "default_search_engine")]
     pub default_search_engine: String,
+    #[serde(default = "default_smooth_cursor")]
+    pub smooth_cursor: bool,
     #[serde(default = "crate::shortcuts::defaults")]
     pub shortcuts: Vec<crate::shortcuts::Shortcut>,
     #[serde(default)]
@@ -37,6 +39,8 @@ pub struct Config {
     pub prefixes: Vec<Prefix>,
     #[serde(default)]
     site_searches_initialized: bool,
+    #[serde(default)]
+    search_word_shortcut_initialized: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -318,6 +322,10 @@ const SEARCH_ENGINE_TEMPLATES: [(&str, &str); 8] = [
 fn default_widget_min() -> i32 {
     1
 }
+fn default_smooth_cursor() -> bool {
+    true
+}
+
 fn default_widget_max() -> i32 {
     100
 }
@@ -339,12 +347,14 @@ impl Default for Config {
             item_size: default_item_size(),
             grid_gap: default_grid_gap(),
             default_search_engine: default_search_engine(),
+            smooth_cursor: true,
             shortcuts: crate::shortcuts::defaults(),
             file_search_paths: Vec::new(),
             directory_search_paths: Vec::new(),
             user_actions: default_actions(),
             prefixes: default_prefixes(),
             site_searches_initialized: true,
+            search_word_shortcut_initialized: true,
         }
     }
 }
@@ -525,6 +535,20 @@ fn default_prefixes() -> Vec<Prefix> {
 }
 
 impl Config {
+    fn add_search_word_shortcut(&mut self) {
+        if !self
+            .shortcuts
+            .iter()
+            .any(|entry| entry.action == 12 || entry.keys == "Ctrl+W")
+        {
+            self.shortcuts.push(crate::shortcuts::Shortcut {
+                action: 12,
+                keys: "Ctrl+W".into(),
+            });
+        }
+        self.search_word_shortcut_initialized = true;
+    }
+
     pub fn search_engine_names() -> Vec<&'static str> {
         SEARCH_ENGINES.iter().map(|(_, name)| *name).collect()
     }
@@ -777,6 +801,10 @@ fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
                 config.version = 5;
                 changed = true;
             }
+            if !config.search_word_shortcut_initialized {
+                config.add_search_word_shortcut();
+                changed = true;
+            }
             if !config.site_searches_initialized {
                 config.add_default_search_prefixes();
                 config.site_searches_initialized = true;
@@ -1014,4 +1042,54 @@ pub fn new_page_id() -> String {
             .as_nanos(),
         SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     )
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::Config;
+    #[test]
+    fn old_config_enables_smooth_cursor_and_false_round_trips() {
+        let mut value = serde_json::to_value(Config::default()).unwrap();
+        value.as_object_mut().unwrap().remove("smooth_cursor");
+        let mut config: Config = serde_json::from_value(value).unwrap();
+        assert!(config.smooth_cursor);
+        config.smooth_cursor = false;
+        let config: Config = serde_json::from_slice(&serde_json::to_vec(&config).unwrap()).unwrap();
+        assert!(!config.smooth_cursor);
+    }
+}
+
+#[cfg(test)]
+mod search_shortcut_tests {
+    use super::Config;
+
+    #[test]
+    fn adds_word_shortcut_to_old_settings_without_restoring_removed_bindings() {
+        let mut config = Config::default();
+        config.shortcuts.retain(|entry| entry.action != 12);
+        config.search_word_shortcut_initialized = false;
+        config.add_search_word_shortcut();
+        assert!(
+            config
+                .shortcuts
+                .iter()
+                .any(|entry| entry.action == 12 && entry.keys == "Ctrl+W")
+        );
+        config.shortcuts.retain(|entry| entry.action != 12);
+        let saved = serde_json::to_vec(&config).unwrap();
+        let loaded: Config = serde_json::from_slice(&saved).unwrap();
+        assert!(loaded.search_word_shortcut_initialized);
+        assert!(!loaded.shortcuts.iter().any(|entry| entry.action == 12));
+    }
+
+    #[test]
+    fn migration_preserves_an_existing_ctrl_w_binding() {
+        let mut config = Config::default();
+        config.shortcuts.retain(|entry| entry.action != 12);
+        config.shortcuts[0].keys = "Ctrl+W".into();
+        config.search_word_shortcut_initialized = false;
+        config.add_search_word_shortcut();
+        assert!(!config.shortcuts.iter().any(|entry| entry.action == 12));
+        assert_eq!(config.shortcuts[0].keys, "Ctrl+W");
+    }
 }

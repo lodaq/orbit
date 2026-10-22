@@ -163,3 +163,9 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Item Gap** | The spacing between page and folder tiles in pixels, adjustable from 0 to 64 in Settings. |
 
 | **Search bar** | Settings tab containing General search settings, Prefixes and Actions. |
+
+| **Smooth cursor** | Search bar setting for the animated block cursor in Search anything. On by default; Off restores the native text cursor. |
+
+| **Delete previous word** | Configurable Search anything shortcut, Ctrl+W by default, that removes the word before the text cursor. |
+
+| **Keycap** | A small rounded label displaying a keyboard key or shortcut. Implemented by the shared Kbd control. |

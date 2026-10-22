@@ -12,6 +12,8 @@ mod platform;
 #[path = "platform-windows.rs"]
 mod platform;
 mod recent;
+#[path = "search-cursor.rs"]
+mod search_cursor;
 mod shortcuts;
 mod spatial;
 mod storage;

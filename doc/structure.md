@@ -39,3 +39,9 @@ The approved v2 UX specification is `Orbit_Desktop_Launcher_UX_Spec_v2.md`; it s
 
 - `src/ticktick-ui.rs`: TickTick request coordination, optimistic snapshots and rollback, dynamic list models, calendar views and result feedback.
 - `ui/assets/task-complete.wav`: short completion sound played by the desktop platform module.
+
+- `tests/caret-geometry.rs`: mocked-time cursor geometry, line snapping, selection and idle regression checks.
+- `tests/caret-ui-check.rs`: reproducible software-renderer captures and real search input checks; `cargo test --test caret-ui-check` writes `target/ui-check/cursor-*.png` and `cursor-report.txt`.
+- `doc/cursor-checks.md`: cursor API compatibility, validation commands, captures and known verification limits.
+- `src/search-cursor.rs`: event-driven bridge to Slint 1.18.1 native caret visibility; preserves native editing and IME without per-frame work.
+- Shared `Kbd` labels in `ui/controls.slint` render shortcut hints, Settings bindings and recorder previews. `tests/caret-ui-check.rs` also checks complete cursor bounds at long Prefix query ends.
