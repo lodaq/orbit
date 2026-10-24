@@ -30,11 +30,17 @@ pub struct Config {
     #[serde(default)]
     pub english_assistance: crate::english_assistance::Settings,
     #[serde(default)]
+    pub ai: crate::ai::Settings,
+    #[serde(default)]
+    ai_initialized: bool,
+    #[serde(default)]
     pub layout_locked: bool,
     #[serde(default = "crate::shortcuts::defaults")]
     pub shortcuts: Vec<crate::shortcuts::Shortcut>,
     #[serde(default)]
     pub file_search_paths: Vec<String>,
+    #[serde(default)]
+    pub app_search_paths: Vec<String>,
     #[serde(default = "default_file_search_exclusions")]
     pub file_search_exclusions: Vec<String>,
     #[serde(default)]
@@ -67,6 +73,7 @@ pub enum ActionKind {
     Url,
     Shell,
     TickTick,
+    Ai,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -381,9 +388,12 @@ impl Default for Config {
             default_search_engine: default_search_engine(),
             smooth_cursor: true,
             english_assistance: Default::default(),
+            ai: Default::default(),
+            ai_initialized: true,
             layout_locked: false,
             shortcuts: crate::shortcuts::defaults(),
             file_search_paths: Vec::new(),
+            app_search_paths: Vec::new(),
             file_search_exclusions: default_file_search_exclusions(),
             directory_search_paths: Vec::new(),
             user_actions: default_actions(),
@@ -434,6 +444,7 @@ fn builtin_actions() -> Vec<UserAction> {
             "https://en.wikipedia.org/wiki/Special:Search?search=%s",
         ),
         ("ticktick", "TickTick", ActionKind::TickTick, ""),
+        ("orbit-ai", "AI", ActionKind::Ai, ""),
     ]
     .into_iter()
     .map(|(id, name, kind, source)| UserAction {
@@ -530,6 +541,7 @@ fn default_prefixes() -> Vec<Prefix> {
         ("claude", "Claude", "c", "claude"),
         ("wikipedia", "Wikipedia", "w", "wikipedia"),
         ("ticktick", "TickTick", "t", "ticktick"),
+        ("orbit-ai", "AI", "ai", "orbit-ai"),
         ("chatgpt-ar", "ChatGPT", "ل", "chatgpt"),
         ("claude-ar", "Claude", "ؤ", "claude"),
         ("github", "GitHub", "gh", "github-search"),
@@ -571,6 +583,53 @@ fn default_prefixes() -> Vec<Prefix> {
 }
 
 impl Config {
+    fn initialize_ai(&mut self) -> bool {
+        if self.ai_initialized {
+            return false;
+        }
+        self.ai = crate::ai::Settings {
+            address: self.english_assistance.address.clone(),
+            local_model: self.english_assistance.model.clone(),
+            ..Default::default()
+        };
+        let id = self.add_ai_action();
+        if !self
+            .prefixes
+            .iter()
+            .any(|p| p.token.eq_ignore_ascii_case("ai"))
+        {
+            self.prefixes.push(Prefix {
+                id: id.clone(),
+                name: "AI".into(),
+                token: "ai".into(),
+                action_id: id,
+            });
+        }
+        self.ai_initialized = true;
+        true
+    }
+    fn add_ai_action(&mut self) -> String {
+        if let Some(action) = self.user_actions.iter().find(|a| a.kind == ActionKind::Ai) {
+            return action.id.clone();
+        }
+        let mut id = "orbit-ai".to_owned();
+        let mut suffix = 1;
+        while self.user_actions.iter().any(|a| a.id == id)
+            || self.prefixes.iter().any(|p| p.id == id)
+        {
+            id = format!("orbit-ai-{suffix}");
+            suffix += 1;
+        }
+        self.user_actions.push(UserAction {
+            id: id.clone(),
+            name: "AI".into(),
+            kind: ActionKind::Ai,
+            source: String::new(),
+            description: "Ask a local model, OpenAI or Gemini inside Orbit.".into(),
+        });
+        id
+    }
+
     fn add_search_completion_shortcut(&mut self) {
         if !self
             .shortcuts
@@ -808,7 +867,7 @@ fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
         if let Ok(mut config) = serde_json::from_slice::<Config>(&text)
             && config.valid()
         {
-            let mut changed = false;
+            let mut changed = config.initialize_ai();
             if config.version < 3 {
                 let pitch = crate::spatial::cell_pitch(config.item_size, config.grid_gap);
                 for rect in config.positions.values_mut() {
@@ -897,6 +956,78 @@ fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ai_migration_of_omitted_action_fields_does_not_duplicate_defaults() {
+        let mut value = serde_json::to_value(Config::default()).unwrap();
+        for field in ["ai_initialized", "ai", "user_actions", "prefixes"] {
+            value.as_object_mut().unwrap().remove(field);
+        }
+        let mut config: Config = serde_json::from_value(value).unwrap();
+        assert!(config.initialize_ai());
+        assert_eq!(
+            config
+                .user_actions
+                .iter()
+                .filter(|a| a.kind == ActionKind::Ai)
+                .count(),
+            1
+        );
+        assert_eq!(
+            config.prefixes.iter().filter(|p| p.token == "ai").count(),
+            1
+        );
+        assert!(config.valid());
+    }
+
+    #[test]
+    fn ai_migration_preserves_user_tokens_and_is_one_time() {
+        let mut config = Config::default();
+        config.ai_initialized = false;
+        config.user_actions.retain(|a| a.kind != ActionKind::Ai);
+        config.prefixes.retain(|p| p.token != "ai");
+        config.prefixes.push(Prefix {
+            id: "custom-ai".into(),
+            name: "Custom".into(),
+            token: "AI".into(),
+            action_id: "youtube".into(),
+        });
+        config.english_assistance.model = "my-local-model".into();
+        assert!(config.initialize_ai());
+        assert_eq!(config.ai.local_model, "my-local-model");
+        assert_eq!(
+            config
+                .prefixes
+                .iter()
+                .filter(|p| p.token.eq_ignore_ascii_case("ai"))
+                .count(),
+            1
+        );
+        assert_eq!(config.prefixes.last().unwrap().action_id, "youtube");
+        assert!(config.valid());
+        let count = config.user_actions.len();
+        assert!(!config.initialize_ai());
+        assert_eq!(config.user_actions.len(), count);
+        let saved = serde_json::to_value(&config).unwrap();
+        assert!(saved["ai"].get("api_key").is_none());
+    }
+
+    #[test]
+    fn ai_migration_installs_prefix_without_action_id_collisions() {
+        let mut config = Config::default();
+        config.ai_initialized = false;
+        config
+            .user_actions
+            .iter_mut()
+            .find(|a| a.id == "orbit-ai")
+            .unwrap()
+            .kind = ActionKind::Shell;
+        config.prefixes.retain(|p| p.token != "ai");
+        assert!(config.initialize_ai());
+        assert!(config.valid());
+        let prefix = config.prefixes.iter().find(|p| p.token == "ai").unwrap();
+        assert_eq!(prefix.action_id, "orbit-ai-1");
+    }
 
     #[test]
     fn completion_shortcut_migration_preserves_conflicts_and_removal() {
@@ -1036,8 +1167,8 @@ mod tests {
                     .any(|action| action.id == action_id)
             );
         }
-        assert_eq!(config.prefixes.len(), 24);
-        assert_eq!(config.user_actions.len(), 18);
+        assert_eq!(config.prefixes.len(), 25);
+        assert_eq!(config.user_actions.len(), 19);
     }
 
     #[test]

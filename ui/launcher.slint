@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import { AddItemRow, SettingsAddButton, SettingsButton, SettingsField, SettingsCard, SettingsTitle, SettingsDescription, SettingsNav, SettingsTabGroup, SettingsTab, SettingsSwitch, SettingsChip, SettingsStepper, SettingsSelect, AddOption, AddField, SmoothCaret, Kbd } from "controls.slint";
 import "fonts/inter.ttf";
-import { Button, LineEdit, TextEdit, Palette, ComboBox, SpinBox, Slider, CheckBox } from "std-widgets.slint";
+import { Button, LineEdit, TextEdit, Palette, ComboBox, SpinBox, Slider, CheckBox, ScrollView } from "std-widgets.slint";
 
 export struct ShortcutEntry { action: int, keys: string }
 export struct ShortcutGroup { action: int, entries: [ShortcutEntry] }
@@ -29,6 +29,7 @@ export struct AppTile {
     command: string,
     url: string,
     path: string,
+    parent-path: string,
     icon-value: string,
     custom: bool,
     icon-present: bool,
@@ -384,7 +385,7 @@ export component Launcher inherits Window {
     private property <int> focused-item: 0;
     private property <bool> keyboard-grid;
     private property <int> dock-source-index: -1;
-    out property <bool> grid-navigation: page-focus.has-focus && !root.page-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open;
+    out property <bool> grid-navigation: !root.ai-active && page-focus.has-focus && !root.page-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open;
     pure callback next-grid-item([AppTile],int,int) -> int;
     callback move-grid(int);
     move-grid(direction) => { root.keyboard-grid = true; root.focused-item = root.next-grid-item(root.items,root.focused-item,direction); }
@@ -455,7 +456,7 @@ export component Launcher inherits Window {
     private property <length> search-cursor-y;
     private property <int> search-edit-generation;
     private property <bool> search-cursor-overlay: root.smooth-cursor && root.launcher-visible && search-input.has-focus && search-input.preedit-text == "";
-    changed search-text => { root.search-edit-generation += 1; root.english-dismissed = false; root.english-changed(); }
+    changed search-text => { if root.ai-loading { root.ai-cancel(); } root.search-edit-generation += 1; root.english-dismissed = false; root.english-changed(); }
     in property <bool> english-suggestions-enabled;
     in property <bool> english-autocomplete-enabled;
     in property <bool> english-grammar-enabled;
@@ -510,6 +511,9 @@ export component Launcher inherits Window {
     in property <[AppTile]> dock-items;
     in property <[AppTile]> recent-items;
     in property <[AppTile]> search-results;
+    in property <[string]> app-search-paths;
+    private property <string> app-search-path-draft;
+    callback save-app-search-path(string, bool);
     in property <[string]> file-search-paths;
     in property <[string]> file-search-exclusions;
     private property <string> file-search-exclusion-draft;
@@ -523,6 +527,35 @@ export component Launcher inherits Window {
     private property <bool> shortcuts-tab;
     private property <int> settings-tab;
     in property <[UserActionChoice]> user-actions;
+    in-out property <int> ai-provider;
+    in-out property <string> ai-address: "http://127.0.0.1:11434";
+    in-out property <string> ai-local-model: "qwen3:4b";
+    in-out property <string> ai-openai-model;
+    in-out property <string> ai-gemini-model;
+    in-out property <[string]> ai-local-models;
+    in-out property <int> ai-local-index;
+    in-out property <string> ai-answer;
+    in-out property <string> ai-status;
+    in-out property <string> ai-settings-status;
+    in-out property <string> ai-key-draft;
+    in-out property <bool> ai-loading;
+    in-out property <bool> ai-key-busy;
+    in-out property <bool> ai-models-loading;
+    private property <[string]> ai-providers: ["Ollama", "OpenAI", "Gemini"];
+    out property <bool> ai-active: root.activated-prefix-id != "" && root.action-index-for-id(root.activated-prefix-id) >= 0 && root.user-actions[root.action-index-for-id(root.activated-prefix-id)].id == root.activated-prefix-id && root.user-actions[root.action-index-for-id(root.activated-prefix-id)].kind == "AI";
+    out property <bool> home-visible: root.search-text == "" && !root.settings && !root.ai-active;
+    out property <bool> search-results-visible: root.search-text != "" && !root.settings && root.activated-prefix-id == "";
+    callback ai-submit();
+    callback ai-cancel();
+    callback ai-refresh-models();
+    callback ai-store-key(bool);
+    callback save-ai();
+    function clear-ai() { root.ai-cancel(); root.ai-answer = ""; root.ai-status = ""; }
+    changed ai-provider => { root.clear-ai(); root.ai-key-draft = ""; }
+    changed ai-local-model => { root.clear-ai(); }
+    changed ai-openai-model => { root.clear-ai(); }
+    changed ai-gemini-model => { root.clear-ai(); }
+    changed ai-address => { root.clear-ai(); }
     in property <[PrefixChoice]> prefixes;
     in property <[string]> action-names;
     private property <string> action-id-draft;
@@ -541,10 +574,10 @@ export component Launcher inherits Window {
     private property <string> prefix-action-draft;
     private property <int> prefix-action-index;
     private property <int> action-kind-index;
-    private property <[string]> action-kinds: ["Shell", "URL", "TickTick"];
+    private property <[string]> action-kinds: ["Shell", "URL", "TickTick", "AI"];
     out property <string> activated-prefix-name;
     out property <string> activated-prefix-id;
-    changed activated-prefix-id => { root.english-changed(); }
+    changed activated-prefix-id => { root.english-changed(); root.clear-ai(); }
     private property <length> activated-prefix-width: 78px;
     callback save-user-action(string, string, string, string, string, string);
     callback delete-user-action(string);
@@ -556,6 +589,8 @@ export component Launcher inherits Window {
     pure callback match-prefix(string) -> PrefixMatch;
     pure callback action-index-for-id(string) -> int;
     function activate-prefix() {
+        root.engine-menu = false;
+        root.clear-ai();
         let matched = root.match-prefix(root.search-text);
         let has-match = matched.action-id != "";
         root.activated-prefix-id = matched.action-id;
@@ -563,17 +598,26 @@ export component Launcher inherits Window {
         root.activated-prefix-width = min(132px, max(52px, matched.badge-width * 1px));
         if has-match {
             root.search-text = matched.query;
-            root.search(root.search-text);
+            root.search(root.ai-active ? "" : root.search-text);
             root.search-selection = 0;
             root.search-offset = 0px;
             search-input.focus();
             search-input.set-selection-offsets(matched.query-length, matched.query-length);
         }
     }
+    callback activate-ticktick-prefix();
+    activate-ticktick-prefix => {
+        root.activated-prefix-id = "ticktick";
+        root.activated-prefix-name = "TickTick";
+        root.activated-prefix-width = 78px;
+        root.focus-search();
+    }
     callback run-activated-prefix();
     run-activated-prefix => {
         if root.busy { return; }
-        if root.activated-prefix-id != "" {
+        if root.ai-active {
+            if !root.ai-loading { root.save-ai(); root.ai-submit(); }
+        } else if root.activated-prefix-id != "" {
             root.busy = true;
             root.run-prefix(root.activated-prefix-id, root.search-text);
         } else { root.activate-search-selection(); }
@@ -594,6 +638,7 @@ export component Launcher inherits Window {
     private property <int> saved-default-search-engine-index;
     changed settings => {
         root.engine-menu = false;
+        root.clear-ai(); root.ai-key-draft = "";
         if root.settings {
             root.saved-size = root.item-size; root.saved-margin = root.page-margin; root.saved-grid-gap = root.grid-gap;
             root.saved-default-search-engine-index = root.default-search-engine-index;
@@ -635,16 +680,21 @@ export component Launcher inherits Window {
     callback confirm-delete-page();
     confirm-delete-page => { if !root.layout-locked && root.page-count > 1 && !root.busy && !root.sheet && !root.folder-open { root.page-delete-confirm = true; } }
     private property <int> search-selection;
+    private property <int> search-hover: -1;
+    private property <int> search-detail-index: search-hover >= 0 && search-hover < root.search-results.length ? search-hover : search-selection;
+    private property <string> search-detail: search-detail-index >= 0 && search-detail-index < root.search-results.length ? (root.search-results[search-detail-index].path != "" ? root.search-results[search-detail-index].path : root.search-results[search-detail-index].url != "" ? root.search-results[search-detail-index].url : root.search-results[search-detail-index].command) : "";
     private property <length> search-offset;
     private property <int> search-columns: max(1, floor(min(1316px, root.width - 96px) / 160px));
-    out property <bool> search-navigation: root.search-text != "" && !root.settings && !root.sheet && !root.folder-open && !root.picker && !root.alert && !root.ticktick-open;
+    out property <bool> search-navigation: !root.ai-active && root.search-text != "" && !root.settings && !root.sheet && !root.folder-open && !root.picker && !root.alert && !root.ticktick-open;
     callback move-search-selection(int);
     callback activate-search-selection();
     activate-search-selection => {
+        if root.ai-active { return; }
         if root.search-selection >= 0 && root.search-selection < root.search-results.length && !root.busy {
             root.busy = true;
             let result = root.search-results[root.search-selection];
             if result.page == -5 { root.search-web(root.search-text,result.id); }
+            else if result.folder-app-index >= 0 { root.open-dock-item(result.page,result.index,result.folder-app-index); }
             else { root.open-result(result.page,result.index); }
         } else if root.search-results.length == 0 && root.search-text != "" && !root.busy {
             root.busy = true;
@@ -653,16 +703,18 @@ export component Launcher inherits Window {
     }
     callback search-web(string,string);
     move-search-selection(direction) => {
+        if root.ai-active { return; }
+        root.search-hover = -1;
         if root.search-results.length == 0 { return; }
         let column = mod(root.search-selection, root.search-columns);
         if direction == 0 && column > 0 { root.search-selection -= 1; }
         if direction == 1 && column < root.search-columns - 1 && root.search-selection + 1 < root.search-results.length { root.search-selection += 1; }
         if direction == 2 && root.search-selection >= root.search-columns { root.search-selection -= root.search-columns; }
         if direction == 3 && root.search-selection + root.search-columns < root.search-results.length { root.search-selection += root.search-columns; }
-        let top = floor(root.search-selection / root.search-columns) * 164px;
-        let view-height = root.height - search-bar.y - search-bar.height - 160px;
+        let top = floor(root.search-selection / root.search-columns) * 192px;
+        let view-height = max(0px, root.height - search-bar.y - search-bar.height - 26px - (english-panel.visible ? english-panel.height + 12px : 0px) - 184px);
         if top < root.search-offset { root.search-offset = top; }
-        if top + 152px > root.search-offset + view-height { root.search-offset = top + 152px - view-height; }
+        if top + 180px > root.search-offset + view-height { root.search-offset = top + 180px - view-height; }
     }
 
     in-out property <bool> data-busy;
@@ -686,7 +738,7 @@ export component Launcher inherits Window {
     callback focus-search();
     callback page-key(int);
     focus-search => { if !root.sheet && !root.folder-open && root.context-index < 0 && root.dock-context == "" { root.settings = false; search-input.focus(); } }
-    page-key(direction) => { if !root.sheet && !root.folder-open && root.search-text == "" && !root.settings && root.context-index < 0 && root.dock-context == "" { root.change-page(root.current-page + direction); } }
+    page-key(direction) => { if !root.ai-active && !root.sheet && !root.folder-open && root.search-text == "" && !root.settings && root.context-index < 0 && root.dock-context == "" { root.change-page(root.current-page + direction); } }
 
     in property <[InstalledAppTile]> installed-apps;
     in property <[ActionChoice]> actions;
@@ -804,7 +856,7 @@ export component Launcher inherits Window {
     private property <int> context-index: -1;
     private property <bool> page-context;
     changed current-page => { root.page-context = false; }
-    changed launcher-visible => { if !root.launcher-visible { root.page-context = false; } }
+    changed launcher-visible => { if !root.launcher-visible { root.page-context = false; root.clear-ai(); root.ai-key-draft = ""; } }
     private property <string> dock-context;
     private property <string> context-id;
     private property <int> editing: -1;
@@ -1286,6 +1338,7 @@ export component Launcher inherits Window {
     page-focus := FocusScope { width: 0px; height: 0px; }
     finish-drag => { if root.drop-pending { root.cancel-drag(); } }
     reset-launcher => {
+        root.clear-ai();
         root.page-context = false;
         root.placing-widget = -1; root.widget-placement-target = -1;
         if root.folder-open { root.close-folder(); }
@@ -1353,7 +1406,7 @@ export component Launcher inherits Window {
         else if root.settings { root.settings = false; search-input.focus(); }
         else if root.engine-menu { root.engine-menu = false; }
         else if english-panel.visible { root.english-dismissed = true; root.english-changed(); }
-        else if root.activated-prefix-id != "" { root.search-text = ""; root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); page-focus.focus(); }
+        else if root.activated-prefix-id != "" { root.search-text = ""; root.clear-ai(); root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); page-focus.focus(); }
         else if root.search-text != "" { root.search-text = ""; root.search(""); page-focus.focus(); }
         else { root.hide-launcher(); }
     }
@@ -1518,7 +1571,7 @@ export component Launcher inherits Window {
     callback hide-launcher();
     function change-page(index: int) {
         root.page-context = false;
-        if !root.busy && !root.transitioning && index >= 0 && index < root.page-count && index != root.current-page {
+        if !root.ai-active && !root.busy && !root.transitioning && index >= 0 && index < root.page-count && index != root.current-page {
             root.transition-items = root.items;
             root.transition-direction = index > root.current-page ? 1 : -1;
             root.transition-incoming-items = root.transition-direction > 0 ? root.next-items : root.previous-items;
@@ -1571,7 +1624,7 @@ export component Launcher inherits Window {
     Image { width: root.width; height: root.height; source: @image-url("assets/background.svg"); image-fit: fill; }
     Image { x: 48px; y: 40px; width: 90px; height: 32px; source: @image-url("assets/orbit.svg"); }
     search-bar := Rectangle {
-        x: (root.width - self.width) / 2; y: 34px; width: min(560px, root.width - 440px);
+        x: (root.width - self.width) / 2; y: 34px; width: min(root.ai-active && !root.settings ? 820px : 560px, root.width - 440px);
         height: max(Theme.search-min-height, min(176px, search-measure.preferred-height + 2 * (Theme.search-padding + Theme.search-cursor-inset) + (completion-ghost.visible && completion-ghost.next-line ? root.search-cursor-height : 0px)));
         background: Theme.search-background;
         border-color: root.search-focused ? Theme.search-focus-border : Theme.search-border;
@@ -1580,7 +1633,7 @@ export component Launcher inherits Window {
         Text {
             x: search-scroll.x + search-input.x; y: search-scroll.y + search-input.y;
             width: search-input.width; height: root.search-cursor-height;
-            text: root.search-text == "" ? "Search anything" : "";
+            text: root.search-text == "" ? (root.ai-active ? "Ask AI" : "Search anything") : "";
             color: Theme.secondary; font-size: Theme.search-font-size;
         }
         search-measure := Text {
@@ -1615,11 +1668,11 @@ export component Launcher inherits Window {
                         search-scroll.content-y = max(search-scroll.height - search-scroll.content-height, search-scroll.height - Theme.search-cursor-inset - self.y - point.y - root.search-cursor-height);
                     }
                 }
-                edited => { root.search-selection = 0; root.search-offset = 0px; root.search(self.text); }
+                edited => { root.search-selection = 0; root.search-hover = -1; root.search-offset = 0px; if !root.ai-active { root.search(self.text); } }
                 accepted => { if self.text != "" || root.activated-prefix-id != "" { root.run-activated-prefix(); } }
                 key-pressed(event) => {
                     if event.text == Key.Backspace && self.text == "" && root.activated-prefix-id != "" {
-                        root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); accept;
+                        root.clear-ai(); root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); accept;
                     }
                     else if event.text == "\n" { if self.text != "" || root.activated-prefix-id != "" { root.run-activated-prefix(); } accept; }
                     else if event.text == Key.Tab {
@@ -1701,7 +1754,7 @@ export component Launcher inherits Window {
             wrap: word-wrap;
         }
         page := Flickable {
-            visible: root.search-text == "" && !root.settings;
+            visible: root.home-visible;
             mouse-drag-pan-enabled: false;
             content-width: self.width;
             content-height: max(self.height, grid.height);
@@ -1902,6 +1955,7 @@ export component Launcher inherits Window {
         }
     }
     HorizontalLayout {
+        visible: !root.ai-active;
         x: (root.width - self.width) / 2; y: root.height - 158px;
         width: (root.page-count + (root.page-count < 9 ? 1 : 0)) * 16px; height: 24px; spacing: 0px;
         for index in root.page-count: Rectangle {
@@ -1984,7 +2038,7 @@ export component Launcher inherits Window {
     }
     HorizontalLayout {
         x: Theme.space-12; y: root.height - Theme.kbd-height - Theme.space-2;
-        width: self.preferred-width; visible: root.shortcut-hints[2] != "" || root.shortcut-hints[3] != "";
+        width: self.preferred-width; visible: !root.ai-active && (root.shortcut-hints[2] != "" || root.shortcut-hints[3] != "");
         height: Theme.kbd-height; spacing: Theme.space-2;
         Kbd { label: root.shortcut-hints[2]; }
         Kbd { label: root.shortcut-hints[3]; }
@@ -1997,15 +2051,15 @@ export component Launcher inherits Window {
         Kbd { label: root.shortcut-hints[1]; }
         Text { text: "Back to desktop"; color: Theme.secondary; font-size: Theme.kbd-font-size; vertical-alignment: center; }
     }
-    if root.search-text != "" && !root.settings && root.activated-prefix-id == "": Flickable {
+    if root.search-results-visible: Flickable {
         x: (root.width - self.width) / 2; y: search-bar.y + search-bar.height + 26px + (english-panel.visible ? english-panel.height + 12px : 0px);
-        width: min(1316px, root.width - 96px); height: max(0px,root.height - self.y - 134px);
+        width: min(1316px, root.width - 96px); height: max(0px,root.height - self.y - 184px);
         content-y <=> root.search-offset;
-        content-height: max(self.height, ceil(root.search-results.length / root.search-columns) * 164px);
+        content-height: max(self.height, ceil(root.search-results.length / root.search-columns) * 192px);
         for item[index] in root.search-results: Rectangle {
             x: mod(index, root.search-columns) * (parent.width / root.search-columns) + 6px;
-            y: floor(index / root.search-columns) * 164px;
-            width: parent.width / root.search-columns - 12px; height: 152px;
+            y: floor(index / root.search-columns) * 192px;
+            width: parent.width / root.search-columns - 12px; height: 180px;
             background: index == root.search-selection ? #a8b3ff26 : result-hit.has-hover ? #ffffff0c : transparent;
             border-width: index == root.search-selection ? 2px : 0px;
             border-color: #a8b3ff99; border-radius: 16px;
@@ -2032,13 +2086,33 @@ export component Launcher inherits Window {
                 text: item.page == -5 ? (index == 0 ? "Default search engine" : "Search engine") : item.page == -1 ? "Actions" : item.page == -2 ? "Installed apps" : item.page == -3 ? "File" : "Directory";
                 color: #a7adc7; font-size: 11px; horizontal-alignment: center;
             }
-            result-hit := TouchArea { mouse-cursor: pointer; enabled: !root.busy; clicked => { root.search-selection = index; root.activate-search-selection(); } }
+            if item.path != "" || item.url != "" || item.command != "": Text {
+                x: Theme.space-2; y: 144px; width: parent.width - 2 * Theme.space-2; height: 28px;
+                text: item.path != "" ? item.parent-path : item.url != "" ? item.url : item.command;
+                color: Theme.secondary; font-size: Theme.type-hint; wrap: word-wrap; overflow: elide;
+                horizontal-alignment: center;
+            }
+            result-hit := TouchArea {
+                mouse-cursor: pointer; enabled: !root.busy;
+                changed has-hover => { if self.has-hover { root.search-hover = index; } else if root.search-hover == index { root.search-hover = -1; } }
+                clicked => { root.search-selection = index; root.activate-search-selection(); }
+            }
         }
     }
-    if root.engine-menu: TouchArea { clicked => { root.engine-menu = false; } }
+    if root.search-results-visible && root.search-detail != "": Rectangle {
+        x: (root.width - self.width) / 2; y: root.height - 176px;
+        width: min(1316px, root.width - 96px); height: 40px;
+        background: Theme.field; border-radius: Theme.radius-control;
+        Text {
+            x: Theme.space-3; width: parent.width - 2 * Theme.space-3; height: parent.height;
+            text: root.search-detail; color: Theme.secondary; font-size: Theme.type-hint;
+            wrap: word-wrap; overflow: elide; vertical-alignment: center;
+        }
+    }
+    if root.engine-menu && !root.ai-active: TouchArea { clicked => { root.engine-menu = false; } }
     engine-select := Rectangle {
         x: search-bar.x - self.width - 12px; y: search-bar.y;
-        width: 154px; height: 48px; visible: !root.settings;
+        width: 154px; height: 48px; visible: !root.settings && !root.ai-active;
         accessible-role: combobox; accessible-label: "Default search engine";
         accessible-value: root.search-engine-names[root.default-search-engine-index];
         accessible-enabled: !root.busy;
@@ -2049,7 +2123,7 @@ export component Launcher inherits Window {
         Text { x: parent.width - 28px; height: parent.height; text: "⌄"; color: Theme.secondary; vertical-alignment: center; }
         engine-select-hit := TouchArea { enabled: !root.busy; mouse-cursor: pointer; clicked => { root.engine-menu = !root.engine-menu; } }
     }
-    if root.engine-menu && !root.settings: Rectangle {
+    if root.engine-menu && !root.settings && !root.ai-active: Rectangle {
         x: engine-select.x; y: engine-select.y + engine-select.height + 6px;
         width: engine-select.width; height: min(root.search-engine-names.length * 36px + 38px, root.height - self.y - 24px);
         background: Theme.sheet; border-width: Theme.border-width; border-color: Theme.border; border-radius: Theme.radius-control;
@@ -2071,8 +2145,61 @@ export component Launcher inherits Window {
             }
         }
     }
+    if root.ai-active && !root.settings: Rectangle {
+        x: search-bar.x; y: search-bar.y + search-bar.height + Theme.space-4;
+        width: search-bar.width;
+        height: min(root.height - self.y - 156px, root.ai-answer == "" ? 240px : max(280px, min(640px, ai-answer-measure.preferred-height + 184px)));
+        background: Theme.sheet; border-width: Theme.border-width;
+        border-color: Theme.border; border-radius: Theme.radius-sheet;
+        ai-answer-measure := Text {
+            visible: false; width: parent.width - 4 * Theme.space-4;
+            text: root.ai-answer; font-size: Theme.search-font-size; wrap: word-wrap;
+        }
+        VerticalLayout {
+            padding: Theme.space-4; spacing: Theme.space-4;
+            HorizontalLayout { spacing: Theme.space-2; vertical-stretch: 0;
+                SettingsSelect { label: "AI provider"; width: 128px; model: root.ai-providers; current-index <=> root.ai-provider; selected => { root.save-ai(); } }
+                if root.ai-provider == 0 && root.ai-local-models.length > 0: SettingsSelect { label: "AI model"; width: max(100px, parent.width - 228px); model: root.ai-local-models; current-index <=> root.ai-local-index; selected => { root.ai-local-model = root.ai-local-models[root.ai-local-index]; root.save-ai(); } }
+                if root.ai-provider == 0 && root.ai-local-models.length == 0: Text { text: root.ai-local-model; color: Theme.secondary; font-size: Theme.type-control; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; }
+                if root.ai-provider == 1: LineEdit { accessible-label: "OpenAI model ID"; placeholder-text: "Model ID"; text <=> root.ai-openai-model; accepted => { root.save-ai(); } }
+                if root.ai-provider == 2: LineEdit { accessible-label: "Gemini model ID"; placeholder-text: "Model ID"; text <=> root.ai-gemini-model; accepted => { root.save-ai(); } }
+                AddOption { label: "Settings"; option-width: 84px; clicked => { root.settings-tab = 6; root.settings = true; } }
+            }
+            Rectangle { height: Theme.border-width; background: Theme.border; }
+            Rectangle {
+                vertical-stretch: 1;
+                background: Theme.field; border-radius: Theme.radius-control;
+                if root.ai-answer == "": Text {
+                    x: Theme.space-4; width: parent.width - 2 * Theme.space-4; height: parent.height;
+                    text: root.ai-loading ? "Preparing answer…" : root.ai-status != "" ? root.ai-status : "Enter a prompt above and press Enter.";
+                    color: Theme.secondary; font-size: Theme.type-body; wrap: word-wrap;
+                    vertical-alignment: center; horizontal-alignment: center;
+                }
+                ai-answer-scroll := ScrollView {
+                    visible: root.ai-answer != "";
+                    x: Theme.space-4; y: Theme.space-4;
+                    width: parent.width - 2 * Theme.space-4; height: parent.height - 2 * Theme.space-4;
+                    horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: as-needed;
+                    content-width: self.visible-width;
+                    content-height: max(self.visible-height, ai-answer-field.preferred-height);
+                    ai-answer-field := TextInput {
+                        width: ai-answer-scroll.visible-width; height: ai-answer-scroll.content-height;
+                        text: root.ai-answer; read-only: true; wrap: word-wrap;
+                        color: Theme.text; font-size: Theme.search-font-size;
+                        selection-background-color: Theme.selection; selection-foreground-color: Theme.text;
+                        accessible-label: "Answer";
+                    }
+                }
+            }
+            HorizontalLayout { spacing: Theme.space-2; vertical-stretch: 0;
+                AddOption { label: root.ai-loading ? "Cancel" : "Ask"; primary: !root.ai-loading; enabled: root.ai-loading || root.search-text != ""; option-width: 84px; clicked => { if root.ai-loading { root.ai-cancel(); root.ai-status = "Cancelled"; } else { root.save-ai(); root.ai-submit(); } } }
+                Rectangle { horizontal-stretch: 1; }
+                AddOption { label: "Copy"; option-width: 84px; enabled: root.ai-answer != ""; clicked => { ai-answer-field.select-all(); ai-answer-field.copy(); } }
+            }
+        }
+    }
     english-panel := Rectangle {
-        visible: root.english-active && (root.english-loading || root.english-status != "" || root.english-suggestions.length > 0 || root.english-grammar-checked);
+        visible: !root.ai-active && root.english-active && (root.english-loading || root.english-status != "" || root.english-suggestions.length > 0 || root.english-grammar-checked);
         x: search-bar.x; y: search-bar.y + search-bar.height + 12px;
         width: search-bar.width; height: max(48px,min(400px, root.height - self.y - 160px, english-list.preferred-height + 24px));
         background: Theme.sheet; border-width: Theme.border-width; border-color: Theme.border; border-radius: Theme.radius-sheet; clip: true;
@@ -2134,11 +2261,12 @@ export component Launcher inherits Window {
             }
             if root.settings-tab >= 2: GridLayout {
                 spacing: 12px;
-                SettingsTabGroup { row: 0; col: 0; width: min(530px,root.width - 392px);
+                SettingsTabGroup { row: 0; col: 0; width: min(3 * Theme.control-option-width + 230px + 16px, root.width - 392px);
                     SettingsTab { label: "General"; selected: root.settings-tab == 4; clicked => { root.settings-tab = 4; } }
                     SettingsTab { label: "Prefixes"; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; } }
                     SettingsTab { label: "Actions"; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; } }
                     SettingsTab { label: "English assistance"; option-width: 170px; selected: root.settings-tab == 5; clicked => { root.settings-tab = 5; root.english-refresh-models(); } }
+                    SettingsTab { label: "AI"; option-width: 60px; selected: root.settings-tab == 6; clicked => { root.settings-tab = 6; } }
                 }
                 Rectangle { row: 0; col: 1; horizontal-stretch: 1; }
                 if root.settings-tab == 3 && !root.action-editor-open: SettingsButton { row: root.width - 392px < 500px ? 1 : 0; col: root.width - 392px < 500px ? 0 : 2; label: "New action"; option-width: 132px; primary: true; enabled: !root.busy; clicked => { root.action-id-draft = ""; root.action-name-draft = ""; root.action-kind-draft = "Shell"; root.action-source-draft = ""; root.action-description-draft = ""; root.action-tokens-draft = ""; root.action-used = false; root.action-editor-open = true; } }
@@ -2237,6 +2365,40 @@ export component Launcher inherits Window {
                     }
                 }
             }
+            if root.settings-tab == 6: SettingsCard {
+                height: ai-settings.preferred-height;
+                ai-settings := VerticalLayout {
+                    padding: 20px; spacing: 16px; alignment: start;
+                    SettingsTitle { text: "AI"; }
+                    SettingsDescription { text: "Type ai, then Space or Tab, enter a prompt and press Enter. Each question starts fresh. Cloud requests use separately billed API keys."; }
+                    SettingsSelect { label: "AI provider"; model: root.ai-providers; current-index <=> root.ai-provider; selected => { root.save-ai(); } }
+                    if root.ai-provider == 0: VerticalLayout {
+                        spacing: 16px;
+                        SettingsField { label: "Local Ollama address"; text <=> root.ai-address; }
+                        SettingsDescription { text: "Local model: " + root.ai-local-model; }
+                        SettingsSelect { label: "Local model"; model: root.ai-local-models; current-index <=> root.ai-local-index; selected => { root.ai-local-model = root.ai-local-models[root.ai-local-index]; root.save-ai(); } }
+                        HorizontalLayout { spacing: 10px;
+                            SettingsButton { label: "Refresh models"; option-width: 160px; enabled: !root.ai-models-loading; clicked => { root.ai-refresh-models(); } }
+                            SettingsButton { label: "Save address"; option-width: 140px; clicked => { root.save-ai(); } }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                    }
+                    if root.ai-provider == 1: SettingsField { label: "OpenAI model ID"; placeholder: "Enter an OpenAI model ID"; text <=> root.ai-openai-model; }
+                    if root.ai-provider == 2: SettingsField { label: "Gemini model ID"; placeholder: "Enter a Gemini model ID"; text <=> root.ai-gemini-model; }
+                    if root.ai-provider > 0: VerticalLayout {
+                        spacing: 16px;
+                        SettingsButton { label: "Save model"; option-width: 140px; clicked => { root.save-ai(); } }
+                        SettingsField { label: "API key"; placeholder: "Enter or replace API key"; secret: true; text <=> root.ai-key-draft; enabled: !root.ai-key-busy; }
+                        HorizontalLayout { spacing: 10px;
+                            SettingsButton { label: "Save API key"; option-width: 140px; enabled: !root.ai-key-busy && root.ai-key-draft != ""; clicked => { root.ai-store-key(false); } }
+                            SettingsButton { label: "Remove API key"; option-width: 160px; enabled: !root.ai-key-busy; clicked => { root.ai-store-key(true); } }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                        SettingsDescription { text: "API keys are stored in your system credential store."; }
+                    }
+                    SettingsDescription { text: root.ai-settings-status; }
+                }
+            }
             if root.settings-tab == 5: SettingsCard {
                 height: english-settings.preferred-height;
                 english-settings := VerticalLayout {
@@ -2302,6 +2464,21 @@ export component Launcher inherits Window {
                                 SettingsSelect { label: "Fallback search engine"; model: root.search-engine-names; current-index <=> root.default-search-engine-index; enabled: !root.busy; }
                                 SettingsButton { label: "Save"; option-width: 82px; primary: true; enabled: !root.busy && root.default-search-engine-index != root.saved-default-search-engine-index; clicked => { root.busy = true; root.save-default-search-engine(root.default-search-engine-index); } }
                             }
+                        }
+                    }
+                }
+                SettingsCard {
+                    VerticalLayout { padding: 20px; spacing: 12px; alignment: start;
+                        SettingsTitle { text: "App search paths"; }
+                        SettingsDescription { text: "Add a directory for its executable files, or an individual executable. Executable symlinks are included. Save paths, then Refresh installed apps."; }
+                        for path in root.app-search-paths: HorizontalLayout { spacing: 10px;
+                            SettingsDescription { text: path; horizontal-stretch: 1; }
+                            SettingsButton { label: "Delete"; destructive: true; enabled: !root.busy; clicked => { root.busy = true; root.save-app-search-path(path, true); } }
+                        }
+                        SettingsField { label: "Path"; placeholder: "/home/user/downloads or /home/user/app/program"; text <=> root.app-search-path-draft; }
+                        HorizontalLayout { spacing: 10px;
+                            SettingsButton { label: "Add path"; enabled: !root.busy && root.app-search-path-draft != ""; clicked => { root.busy = true; root.save-app-search-path(root.app-search-path-draft, false); } }
+                            SettingsButton { label: "Refresh installed apps"; option-width: 214px; enabled: !root.busy; clicked => { root.busy = true; root.refresh-installed-apps(); } }
                         }
                     }
                 }
@@ -2532,6 +2709,7 @@ export component Launcher inherits Window {
                                             SettingsButton { label: "Shell"; selected: root.action-kind-draft == "Shell"; clicked => { if root.action-kind-draft != "Shell" { root.action-kind-draft = "Shell"; root.action-source-draft = ""; } } }
                                             SettingsButton { label: "URL"; selected: root.action-kind-draft == "URL"; clicked => { if root.action-kind-draft != "URL" { root.action-kind-draft = "URL"; root.action-source-draft = ""; } } }
                                             SettingsButton { label: "TickTick"; selected: root.action-kind-draft == "TickTick"; clicked => { if root.action-kind-draft != "TickTick" { root.action-kind-draft = "TickTick"; root.action-source-draft = ""; } } }
+                                            SettingsButton { label: "AI"; selected: root.action-kind-draft == "AI"; clicked => { root.action-kind-draft = "AI"; root.action-source-draft = ""; } }
                                         }
                                         if root.action-kind-draft == "URL": SettingsField { label: "URL template · use %s for Search anything"; placeholder: "https://example.com/?q=%s"; text <=> root.action-source-draft; }
                                         if root.action-kind-draft == "Shell": SettingsField { label: "Shell script · argument: $1 on Arch Linux, $OrbitQuery on Windows"; placeholder: "Write a script that reads the search argument"; text <=> root.action-source-draft; multiline: true; }
@@ -2542,7 +2720,7 @@ export component Launcher inherits Window {
                                     SettingsButton { label: "Cancel"; option-width: root.width < 900px ? 80px : 100px; enabled: !root.busy; clicked => { root.action-editor-open = false; } }
                                     Rectangle { horizontal-stretch: 1; }
                                     if root.action-id-draft != "": SettingsButton { label: "Delete"; option-width: root.width < 900px ? 80px : 100px; destructive: true; enabled: !root.busy && !root.action-used; clicked => { root.busy = true; root.delete-user-action(root.action-id-draft); } }
-                                    SettingsButton { label: "Save Action"; option-width: root.width < 900px ? 116px : 132px; primary: true; enabled: !root.busy && root.action-name-draft != "" && (root.action-kind-draft == "TickTick" || root.action-source-draft != ""); clicked => { root.busy = true; root.save-user-action(root.action-id-draft, root.action-name-draft, root.action-kind-draft, root.action-source-draft, root.action-description-draft, root.action-tokens-draft); } }
+                                    SettingsButton { label: "Save Action"; option-width: root.width < 900px ? 116px : 132px; primary: true; enabled: !root.busy && root.action-name-draft != "" && (root.action-kind-draft == "AI" || root.action-kind-draft == "TickTick" || root.action-source-draft != ""); clicked => { root.busy = true; root.save-user-action(root.action-id-draft, root.action-name-draft, root.action-kind-draft, root.action-source-draft, root.action-description-draft, root.action-tokens-draft); } }
                                 }
                             }
                         }

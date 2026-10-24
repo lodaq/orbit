@@ -55,6 +55,55 @@ pub fn scan_installed_apps() -> io::Result<Vec<InstalledApp>> {
     Ok(apps)
 }
 
+pub fn validate_app_search_path(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.is_absolute()
+        && (path.is_dir()
+            || path
+                .metadata()
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
+}
+
+pub fn scan_app_search_paths(paths: &[String]) -> io::Result<Vec<InstalledApp>> {
+    let mut apps = std::collections::BTreeMap::new();
+    for root in paths {
+        let root = Path::new(root);
+        let candidates = if root.is_dir() {
+            fs::read_dir(root)?
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .collect::<Vec<_>>()
+        } else {
+            vec![root.to_path_buf()]
+        };
+        for path in candidates {
+            if !path.is_file() || !validate_app_search_path(&path) {
+                continue;
+            }
+            let id = path.to_string_lossy().into_owned();
+            let name = if path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("appimage"))
+            {
+                path.file_stem()
+            } else {
+                path.file_name()
+            }
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+            let command = shlex::try_join([id.as_str()]).map_err(io::Error::other)?;
+            apps.entry(id.clone()).or_insert(InstalledApp {
+                id,
+                name,
+                command,
+                icon: Default::default(),
+            });
+        }
+    }
+    Ok(apps.into_values().collect())
+}
+
 fn scan_application_directory(
     directory: &Path,
     apps: &mut std::collections::BTreeMap<String, InstalledApp>,
@@ -116,6 +165,22 @@ fn parse_desktop_entry(
     }
     let name = name.filter(|name| !name.is_empty())?;
     let words = shlex::split(exec?).filter(|words| !words.is_empty())?;
+    let executable = Path::new(&words[0]);
+    let available = if executable.is_absolute() {
+        executable.is_file() && validate_app_search_path(executable)
+    } else if executable.components().count() == 1 {
+        std::env::var_os("PATH").is_some_and(|paths| {
+            std::env::split_paths(&paths).any(|directory| {
+                let path = directory.join(executable);
+                path.is_file() && validate_app_search_path(&path)
+            })
+        })
+    } else {
+        false
+    };
+    if !available {
+        return None;
+    }
     let words: Vec<_> = words
         .into_iter()
         .filter(|word| !word.contains('%'))
@@ -225,7 +290,7 @@ pub fn listen() -> io::Result<Option<(File, UnixListener)>> {
     Ok(Some((lock, UnixListener::bind(path.join("daemon.sock"))?)))
 }
 
-pub fn toggle() -> Result<(), Box<dyn std::error::Error>> {
+pub fn toggle(ticktick: bool) -> Result<(), Box<dyn std::error::Error>> {
     let path = directory()?.join("daemon.sock");
     let mut stream = match UnixStream::connect(&path) {
         Ok(stream) => stream,
@@ -240,7 +305,7 @@ pub fn toggle() -> Result<(), Box<dyn std::error::Error>> {
         Err(error) => return Err(error.into()),
     };
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-    stream.write_all(b"t")?;
+    stream.write_all(if ticktick { b"k" } else { b"t" })?;
     let mut reply = [0];
     stream.read_exact(&mut reply)?;
     if reply != *b"1" {
@@ -269,17 +334,17 @@ fn start(path: &Path) -> io::Result<UnixStream> {
     }
 }
 
-pub fn receive(listener: UnixListener, toggle: impl Fn(String) -> bool) {
+pub fn receive(listener: UnixListener, toggle: impl Fn(String, bool) -> bool) {
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { break };
         let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
         let mut command = [0];
-        if stream.read_exact(&mut command).is_err() || command != *b"t" {
+        if stream.read_exact(&mut command).is_err() || !matches!(command[0], b't' | b'k') {
             continue;
         }
         match cursor_monitor() {
             Ok(monitor) => {
-                if !toggle(monitor) {
+                if !toggle(monitor, command == *b"k") {
                     break;
                 }
                 let _ = stream.write_all(b"1");
@@ -406,8 +471,9 @@ pub fn init() -> Result<(), Box<dyn std::error::Error>> {
 pub fn show_or_hide(
     launcher: &crate::Launcher,
     monitor: &str,
+    ticktick: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if launcher.get_launcher_visible() {
+    if launcher.get_launcher_visible() && !ticktick {
         return hide(launcher);
     }
     launcher.invoke_reset_launcher();
@@ -746,5 +812,106 @@ mod shell_action_tests {
         assert!(output.status.success());
         assert_eq!(String::from_utf8(output.stdout).unwrap(), argument);
         assert!(!marker.exists(), "query text was interpreted as shell code");
+    }
+}
+
+#[cfg(test)]
+mod app_search_path_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn desktop_entries_skip_deleted_executables() {
+        let root = std::env::temp_dir().join(format!("orbit-desktop-exec-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let executable = root.join("Writing app.AppImage");
+        let entry = root.join("writing.desktop");
+        fs::write(&executable, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(
+            &entry,
+            format!(
+                "[Desktop Entry]\nName=Writing\nExec=\"{}\" %F\n",
+                executable.display()
+            ),
+        )
+        .unwrap();
+        let icons = Default::default();
+        assert!(parse_desktop_entry(&entry, &icons).is_some());
+        fs::remove_file(&executable).unwrap();
+        assert!(parse_desktop_entry(&entry, &icons).is_none());
+        fs::write(&entry, "[Desktop Entry]\nName=Shell\nExec=sh -c true\n").unwrap();
+        assert!(parse_desktop_entry(&entry, &icons).is_some());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn app_search_paths_include_executables_and_preserve_symlink_names() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("orbit-app-links-{}", std::process::id()));
+        let bin = root.join("bin");
+        fs::create_dir_all(bin.join("nested")).unwrap();
+        let target = root.join("original");
+        fs::write(&target, "#!/bin/sh\nprintf '%s' \"$0\"\n").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+        for name in ["Antigravity", "renamed.tool"] {
+            symlink(&target, bin.join(name)).unwrap();
+        }
+        symlink(root.join("missing"), bin.join("broken")).unwrap();
+        fs::write(bin.join("disabled"), "").unwrap();
+        fs::copy(&target, bin.join("direct.sh")).unwrap();
+        fs::copy(&target, bin.join("nested/hidden")).unwrap();
+        let apps = scan_app_search_paths(&[bin.display().to_string()]).unwrap();
+        assert_eq!(apps.len(), 3);
+        for name in ["Antigravity", "renamed.tool", "direct.sh"] {
+            let app = apps.iter().find(|app| app.name == name).unwrap();
+            assert_eq!(app.id, bin.join(name).to_string_lossy());
+            let words = shlex::split(&app.command).unwrap();
+            let output = Command::new(&words[0]).output().unwrap();
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8(output.stdout).unwrap(), app.id);
+        }
+        fs::remove_file(&target).unwrap();
+        let apps = scan_app_search_paths(&[bin.display().to_string()]).unwrap();
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].name, "direct.sh");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn app_search_paths_include_appimages_and_explicit_executables_once() {
+        let root = std::env::temp_dir().join(format!("orbit-app-paths-{}", std::process::id()));
+        fs::create_dir_all(root.join("nested")).unwrap();
+        for name in [
+            "Editor's app.AppImage",
+            "chrome-sandbox",
+            "disabled.AppImage",
+            "nested/hidden.AppImage",
+        ] {
+            let path = root.join(name);
+            fs::write(&path, "").unwrap();
+            fs::set_permissions(
+                &path,
+                fs::Permissions::from_mode(if name == "disabled.AppImage" {
+                    0o644
+                } else {
+                    0o755
+                }),
+            )
+            .unwrap();
+        }
+        let explicit = root.join("chrome-sandbox");
+        let apps = scan_app_search_paths(&[
+            root.display().to_string(),
+            explicit.display().to_string(),
+            explicit.display().to_string(),
+        ])
+        .unwrap();
+        assert_eq!(apps.len(), 2);
+        for app in apps {
+            assert_eq!(shlex::split(&app.command).unwrap(), vec![app.id]);
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 }

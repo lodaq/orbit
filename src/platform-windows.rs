@@ -6,6 +6,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::windows::process::CommandExt;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -25,9 +26,9 @@ pub fn listen() -> io::Result<Option<(File, TcpListener)>> {
         .open(path)?;
     Ok(Some((file, listener)))
 }
-pub fn toggle() -> Result<(), Box<dyn std::error::Error>> {
+pub fn toggle(ticktick: bool) -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(mut stream) = TcpStream::connect(ADDRESS) {
-        stream.write_all(b"toggle\n")?;
+        stream.write_all(if ticktick { b"ticktk\n" } else { b"toggle\n" })?;
         return Ok(());
     }
     Command::new(std::env::current_exe()?)
@@ -36,18 +37,21 @@ pub fn toggle() -> Result<(), Box<dyn std::error::Error>> {
         .spawn()?;
     for _ in 0..200 {
         if let Ok(mut stream) = TcpStream::connect(ADDRESS) {
-            stream.write_all(b"toggle\n")?;
+            stream.write_all(if ticktick { b"ticktk\n" } else { b"toggle\n" })?;
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(20));
     }
     Err("Orbit daemon did not start".into())
 }
-pub fn receive(listener: TcpListener, toggle: impl Fn(String) -> bool) {
+pub fn receive(listener: TcpListener, toggle: impl Fn(String, bool) -> bool) {
     for mut stream in listener.incoming().flatten() {
         let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
         let mut data = [0; 7];
-        if stream.read_exact(&mut data).is_ok() && &data == b"toggle\n" && !toggle(String::new()) {
+        if stream.read_exact(&mut data).is_ok()
+            && matches!(&data, b"toggle\n" | b"ticktk\n")
+            && !toggle(String::new(), &data == b"ticktk\n")
+        {
             break;
         }
     }
@@ -59,8 +63,12 @@ pub fn init() -> Result<(), Box<dyn std::error::Error>> {
         .select()?;
     Ok(())
 }
-pub fn show_or_hide(launcher: &crate::Launcher, _: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if launcher.get_launcher_visible() {
+pub fn show_or_hide(
+    launcher: &crate::Launcher,
+    _: &str,
+    ticktick: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if launcher.get_launcher_visible() && !ticktick {
         return hide(launcher);
     }
     launcher.invoke_reset_launcher();
@@ -84,7 +92,7 @@ pub fn hide(launcher: &crate::Launcher) -> Result<(), Box<dyn std::error::Error>
 }
 pub fn restore_after_chooser(launcher: &crate::Launcher) -> Result<(), Box<dyn std::error::Error>> {
     if !launcher.get_launcher_visible() {
-        show_or_hide(launcher, "")?;
+        show_or_hide(launcher, "", false)?;
     }
     Ok(())
 }
@@ -365,4 +373,48 @@ pub fn play_completion_sound() {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
+}
+
+pub fn validate_app_search_path(path: &Path) -> bool {
+    path.is_absolute()
+        && (path.is_dir()
+            || (path.is_file()
+                && path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))))
+}
+
+pub fn scan_app_search_paths(paths: &[String]) -> io::Result<Vec<InstalledApp>> {
+    let mut apps = std::collections::BTreeMap::new();
+    for root in paths {
+        let root = Path::new(root);
+        let candidates = if root.is_dir() {
+            std::fs::read_dir(root)?
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .collect::<Vec<_>>()
+        } else {
+            vec![root.to_path_buf()]
+        };
+        for path in candidates {
+            if !path.is_file() || !validate_app_search_path(&path) {
+                continue;
+            }
+            let path = path.canonicalize()?;
+            let id = path.to_string_lossy().into_owned();
+            let name = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            let command = shlex::try_join([id.as_str()]).map_err(io::Error::other)?;
+            apps.entry(id.clone()).or_insert(InstalledApp {
+                id,
+                name,
+                command,
+                icon: Icon::Letter,
+            });
+        }
+    }
+    Ok(apps.into_values().collect())
 }

@@ -24,9 +24,9 @@ rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal"]
 
 # Count visible characters, including joined emoji, in Letter icons.
 unicode-segmentation = "1.13"
-# Make TickTick HTTPS and JSON requests on Orbit's worker thread.
+# Make TickTick and AI HTTP/JSON requests on background workers.
 ureq = { version = "=3.4.1", default-features = false, features = ["json", "rustls"] }
-# Keep the TickTick personal API token in Windows Credential Manager or Linux Secret Service.
+# Keep TickTick and AI credentials in Windows Credential Manager or Linux Secret Service.
 keyring = { version = "=3.6.3", default-features = false, features = ["windows-native", "sync-secret-service", "crypto-rust"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

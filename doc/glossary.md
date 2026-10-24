@@ -187,3 +187,13 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Accept next word** | The configurable action that inserts the visible predicted word. |
 
 - **Model prompts** — editable system instructions sent to the selected local model for each English assistance feature.
+
+| **App search path** | An absolute directory scanned for immediate executable files (including valid executable symlinks on Linux), or an individual executable included by Refresh installed apps. |
+
+| **AI** | The Action and Search bar settings for asking one question inside Orbit using a local Ollama model, OpenAI or Gemini. |
+| **AI provider** | Ollama, OpenAI or Gemini, selected for the AI Prefix. |
+| **Model ID** | The provider-specific model name used for an AI request. |
+| **API key** | A cloud provider credential entered in a masked field and stored in the system credential store. |
+| **Ask** | Send the current AI prompt as a fresh question. |
+| **Answer** | Selectable, temporary plain-text output of the AI request. |
+| **Copy** | Copy the AI answer to the clipboard. |

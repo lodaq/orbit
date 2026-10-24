@@ -1,3 +1,4 @@
+import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 // A native keycap for shortcut hints and editable shortcut displays.
 export component Kbd inherits Rectangle {
@@ -144,26 +145,48 @@ export component AddField inherits VerticalLayout {
         border-color: root.error != "" ? (root.settings-style ? Theme.settings-danger-text : Theme.error) : input-field.has-focus ? (root.add-style ? Theme.add-focus : root.settings-style ? Theme.settings-icon-accent : Theme.focus) : (root.add-style ? Theme.add-border : root.settings-style ? Theme.settings-border-control : Theme.border);
         Text { x: Theme.space-3; y: Theme.space-2; width: parent.width - 2 * Theme.space-3; visible: root.text == ""; text: root.placeholder; color: (root.add-style ? Theme.add-secondary : root.settings-style ? Theme.settings-text-muted : Theme.secondary); font-size: Theme.type-body;
             font-family: root.add-style && root.multiline ? "monospace" : "Inter"; }
-        input-field := TextInput {
-            x: Theme.space-3; y: Theme.space-2; width: parent.width - 2 * Theme.space-3; height: parent.height - 2 * Theme.space-2;
-            text <=> root.text;
-            enabled: root.enabled;
-            single-line: !root.multiline;
-            input-type: root.secret ? InputType.password : InputType.text;
-            color: (root.add-style ? Theme.add-text : root.settings-style ? Theme.settings-text : Theme.text);
-            font-size: Theme.type-body;
-            font-family: root.add-style && root.multiline ? "monospace" : "Inter";
-            selection-background-color: (root.settings-style ? Theme.settings-bg-nav-active : Theme.selection);
-            selection-foreground-color: (root.add-style ? Theme.add-text : root.settings-style ? Theme.settings-text : Theme.text);
-            edited => { root.edited(); }
-            key-pressed(event) => {
-                if root.multiline && event.text == "\n" {
-                    root.accepted();
-                    return accept;
+        field-scroll := ScrollView {
+            x: Theme.space-3; y: Theme.space-2;
+            width: parent.width - 2 * Theme.space-3;
+            height: parent.height - 2 * Theme.space-2;
+            horizontal-scrollbar-policy: always-off;
+            vertical-scrollbar-policy: root.multiline ? ScrollBarPolicy.as-needed : ScrollBarPolicy.always-off;
+            content-width: self.visible-width;
+            content-height: root.multiline ? max(self.visible-height, input-field.preferred-height) : self.visible-height;
+            input-field := TextInput {
+                width: field-scroll.visible-width;
+                height: field-scroll.content-height;
+                wrap: root.multiline ? TextWrap.word-wrap : TextWrap.no-wrap;
+                page-height: field-scroll.visible-height;
+                cursor-position-changed(point) => {
+                    if root.multiline {
+                        let line-height = Theme.type-body * 1.5;
+                        if point.y + field-scroll.content-y < 0px {
+                            field-scroll.content-y = min(0px, -point.y);
+                        } else if point.y + line-height + field-scroll.content-y > field-scroll.visible-height {
+                            field-scroll.content-y = min(0px, max(field-scroll.visible-height - self.height, field-scroll.visible-height - point.y - line-height));
+                        }
+                    }
                 }
-                reject;
+                text <=> root.text;
+                enabled: root.enabled;
+                single-line: !root.multiline;
+                input-type: root.secret ? InputType.password : InputType.text;
+                color: (root.add-style ? Theme.add-text : root.settings-style ? Theme.settings-text : Theme.text);
+                font-size: Theme.type-body;
+                font-family: root.add-style && root.multiline ? "monospace" : "Inter";
+                selection-background-color: (root.settings-style ? Theme.settings-bg-nav-active : Theme.selection);
+                selection-foreground-color: (root.add-style ? Theme.add-text : root.settings-style ? Theme.settings-text : Theme.text);
+                edited => { root.edited(); }
+                key-pressed(event) => {
+                    if root.multiline && event.text == "\n" {
+                        root.accepted();
+                        return accept;
+                    }
+                    reject;
+                }
+                accepted => { root.accepted(); }
             }
-            accepted => { root.accepted(); }
         }
     }
     if error != "": Text {
@@ -375,6 +398,7 @@ export component SettingsStepper inherits Rectangle {
 }
 
 export component SettingsSelect inherits Rectangle {
+    callback selected();
     in property <[string]> model;
     in-out property <int> current-index;
     in property <bool> enabled: true;
@@ -390,12 +414,12 @@ export component SettingsSelect inherits Rectangle {
     forward-focus: focus;
     Text { x: 14px; width: parent.width - 48px; height: parent.height; text: root.model[root.current-index]; color: root.enabled ? Theme.settings-text : Theme.settings-disabled-text; font-size: Theme.type-body; vertical-alignment: center; overflow: elide; }
     Text { x: parent.width - 30px; width: 16px; height: parent.height; text: "⌄"; color: Theme.settings-text-muted; vertical-alignment: center; }
-    hit := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { choices.show(); } }
+    hit := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { focus.focus(); choices.show(); } }
     focus := FocusScope {
         enabled: root.enabled;
         key-pressed(event) => {
-            if event.text == Key.UpArrow { root.current-index = max(0, root.current-index - 1); return accept; }
-            if event.text == Key.DownArrow { root.current-index = min(root.model.length - 1, root.current-index + 1); return accept; }
+            if event.text == Key.UpArrow { root.current-index = max(0, root.current-index - 1); root.selected(); return accept; }
+            if event.text == Key.DownArrow { root.current-index = min(root.model.length - 1, root.current-index + 1); root.selected(); return accept; }
             if event.text == "\n" || event.text == " " { choices.show(); return accept; }
             reject;
         }
@@ -404,13 +428,15 @@ export component SettingsSelect inherits Rectangle {
         y: root.height + 4px; width: root.width; height: min(320px, root.model.length * 42px + 8px);
         forward-focus: popup-focus;
         popup-focus := FocusScope {
+            width: parent.width; height: parent.height;
             key-pressed(event) => {
-                if event.text == Key.UpArrow { root.current-index = max(0, root.current-index - 1); return accept; }
-                if event.text == Key.DownArrow { root.current-index = min(root.model.length - 1, root.current-index + 1); return accept; }
+                if event.text == Key.UpArrow { root.current-index = max(0, root.current-index - 1); root.selected(); return accept; }
+                if event.text == Key.DownArrow { root.current-index = min(root.model.length - 1, root.current-index + 1); root.selected(); return accept; }
                 if event.text == "\n" || event.text == Key.Escape { choices.close(); focus.focus(); return accept; }
                 reject;
             }
         Rectangle {
+            width: parent.width; height: parent.height;
             background: Theme.settings-bg-panel; border-color: Theme.settings-border-control; border-width: 1px; border-radius: Theme.settings-r-control;
             Flickable {
                 x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px;
@@ -420,7 +446,7 @@ export component SettingsSelect inherits Rectangle {
                     width: root.width - 8px; spacing: 2px;
                     for choice[index] in root.model: SettingsButton {
                         label: choice; selected: root.current-index == index; option-width: root.width - 8px;
-                        clicked => { root.current-index = index; choices.close(); focus.focus(); }
+                        clicked => { root.current-index = index; root.selected(); choices.close(); focus.focus(); }
                     }
                 }
             }

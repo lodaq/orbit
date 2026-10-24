@@ -52,6 +52,7 @@ enum Action {
     SaveDefaultSearchEngine(i32),
     SaveSmoothCursor(bool),
     SaveEnglish(bool, bool, bool, String),
+    SaveAi(crate::ai::Settings),
     SaveEnglishModel(String, String, String, String),
     SaveLayoutLocked(bool),
     DeletePage,
@@ -86,6 +87,7 @@ enum Action {
     AddPredefined(String, u64),
     AddInstalledApp(String, u64),
     RefreshInstalledApps(u64),
+    SaveAppSearchPath(String, bool),
     SaveSearchPath(bool, i32, String),
     DeleteSearchPath(bool, usize),
     AddFileSearchExclusion(String),
@@ -389,6 +391,13 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             crate::search_cursor::sync(ui.window(), hidden);
         }
     });
+    let ai_sender = send.clone();
+    let ai_ui = launcher.as_weak();
+    launcher.on_save_ai(move || {
+        if let Some(ui) = ai_ui.upgrade() {
+            let _ = ai_sender.send(Action::SaveAi(crate::ai::Settings::from_ui(&ui)));
+        }
+    });
     let english_sender = send.clone();
     launcher.on_save_english(move |suggestions, autocomplete, grammar, address| {
         let _ = english_sender.send(Action::SaveEnglish(
@@ -434,6 +443,16 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     let prefix_ui = launcher.as_weak();
     launcher.on_run_prefix(move |action, argument| {
         use slint::Model;
+        if let Some(ui) = prefix_ui.upgrade()
+            && ui
+                .get_user_actions()
+                .iter()
+                .any(|item| item.id == action && item.kind == "AI")
+        {
+            ui.set_busy(false);
+            ui.invoke_ai_submit();
+            return;
+        }
         if let Some(ui) = prefix_ui.upgrade()
             && ui
                 .get_user_actions()
@@ -530,6 +549,10 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     launcher.on_refresh_installed_apps(move || {
         let request = requests_for_refresh.issue();
         let _ = sender.send(Action::RefreshInstalledApps(request));
+    });
+    let sender = send.clone();
+    launcher.on_save_app_search_path(move |path, remove| {
+        let _ = sender.send(Action::SaveAppSearchPath(path.into(), remove));
     });
     let sender = send.clone();
     launcher.on_save_search_path(move |directory, index, path| {
@@ -895,6 +918,7 @@ impl Apps {
                 let kind = match kind.as_str() {
                     "URL" => ActionKind::Url,
                     "TickTick" => ActionKind::TickTick,
+                    "AI" => ActionKind::Ai,
                     _ => ActionKind::Shell,
                 };
                 if name.trim().is_empty()
@@ -1020,6 +1044,18 @@ impl Apps {
                 self.config = config;
                 Ok(())
             }
+            Action::SaveAi(settings) => {
+                settings.valid()?;
+                if self.config.ai != settings {
+                    let mut config = self.config.clone();
+                    config.ai = settings;
+                    config
+                        .save()
+                        .map_err(|error| format!("Couldn't save AI settings: {error}"))?;
+                    self.config = config;
+                }
+                Ok(())
+            }
             Action::RunPrefix(action_id, argument) => {
                 let action = self
                     .config
@@ -1037,6 +1073,7 @@ impl Apps {
                         platform::launch_shell_action(&action.source, argument.trim())
                             .map_err(|error| format!("Couldn't start {}: {error}", action.name))
                     }
+                    ActionKind::Ai => Err("Use the AI Prefix from Search anything.".into()),
                     ActionKind::TickTick => create_ticktick_task(argument.trim())
                         .map(|_| ())
                         .map_err(|error| format!("Couldn't create TickTick task: {error}")),
@@ -1539,6 +1576,24 @@ impl Apps {
                 self.add_system_action(&action, requests, request)
             }
             Action::AddInstalledApp(id, request) => self.add_installed_app(&id, requests, request),
+            Action::SaveAppSearchPath(path, remove) => {
+                let path = PathBuf::from(path.trim());
+                if !remove && !platform::validate_app_search_path(&path) {
+                    return Err("Enter an existing absolute directory or executable path".into());
+                }
+                let path = path.to_string_lossy().into_owned();
+                let mut config = self.config.clone();
+                if remove {
+                    config.app_search_paths.retain(|saved| saved != &path);
+                } else if !config.app_search_paths.contains(&path) {
+                    config.app_search_paths.push(path);
+                }
+                if config.app_search_paths != self.config.app_search_paths {
+                    config.save().map_err(|error| error.to_string())?;
+                    self.config = config;
+                }
+                Ok(())
+            }
             Action::RefreshInstalledApps(request) => self.refresh_installed_apps(requests, request),
             Action::SaveSearchPath(directory, index, path) => {
                 self.save_search_path(directory, index, path)
@@ -1748,8 +1803,16 @@ impl Apps {
         request: u64,
     ) -> Result<(), String> {
         self.inventory.refreshing();
-        let installed_apps = platform::scan_installed_apps()
+        let mut installed_apps = platform::scan_installed_apps()
             .map_err(|error| format!("Couldn't refresh installed apps: {error}"))?;
+        let extra = platform::scan_app_search_paths(&self.config.app_search_paths)
+            .map_err(|error| format!("Couldn't scan app search paths: {error}"))?;
+        for app in extra {
+            if !installed_apps.iter().any(|saved| saved.id == app.id) {
+                installed_apps.push(app);
+            }
+        }
+        installed_apps.sort_by_key(|app| app.name.to_lowercase());
         if !requests.is_current(request) {
             return Ok(());
         }
@@ -2351,6 +2414,7 @@ impl Apps {
         let gap = self.config.grid_gap;
         let smooth_cursor = self.config.smooth_cursor;
         let english = self.config.english_assistance.clone();
+        let ai = self.config.ai.clone();
         let layout_locked = self.config.layout_locked;
         let search_engine_index = self.config.default_search_engine_index() as i32;
         let saved_columns = self.config.columns as i32;
@@ -2360,6 +2424,12 @@ impl Apps {
         let next = page_items(self.page + 1);
         let page = self.page as i32;
         let count = self.config.pages.len() as i32;
+        let app_search_paths = self
+            .config
+            .app_search_paths
+            .iter()
+            .map(|path| path.as_str().into())
+            .collect::<Vec<slint::SharedString>>();
         let file_search_paths = self
             .config
             .file_search_paths
@@ -2412,13 +2482,27 @@ impl Apps {
             .filter(|tile| !tile.folder)
             .take(RECENT_DOCK_LIMIT)
             .collect();
-        let created_items: Vec<_> = all
-            .iter()
-            .filter(|(_, _, item)| {
-                !self.query.is_empty() && item.name().to_lowercase().contains(&self.query)
-            })
-            .map(|(page, index, item)| self.tile(item, *page, *index))
-            .collect();
+        let mut created_items = Vec::new();
+        if !self.query.is_empty() {
+            for (page, index, item) in &all {
+                match item {
+                    Item::Folder { apps, .. } => {
+                        for app in apps {
+                            if app.name.to_lowercase().contains(&self.query)
+                                && let Some(tile) = self.dock_tile(&app.id)
+                            {
+                                created_items.push(tile);
+                            }
+                        }
+                    }
+                    Item::Widget { .. } => {}
+                    _ if item.name().to_lowercase().contains(&self.query) => {
+                        created_items.push(self.tile(item, *page, *index));
+                    }
+                    _ => {}
+                }
+            }
+        }
         let mut results = Vec::new();
         if !self.query.is_empty() {
             results.extend(
@@ -2447,6 +2531,7 @@ impl Apps {
                         icon: self.icons.get(&app.id).cloned(),
                         page: -2,
                         index: index as i32,
+                        command: Some(app.command.clone()),
                         app: true,
                         ..Tile::default()
                     }),
@@ -2498,6 +2583,7 @@ impl Apps {
                     ActionKind::Url => "URL",
                     ActionKind::Shell => "Shell",
                     ActionKind::TickTick => "TickTick",
+                    ActionKind::Ai => "AI",
                 }
                 .into(),
                 source: action.source.clone().into(),
@@ -2663,6 +2749,7 @@ impl Apps {
                 .into(),
             );
             launcher.set_smooth_cursor(smooth_cursor);
+            ai.update_ui(&launcher);
             launcher.set_english_model(english.model.into());
             launcher.set_english_suggestions_prompt(english.suggestions_prompt.into());
             launcher.set_english_completion_prompt(english.completion_prompt.into());
@@ -2719,6 +2806,9 @@ impl Apps {
             launcher.set_installed_status(installed_status.into());
             launcher.set_installed_apps_loaded(installed_apps_loaded);
             launcher.set_installed_apps_match(installed_apps_match);
+            launcher.set_app_search_paths(
+                std::rc::Rc::new(slint::VecModel::from(app_search_paths)).into(),
+            );
             launcher.set_file_search_paths(
                 std::rc::Rc::new(slint::VecModel::from(file_search_paths)).into(),
             );
@@ -3396,6 +3486,23 @@ impl Tile {
             custom: self.command.is_some(),
             command: self.command.unwrap_or_default().into(),
             url: self.url.into(),
+            parent_path: std::path::Path::new(&self.path)
+                .parent()
+                .map(|parent| {
+                    let mut directories: Vec<_> = parent
+                        .components()
+                        .rev()
+                        .filter_map(|part| match part {
+                            std::path::Component::Normal(name) => Some(name.to_string_lossy()),
+                            _ => None,
+                        })
+                        .take(2)
+                        .collect();
+                    directories.reverse();
+                    directories.join("/")
+                })
+                .unwrap_or_default()
+                .into(),
             path: self.path.into(),
             icon_value: self.icon_value.into(),
             icon: self.icon.map(slint::Image::from_rgba8).unwrap_or_default(),
@@ -3425,8 +3532,8 @@ mod tests {
     use super::*;
 
     fn init_ui_for_test() {
-        static INIT: std::sync::Once = std::sync::Once::new();
-        INIT.call_once(i_slint_backend_testing::init_no_event_loop);
+        thread_local! { static INIT: () = i_slint_backend_testing::init_no_event_loop(); }
+        INIT.with(|_| ());
     }
 
     #[test]
@@ -3600,6 +3707,82 @@ mod tests {
         assert!(activated.badge_width > 52);
         assert!(match_prefix(&config.prefixes, "youtube cats").is_none());
         assert!(match_prefix(&config.prefixes, "yout cats").is_none());
+    }
+
+    #[test]
+    fn ai_prefix_uses_the_answer_panel_without_launching_or_hiding() {
+        init_ui_for_test();
+        let ui = Launcher::new().unwrap();
+        ui.set_shortcuts(crate::shortcuts::model(crate::shortcuts::defaults()));
+        let (send, receive) = mpsc::channel();
+        callbacks(&ui, send, Arc::new(RequestSequence::default()));
+        ui.set_user_actions(
+            std::rc::Rc::new(slint::VecModel::from(vec![UserActionChoice {
+                id: "orbit-ai".into(),
+                name: "AI".into(),
+                kind: "AI".into(),
+                ..Default::default()
+            }]))
+            .into(),
+        );
+        ui.set_prefixes(
+            std::rc::Rc::new(slint::VecModel::from(vec![PrefixChoice {
+                id: "orbit-ai".into(),
+                name: "AI".into(),
+                token: "ai".into(),
+                action_id: "orbit-ai".into(),
+                ..Default::default()
+            }]))
+            .into(),
+        );
+        let submitted = std::rc::Rc::new(std::cell::Cell::new(0));
+        let count = submitted.clone();
+        ui.on_ai_submit(move || count.set(count.get() + 1));
+        ui.show().unwrap();
+        ui.set_launcher_visible(true);
+        ui.invoke_focus_search();
+        ui.set_search_text("ai".into());
+        ui.window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed { text: "\t".into() });
+        assert_eq!(ui.get_activated_prefix_name(), "AI");
+        assert!(ui.get_ai_active());
+        assert!(!ui.get_home_visible());
+        assert!(!ui.get_search_results_visible());
+        assert!(!ui.get_grid_navigation());
+        ui.set_page_count(2);
+        ui.invoke_page_key(1);
+        assert!(!ui.get_busy());
+        ui.set_search_text("hello".into());
+        assert!(!ui.get_home_visible());
+        assert!(!ui.get_search_results_visible());
+        ui.invoke_activate_search_selection();
+        use slint::winit_030::winit::keyboard::{Key, ModifiersState, NamedKey};
+        assert!(!crate::shortcuts::handle(
+            &ui,
+            &Key::Named(NamedKey::ArrowLeft),
+            ModifiersState::empty()
+        ));
+        assert!(crate::shortcuts::handle(
+            &ui,
+            &Key::Named(NamedKey::Enter),
+            ModifiersState::empty()
+        ));
+        assert_eq!(submitted.get(), 1);
+        assert!(!ui.get_busy());
+        assert!(ui.get_launcher_visible());
+        assert!(!receive.try_iter().any(|action| matches!(
+            action,
+            Action::RunPrefix(..)
+                | Action::SearchWeb(..)
+                | Action::OpenResult(..)
+                | Action::Page(..)
+        )));
+        ui.set_ai_answer("answer".into());
+        ui.invoke_reset_launcher();
+        assert!(ui.get_ai_answer().is_empty());
+        assert!(ui.get_home_visible());
+        ui.set_search_text("ordinary search".into());
+        assert!(ui.get_search_results_visible());
     }
 
     #[test]

@@ -92,3 +92,9 @@ Search anything: **Ctrl+W** deletes the previous word using native text editing,
 The top-bar Lock layout / Unlock layout button has no default shortcut. While locked, Add page and Delete page shortcuts are disabled; page navigation remains available.
 
 English assistance: **Accept next word** uses Ctrl+E by default while Search anything has a visible next-word prediction at the end of the query. It is configurable in Settings → Shortcuts. Existing Ctrl+E assignments are preserved; Tab also accepts a visible prediction; an exact Prefix Token takes priority.
+
+Personal Hyprland binding: **Alt+T** runs `orbit ticktick`, opening Search anything with the TickTick Prefix active. Type a task and press Enter.
+
+AI Prefix: type **ai**, then **Space** or **Tab**. Enter submits a fresh question to the selected Ollama, OpenAI or Gemini model and displays the answer inside Orbit. Ask submits with the mouse; Cancel invalidates the pending reply; Copy copies the answer. Backspace on an empty prompt or Esc clears the Prefix through the existing navigation rules.
+
+While AI is active, page-switch shortcuts and hidden-result navigation do nothing. Arrow keys edit the prompt or select answer text normally; Enter in the prompt still submits the AI question.

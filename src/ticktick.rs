@@ -519,7 +519,7 @@ fn keyring_entry() -> Result<keyring::Entry, String> {
 }
 
 #[cfg(target_os = "linux")]
-fn activate_secret_service() -> Result<(), String> {
+pub(crate) fn activate_secret_service() -> Result<(), String> {
     use dbus::blocking::Connection;
 
     let connection = Connection::new_session()

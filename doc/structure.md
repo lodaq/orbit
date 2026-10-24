@@ -1,12 +1,12 @@
 # File structure
 
-- `src/main.rs`: the `daemon` and `toggle` commands.
-- `src/config.rs`: versioned config data, page limits, file and directory search paths, file-search exclusion defaults, named Actions and Prefixes, first-run data, and damaged config recovery.
+- `src/main.rs`: the `daemon`, `toggle` and `ticktick` commands.
+- `src/config.rs`: versioned config data, page limits, app, file and directory search paths, file-search exclusion defaults, named Actions and Prefixes, first-run data, and damaged config recovery.
 - `src/add-item.rs`: Add item state for the cached Installed apps inventory, cancellation of stale requests, and local field validation.
-- `src/apps.rs`: app and folder actions, page selection, page creation and deletion, search across pages and configured paths with file exclusion matching and worker cache invalidation, generic Prefix recognition/dispatch, dock pinning and Recent display, website favicon retrieval, and cached icons capped at the displayed size; file writes and decoding run on a worker thread.
+- `src/apps.rs`: app and folder actions, page selection, page creation and deletion, search across pages, folder contents and configured paths with file exclusion matching and worker cache invalidation, generic Prefix recognition/dispatch, dock pinning and Recent display, website favicon retrieval, and cached icons capped at the displayed size; file writes and decoding run on a worker thread.
 - `src/recent.rs`: saved Recent order, duplicate removal, and the history limit.
 - `src/daemon.rs`: the resident Slint event loop and toggle delivery.
-- `src/platform.rs`: config and Recent file access and atomic writes, detached commands, the Unix socket, single-daemon lock, Hyprland monitors, fullscreen, and window hiding.
+- `src/platform.rs`: config and Recent file access and atomic writes, installed app discovery including configured executables and executable symlinks, detached commands, the Unix socket, single-daemon lock, Hyprland monitors, fullscreen, and window hiding.
 - `ui/assets/`: vector artwork extracted from `doc/orbit-ui/orbit.svg`. `search-engines/` contains bundled search engine brand icons and their source list.
 - `ui/fonts/`: embedded Inter font and its OFL license.
 - `ui/launcher.slint`: the top bar, banner, Prefix badge and search results, scrolling page grid, page dots, Home Screen Settings, Search bar Settings with General, Prefixes and Actions, TickTick Widget Gallery and task editor, app and folder sheets, open folder panel, Icon picker, item and empty-space context menus, and delete alert; `build.rs` compiles it.
@@ -17,7 +17,7 @@ Steps 1–4 are complete. Step 4 adds folders, item drops, page swipes and page 
 The approved supplied UI update adds the reference launcher appearance, search across saved pages, a pinned dock, and a Settings panel. A later request adds Recent to the dock. Search path management extends Settings with saved file and directory roots. These are explicit exceptions to the original step order, not completion of the remaining steps.
 
 - `ui/theme.slint`: shared colors and design tokens for spacing, type, sizes, radii and borders.
-- `ui/controls.slint`: shared buttons, result rows and labeled fields, plus Settings cards, navigation, tabs, switches, selectors, steppers and removable chips built from the design tokens.
+- `ui/controls.slint`: shared buttons, result rows and labeled fields with scrollable multiline editing, plus Settings cards, navigation, tabs, switches, selectors, steppers and removable chips built from the design tokens.
 - `doc/design-system.md`: shared appearance and interaction rules.
 - `doc/widgets.md`: widget purpose, current TickTick support, widget behavior, and future widget proposals.
 
@@ -57,3 +57,6 @@ The approved v2 UX specification is `Orbit_Desktop_Launcher_UX_Spec_v2.md`; it s
 
 - `src/english-assistance.rs`: local Ollama model discovery and settings, editable prompts, background model requests, latest-text cancellation, response validation and assistance results.
 - `src/search-edit.rs`: native selection replacements and grouped undo/redo for assistance edits.
+
+- `src/ai.rs`: independent AI provider/model settings, local model discovery, credential-store access, single-question HTTP requests, response validation and cancelled/stale-result protection.
+- Search bar → AI and the AI Prefix answer panel in `ui/launcher.slint` reuse shared controls and native text selection/clipboard behavior.

@@ -83,3 +83,24 @@ Other widget ideas are proposals until they are documented and approved. Do not 
 ## Adding a proposal
 
 For each widget, record its status, purpose, content, its own settings, required local data or dictionaries, any required account or online service, placement and size, user actions, refresh behavior, failure recovery and persistence needs. Keep proposed widgets separate from supported widgets. Keep authentication secure, run network and other slow work off the UI thread, and never execute arbitrary downloaded code. Check the approved UX spec and glossary before changing product behavior or UI wording.
+
+## To add later
+
+- daily english word
+- daily english idom
+- daily english sentence
+- daily engilsh quote
+- daily arabic word
+
+- daily islamic question (flip card)
+- daily hadith
+- daily dua
+- Daily sunnah
+- daily ayah with Interpretation
+- daily quran with Interpretation
+- Daily azkar (night, mornning, wake up, sleep) with reminders and notifications
+
+- daily life hack
+- daily tip
+- daily quote
+- daily affirmations

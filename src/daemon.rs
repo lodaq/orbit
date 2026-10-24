@@ -12,6 +12,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     crate::toast::init(&launcher);
     let _english = crate::english_assistance::connect(&launcher);
+    crate::ai::connect(&launcher);
     apps::connect(&launcher);
     let weak = launcher.as_weak();
     launcher.on_hide_launcher(move || {
@@ -24,13 +25,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     platform::hide_on_input(&launcher);
     let weak = launcher.as_weak();
     std::thread::spawn(move || {
-        platform::receive(listener, move |name| {
+        platform::receive(listener, move |name, ticktick| {
             let weak = weak.clone();
             slint::invoke_from_event_loop(move || {
-                if let Some(launcher) = weak.upgrade()
-                    && let Err(error) = platform::show_or_hide(&launcher, &name)
-                {
-                    eprintln!("orbit: {error}");
+                if let Some(launcher) = weak.upgrade() {
+                    match platform::show_or_hide(&launcher, &name, ticktick) {
+                        Ok(()) if ticktick => launcher.invoke_activate_ticktick_prefix(),
+                        Ok(()) => {}
+                        Err(error) => eprintln!("orbit: {error}"),
+                    }
                 }
             })
             .is_ok()

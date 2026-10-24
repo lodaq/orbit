@@ -1,5 +1,6 @@
 #[path = "add-item.rs"]
 mod add_item;
+mod ai;
 mod apps;
 mod config;
 mod daemon;
@@ -34,8 +35,9 @@ fn main() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let result = match args.as_slice() {
         [command] if command == "daemon" => daemon::run(),
-        [command] if command == "toggle" => platform::toggle(),
-        _ => Err("usage: orbit daemon | orbit toggle".into()),
+        [command] if command == "toggle" => platform::toggle(false),
+        [command] if command == "ticktick" => platform::toggle(true),
+        _ => Err("usage: orbit daemon | orbit toggle | orbit ticktick".into()),
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,

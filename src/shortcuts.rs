@@ -150,11 +150,14 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
                 launcher.invoke_move_search_selection(action - 2);
             } else if launcher.get_grid_navigation() {
                 launcher.invoke_move_grid(action - 2);
-            } else if action < 4 && !launcher.get_search_focused() {
+            } else if action < 4 && !launcher.get_search_focused() && !launcher.get_ai_active() {
                 launcher.invoke_page_key(if action == 2 { -1 } else { 1 });
             } else {
                 return false;
             }
+        }
+        6 if launcher.get_ai_active() && launcher.get_search_focused() => {
+            launcher.invoke_run_activated_prefix()
         }
         6 if launcher.get_search_navigation() => launcher.invoke_run_activated_prefix(),
         6 if launcher.get_grid_navigation() => launcher.invoke_activate_grid(),
