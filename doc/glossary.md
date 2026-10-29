@@ -43,8 +43,8 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Next track** | A System action that skips to the next media track. |
 | **Previous track** | A System action that returns to the previous media track. |
 | **Installed app** | An app whose launch is a reference to a program found on this computer. It stores no command. Added from the Installed apps list. The same installed app can be added more than once. |
-| **Installed apps list** | The saved index of programs found on this computer. Changed only by **Refresh installed apps**. Never updates by itself. |
-| **Refresh installed apps** | Scans the application entries installed on this computer and updates the Installed apps list. |
+| **Installed apps list** | The saved index of programs found on this computer. Changed only by **Refresh**. Never updates by itself. |
+| **Refresh** | Updates the Installed apps list and rescans saved app, file and directory search paths, applying file exclusions. |
 | **Website** | Opens a URL in the default browser. Its icon is fetched once when added and saved in Orbit's icons folder. |
 | **URL** | The web address a Website opens. |
 | **File** | An item made by entering or choosing a file Path, then saving. Its name comes from the file and it opens with the default app. |
@@ -80,7 +80,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Letter icon** | One or two entered visible characters, including emojis. Existing automatic icons use the first letter of the name. |
 | **Glyph** | An icon chosen from the built-in library (Phosphor). Saved as SVG, so the library is not needed afterwards. |
 | **SVG icon** | SVG text you paste in. |
-| **System icon** | The icon of an installed app, resolved once by Refresh installed apps and saved in Orbit's icons folder. |
+| **System icon** | The icon of an installed app, resolved once by Refresh and saved in Orbit's icons folder. |
 
 ## Things that appear on screen
 
@@ -117,7 +117,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | Keybinding, key binding, hotkey | Shortcut |
 | Modal, model, dialog, popup | Sheet (forms), Alert (confirmations), Context menu (right-click) |
 | Generated app | Installed app |
-| Update apps list | Refresh installed apps |
+| Update apps list | Refresh |
 | Browse | Installed apps list |
 | Close (as the name of the action) | Close the top layer |
 | Color (on an app or folder) | Removed |
@@ -156,6 +156,15 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | **Shortcuts** | Settings tab for listing, recording, changing and deleting action bindings. |
 | **General** | Settings tab for Home Screen sizing, TickTick account and data. |
+| **Data** | Settings tab for locally saved widget content and Orbit storage use. |
+| **Content** | The saved text of a widget entry, including English, Arabic or mixed text. |
+| **Attribution** | Optional author, source or details attached to a saved content entry. |
+| **Entry** | One independently editable item of locally saved widget content. Duplicate content may have separate entry IDs. |
+| **Quotes** | Local collection used by Random Quote. |
+| **Facts** | Local collection used by Random Fact. |
+| **Motivation** | Local collection of motivational content. |
+| **Affirmations** | Local collection used by Affirmation. |
+| **Vocabulary** | Local collection of words and their details. |
 | **Delete page** | Remove the current page after confirmation and keep its items on a neighboring page. |
 
 | **Page margin** | Equal space around each side of a page, adjustable in Settings. |
@@ -188,7 +197,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 - **Model prompts** — editable system instructions sent to the selected local model for each English assistance feature.
 
-| **App search path** | An absolute directory scanned for immediate executable files (including valid executable symlinks on Linux), or an individual executable included by Refresh installed apps. |
+| **App search path** | An absolute directory scanned for immediate executable files (including valid executable symlinks on Linux), or an individual executable included by Refresh. |
 
 | **AI** | The Action and Search bar settings for asking one question inside Orbit using a local Ollama model, OpenAI or Gemini. |
 | **AI provider** | Ollama, OpenAI or Gemini, selected for the AI Prefix. |
@@ -197,3 +206,24 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Ask** | Send the current AI prompt as a fresh question. |
 | **Answer** | Selectable, temporary plain-text output of the AI request. |
 | **Copy** | Copy the AI answer to the clipboard. |
+
+| **Finished ID** | A saved reference to a completed item, including its source table and item ID. |
+| **Achievements** | Today's completed items on the Home Screen; the full dated history is available in Data. |
+| **Learn** | Mark the displayed Vocabulary entry as learned. Undo restores it to future selections. |
+| **Next** | Select another saved local entry, without contacting a service. |
+| **Quran Player** | A local passage widget with an action to open its saved recitation. |
+| **Azan Reminder** | The saved prayer schedule and next prayer, with a date warning when stale. |
+| **Habit Tracker** | Locally saved daily habits with completion checkboxes. |
+
+| **Morning Remembrances (Adhkar)** | Offline Arabic morning remembrances with required repetition counts, source details and daily widget progress. |
+| **أذكار الصباح** | Arabic heading for Morning Remembrances. |
+| **Evening Remembrances (Adhkar)** | Offline Arabic evening remembrances with required repetition counts, source details and independent daily widget progress. |
+| **أذكار المساء** | Arabic heading for Evening Remembrances. |
+| **الفضل والمصدر** | Expand the supplied virtue and source details. |
+| **تخطي** | Skip the current remembrance without completing it. |
+| **السابق** | Return to the previous remembrance while retaining its count. |
+| **إعادة الأذكار** | Restart this widget's daily remembrances. |
+
+| **Azan settings** | Per-widget city, country and named time zone, with explicit Fetch times and a schedule preview accepted by Save. |
+| **City**, **Country**, **Time zone** | Location fields used to request and interpret an Azan schedule. |
+| **Fetch times** | Request today's prayer times for review without saving them until Save. |

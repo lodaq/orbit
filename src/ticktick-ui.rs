@@ -1,4 +1,5 @@
-use crate::{Launcher, TickTickProject, TickTickTask, ticktick};
+use crate::text_direction::text_is_rtl;
+use crate::{Launcher, TickTickProject, TickTickTask, TickTickView, ticktick};
 use chrono::{Datelike, Local, NaiveDate};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::rc::Rc;
@@ -38,6 +39,7 @@ fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
 }
 
 pub fn connect(ui: &Launcher) {
+    ui.on_ticktick_views_for(|projects, tasks| model(task_views(&projects, &tasks)));
     ui.on_ticktick_current_date(|| Local::now().format("%Y-%m-%d").to_string().into());
     let weak = ui.as_weak();
     ui.on_load_ticktick(move || {
@@ -114,6 +116,7 @@ pub fn connect(ui: &Launcher) {
             as i32
     });
     ui.on_ticktick_list_name(|projects, id| match id.as_str() {
+        id if id.starts_with("@tag:") => format!("#{}", &id[5..]).into(),
         "" => "Inbox (all tasks)".into(),
         "@today" => "Today".into(),
         "@week" => "Next 7 Days".into(),
@@ -147,6 +150,43 @@ pub fn connect(ui: &Launcher) {
     start(ui, Request::Refresh(String::new()));
 }
 
+fn task_views(
+    projects: &ModelRc<TickTickProject>,
+    tasks: &ModelRc<TickTickTask>,
+) -> Vec<TickTickView> {
+    let view = |id: &str, name: &str, heading| TickTickView {
+        id: id.into(),
+        name: name.into(),
+        heading,
+        rtl: text_is_rtl(name),
+    };
+    let mut views = vec![
+        view("@today", "Today", false),
+        view("@week", "Next 7 Days", false),
+        view("", "Inbox (all tasks)", false),
+    ];
+    // Inbox is already represented by the all-tasks view.
+    let lists: Vec<_> = projects.iter().filter(|p| !p.inbox).collect();
+    if !lists.is_empty() {
+        views.push(view("", "Lists", true));
+        views.extend(lists.iter().map(|p| view(&p.id, &p.name, false)));
+    }
+    let mut tags = std::collections::BTreeSet::new();
+    for task in tasks.iter() {
+        for tag in task.tag_names.split('\0').filter(|tag| !tag.is_empty()) {
+            tags.insert(tag.to_owned());
+        }
+    }
+    if !tags.is_empty() {
+        views.push(view("", "Tags", true));
+        views.extend(
+            tags.iter()
+                .map(|tag| view(&format!("@tag:{tag}"), &format!("#{tag}"), false)),
+        );
+    }
+    views
+}
+
 fn compare_tasks(a: &TickTickTask, b: &TickTickTask) -> std::cmp::Ordering {
     b.priority
         .cmp(&a.priority)
@@ -164,6 +204,7 @@ fn matches_view(task: &TickTickTask, id: &str, completed: bool) -> bool {
             let today = Local::now().date_naive().num_days_from_ce();
             task.day > 0 && task.day <= today + if id == "@week" { 6 } else { 0 }
         }
+        id if id.starts_with("@tag:") => task.tag_names.split('\0').any(|tag| tag == &id[5..]),
         _ => task.project_id == id,
     }
 }
@@ -211,14 +252,18 @@ fn start(ui: &Launcher, request: Request) {
     let form = matches!(request, Request::Save(..) | Request::Delete(..));
     let mutation = form || matches!(request, Request::Complete(..) | Request::PrefixSave(..));
     match &request {
-        Request::PrefixSave(project, title, _, _, today, _) => {
+        Request::PrefixSave(project, title, priority, tags, today, _) => {
             let date = Local::now().date_naive();
             optimistic.insert(
                 0,
                 TickTickTask {
                     id: "@pending".into(),
                     project_id: project.as_str().into(),
+                    rtl: text_is_rtl(title),
                     title: title.as_str().into(),
+                    priority: *priority,
+                    tag_names: tags.join("\0").into(),
+                    tags: tags.join(", ").into(),
                     due: if *today {
                         date.format("%b %e").to_string().into()
                     } else {
@@ -244,7 +289,11 @@ fn start(ui: &Launcher, request: Request) {
                     TickTickTask {
                         id: "@pending".into(),
                         project_id: project.as_str().into(),
+                        rtl: text_is_rtl(title),
                         title: title.trim().into(),
+                        priority: *priority,
+                        tag_names: tags.join("\0").into(),
+                        tags: tags.join(", ").into(),
                         content: content.as_str().into(),
                         desc: desc.as_str().into(),
                         ..Default::default()
@@ -252,10 +301,12 @@ fn start(ui: &Launcher, request: Request) {
                 );
                 ui.invoke_reset_ticktick_scroll();
             } else if let Some(task) = optimistic.iter_mut().find(|t| t.id == id) {
+                task.rtl = text_is_rtl(title);
                 task.title = title.trim().into();
                 task.content = content.as_str().into();
                 task.desc = desc.as_str().into();
                 task.priority = *priority;
+                task.tag_names = tags.join("\0").into();
                 task.tags = tags.join(", ").into();
                 task.due_date = due_date.as_str().into();
                 let date = NaiveDate::parse_from_str(due_date.trim(), "%Y-%m-%d").ok();
@@ -307,6 +358,21 @@ fn start(ui: &Launcher, request: Request) {
             match result {
                 Ok(response) => {
                     apply_response(&ui, response);
+                    if let Request::Complete(ref id, _, done) = request {
+                        ui.invoke_record_widget_completions(model(vec![
+                            crate::CompletedReference {
+                                id: format!("ticktick:{id}").into(),
+                                title: ui
+                                    .get_ticktick_tasks()
+                                    .iter()
+                                    .find(|task| task.id == *id)
+                                    .map(|task| task.title)
+                                    .unwrap_or_default(),
+                                date: Local::now().format("%Y-%m-%d").to_string().into(),
+                                done,
+                            },
+                        ]));
+                    }
                     let message = match request {
                         Request::Refresh(ref id) if !id.is_empty() => "List refreshed",
                         Request::Refresh(_) => "Tasks refreshed",
@@ -469,23 +535,7 @@ fn execute(request: &Request) -> Result<Response, String> {
 fn apply_response(ui: &Launcher, response: Response) {
     match response {
         Response::All(projects, tasks) => {
-            let views = [
-                TickTickProject {
-                    id: "@today".into(),
-                    name: "Today".into(),
-                },
-                TickTickProject {
-                    id: "@week".into(),
-                    name: "Next 7 Days".into(),
-                },
-                TickTickProject {
-                    id: "".into(),
-                    name: "Inbox (all tasks)".into(),
-                },
-            ];
-            let mut views = views.to_vec();
-            views.extend(projects.iter().filter(|p| !p.inbox).map(project_model));
-            ui.set_ticktick_views(model(views));
+            record_completions(ui, &tasks);
             ui.set_ticktick_project_names(model(
                 projects.iter().map(|p| p.name.as_str().into()).collect(),
             ));
@@ -494,6 +544,7 @@ fn apply_response(ui: &Launcher, response: Response) {
             ui.set_ticktick_connected(true);
         }
         Response::List(project, tasks) => {
+            record_completions(ui, &tasks);
             let mut existing: Vec<_> = ui
                 .get_ticktick_tasks()
                 .iter()
@@ -522,7 +573,6 @@ fn apply_response(ui: &Launcher, response: Response) {
         Response::Disconnected => {
             ui.set_ticktick_tasks(model(Vec::new()));
             ui.set_ticktick_projects(model(Vec::new()));
-            ui.set_ticktick_views(model(Vec::new()));
             ui.set_ticktick_project_names(model(Vec::new()));
             ui.set_ticktick_connected(false);
         }
@@ -534,6 +584,7 @@ fn project_model(project: &ticktick::Project) -> TickTickProject {
     TickTickProject {
         id: project.id.as_str().into(),
         name: project.name.as_str().into(),
+        inbox: project.inbox,
     }
 }
 
@@ -545,6 +596,27 @@ fn normalize_due_date(value: &str) -> Result<Option<String>, String> {
     let date = NaiveDate::parse_from_str(value, "%Y-%m-%d")
         .map_err(|_| "Enter a due date as YYYY-MM-DD".to_owned())?;
     Ok(Some(format!("{}T00:00:00+0000", date.format("%Y-%m-%d"))))
+}
+
+fn focus_details(task: &ticktick::Task) -> String {
+    let mut sections: Vec<_> = [&task.content, &task.desc]
+        .into_iter()
+        .map(|text| text.trim())
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if !task.items.is_empty() {
+        let mut checklist = vec!["Checklist".to_owned()];
+        checklist.extend(task.items.iter().map(|item| {
+            format!(
+                "{} {}",
+                if item.status == 1 { "☑" } else { "☐" },
+                item.title
+            )
+        }));
+        sections.push(checklist.join("\n"));
+    }
+    sections.join("\n\n")
 }
 
 fn add_task_detail(details: &mut Vec<String>, label: &str, value: &str) {
@@ -636,10 +708,12 @@ fn task_model(task: ticktick::Task) -> TickTickTask {
     add_task_detail(&mut details, "Completed", &task.completed_time);
     add_task_detail(&mut details, "Type", &task.kind);
     add_task_detail(&mut details, "Assigned to", &task.assignee);
+    let focus_notes = focus_details(&task);
     let details = details.join("\n");
     TickTickTask {
         id: task.id.into(),
         project_id: task.project_id.into(),
+        rtl: text_is_rtl(&task.title),
         title: task.title.into(),
         content: task.content.into(),
         desc: task.desc.into(),
@@ -653,7 +727,10 @@ fn task_model(task: ticktick::Task) -> TickTickTask {
             .unwrap_or_default()
             .into(),
         priority: task.priority,
+        tag_names: task.tags.join("\0").into(),
         tags: task.tags.join(", ").into(),
+        focus_notes_rtl: text_is_rtl(&focus_notes),
+        focus_notes: focus_notes.into(),
         details: details.into(),
         day: display_date.map_or(0, |d| d.num_days_from_ce()),
         done: task.status == 2,
@@ -674,6 +751,69 @@ mod tests {
             }))
             .unwrap(),
         )
+    }
+
+    #[test]
+    fn tag_views_match_whole_tags_and_respect_completed() {
+        let mut task = task("Tagged task", 3, "", "");
+        task.tag_names = "work\0تعلم\0one, two".into();
+        assert!(matches_view(&task, "@tag:work", false));
+        assert!(matches_view(&task, "@tag:تعلم", false));
+        assert!(matches_view(&task, "@tag:one, two", false));
+        assert!(!matches_view(&task, "@tag:wor", false));
+        task.done = true;
+        assert!(!matches_view(&task, "@tag:work", false));
+        assert!(matches_view(&task, "@tag:work", true));
+    }
+
+    #[test]
+    fn arabic_titles_use_the_first_strong_character() {
+        assert!(task("📚 123 اقرأ الكتاب (Rust)", 0, "", "").rtl);
+        assert!(task("  الحمد لله", 0, "", "").rtl);
+        assert!(!task("Read كتاب", 0, "", "").rtl);
+        assert!(!task("123 📚", 0, "", "").rtl);
+    }
+
+    #[test]
+    fn picker_keeps_all_lists_and_unique_exact_tags() {
+        let projects = model(vec![
+            TickTickProject {
+                id: "inbox".into(),
+                name: "Inbox".into(),
+                inbox: true,
+            },
+            TickTickProject {
+                id: "custom".into(),
+                name: "Inbox".into(),
+                inbox: false,
+            },
+        ]);
+        let mut first = task("First", 0, "", "");
+        first.tag_names = "work\0تعلم".into();
+        let mut second = task("Second", 0, "", "");
+        second.tag_names = "work\0one, two".into();
+        let views = task_views(&projects, &model(vec![first, second]));
+        assert!(views.iter().any(|v| v.id == "custom"));
+        assert!(!views.iter().any(|v| v.id == "inbox"));
+        assert_eq!(views.iter().filter(|v| v.id == "@tag:work").count(), 1);
+        assert!(views.iter().any(|v| v.id == "@tag:one, two"));
+        assert!(views.iter().any(|v| v.id == "@tag:تعلم" && v.rtl));
+        assert_eq!(views.iter().filter(|v| v.heading).count(), 2);
+    }
+
+    #[test]
+    fn focus_body_keeps_notes_and_checklist_without_technical_metadata() {
+        let task = task_model(serde_json::from_value(serde_json::json!({
+            "id": "focus", "projectId": "inbox", "title": "Write the plan",
+            "content": "First draft", "desc": "Review the outline",
+            "priority": 5, "status": 0, "kind": "TEXT", "createdTime": "2026-10-28T10:00:00+0000",
+            "items": [{"id":"step", "title":"Gather notes", "status":0}]
+        })).unwrap());
+        assert_eq!(
+            task.focus_notes.as_str(),
+            "First draft\n\nReview the outline\n\nChecklist\n☐ Gather notes"
+        );
+        assert!(self::task("Empty", 0, "", "").focus_notes.is_empty());
     }
 
     #[test]
@@ -715,5 +855,31 @@ mod tests {
             task.done = done;
             assert_eq!(matches_view(&task, "@today", false), expected);
         }
+    }
+}
+
+fn record_completions(ui: &Launcher, tasks: &[ticktick::Task]) {
+    let items = tasks
+        .iter()
+        .filter(|task| task.status == 2)
+        .filter_map(|task| {
+            let date = chrono::DateTime::parse_from_rfc3339(&task.completed_time)
+                .or_else(|_| {
+                    chrono::DateTime::parse_from_str(&task.completed_time, "%Y-%m-%dT%H:%M:%S%.f%z")
+                })
+                .ok()?
+                .with_timezone(&Local)
+                .format("%Y-%m-%d")
+                .to_string();
+            Some(crate::CompletedReference {
+                id: format!("ticktick:{}", task.id).into(),
+                title: task.title.as_str().into(),
+                date: date.into(),
+                done: true,
+            })
+        })
+        .collect::<Vec<_>>();
+    if !items.is_empty() {
+        ui.invoke_record_widget_completions(model(items));
     }
 }

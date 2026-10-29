@@ -242,3 +242,49 @@ fn cursor_captures_and_search_wiring() {
     launcher.hide().unwrap();
     std::fs::write("target/ui-check/cursor-report.txt", "Headless software-renderer captures use mocked Slint time.\nRun: cargo test --test caret-ui-check\nCaptures: cursor-rest.png, cursor-move-start.png, cursor-stretch.png, cursor-selection.png, cursor-unfocused.png, cursor-disabled.png.\nSelection/unfocused/disabled images exercise isolated cursor states; desktop captures validate real search integration.\n").unwrap();
 }
+
+#[test]
+fn horizontal_touchpad_scroll_changes_one_page_per_swipe() {
+    i_slint_backend_testing::init_no_event_loop();
+    let launcher = Launcher::new().unwrap();
+    launcher
+        .window()
+        .set_size(slint::LogicalSize::new(1600., 1000.));
+    launcher.set_page_count(3);
+    launcher.set_current_page(1);
+    launcher.set_launcher_visible(true);
+    let weak = launcher.as_weak();
+    launcher.on_open_page(move |index| {
+        let ui = weak.upgrade().unwrap();
+        ui.set_current_page(index);
+        ui.set_busy(false);
+    });
+    launcher.show().unwrap();
+    let scroll = |x, y| {
+        launcher
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(800., 400.),
+                delta_x: x,
+                delta_y: y,
+            });
+    };
+    advance(0);
+    scroll(0., -120.);
+    scroll(-10., 1.);
+    assert_eq!(launcher.get_current_page(), 1);
+    scroll(-35., 1.);
+    assert_eq!(launcher.get_current_page(), 2);
+    advance(240);
+    scroll(-120., 0.);
+    assert_eq!(launcher.get_current_page(), 2);
+    advance(400);
+    scroll(60., 0.);
+    assert_eq!(launcher.get_current_page(), 1);
+    advance(400);
+    scroll(60., 0.);
+    assert_eq!(launcher.get_current_page(), 0);
+    advance(400);
+    scroll(60., 0.);
+    assert_eq!(launcher.get_current_page(), 0);
+}

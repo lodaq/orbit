@@ -927,7 +927,7 @@ fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
             for page in &mut config.pages {
                 page.items.retain(|item| {
                     let keep =
-                        !matches!(item, Item::Widget { variant, .. } if !matches!(*variant, 7 | 8));
+                        !matches!(item, Item::Widget { variant, .. } if !(7..crate::spatial::WIDGETS.len()).contains(variant));
                     if !keep {
                         removed.push(item.id().to_owned());
                     }

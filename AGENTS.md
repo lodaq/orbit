@@ -21,6 +21,7 @@ The rules, in short:
 4. Easy to understand file structure. One file per job, with a name that says the job. Keep the layout in `doc/structure.md` up to date.
 5. After every code or UI change, build the release binary and restart Orbit so the running launcher reflects the source.
 6. Before finishing a UI change, open the rebuilt launcher and follow the real user path from its entry point through the changed control. Confirm the resulting content and state are visible in the running app; do not rely on source inspection, a build, or a manually opened intermediate state.
+7. Always use an isolated desktop/display and an isolated test profile for UI tests, screenshots and automated input. Keep test input and focus changes off the user's active desktop. After verification, restart the normal Orbit daemon without opening or manipulating the user's desktop session.
 
 Never build anything from `doc/planned-features.md` or `doc/roadmap.md`.
 Build one step of `spec.md` section 13 at a time. Never start the next step.

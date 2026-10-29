@@ -1,0 +1,344 @@
+import { OrbitText, TextDirection } from "controls.slint";
+import "fonts/amiri.ttf";
+import { Theme } from "theme.slint";
+import { AzanSettings } from "azan-settings.slint";
+import { AddOption } from "controls.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export struct WidgetDataEntry { id: string, content: string, preview: string, attribution: string, resource: string, done: bool }
+export struct WidgetView { id: string, category: int, city: string, country: string, timezone: string, headline: string, content: string, details: string, entry-id: string, done: bool, completed: int, position: int, total: int, required: int, remaining: int, resource: string, rows: [WidgetDataEntry] }
+export global LocalWidgets {
+    in-out property <[WidgetView]> views;
+    pure callback lookup(string, [WidgetView]) -> WidgetView;
+    callback refresh(string);
+    callback finish(string,string);
+    callback play(string);
+    callback adhkar(string,string,string);
+}
+
+component WidgetAction inherits AddOption {
+    height: Theme.widget-action-height;
+    border-radius: 16px;
+    option-width: 96px;
+}
+
+component HabitRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled;
+    height: max(52px, title.preferred-height + 24px);
+    border-radius: Theme.radius-control;
+    background: hit.pressed ? Theme.press-overlay : root.checked ? Theme.widget-completed : hit.has-hover ? Theme.hover-overlay : Theme.widget-row;
+    border-width: focus.has-focus ? Theme.focus-width : 0px;
+    border-color: Theme.focus;
+    accessible-role: checkbox; accessible-label: label;
+    accessible-checked: checked; accessible-enabled: enabled;
+    accessible-action-default => { if root.enabled { root.toggled(); } }
+    forward-focus: focus;
+    Rectangle {
+        x: 12px; y: (parent.height - 22px) / 2; width: 22px; height: 22px;
+        border-radius: 11px;
+        background: root.checked ? Theme.focus : transparent;
+        border-width: root.checked ? 0px : 1.5px;
+        border-color: Theme.secondary;
+        if root.checked: OrbitText { text: "✓"; width: parent.width; height: parent.height; horizontal-alignment: center; vertical-alignment: center; font-size: 14px; font-weight: 700; color: Theme.field; }
+    }
+    title := OrbitText {
+        x: 46px; width: parent.width - 58px; y: (parent.height - self.height) / 2;
+        height: self.preferred-height; text: root.label; wrap: word-wrap;
+        color: root.checked ? Theme.secondary : Theme.text; font-size: Theme.type-body;
+    }
+    hit := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { focus.focus(); root.toggled(); } }
+    focus := FocusScope {
+        width: 0px; height: 0px; enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == " " || event.text == "\n" { root.toggled(); return accept; }
+            reject;
+        }
+    }
+}
+
+component AdhkarWidget inherits Rectangle {
+    in property <string> widget-id;
+    in property <WidgetView> view;
+    in property <bool> enabled;
+    property <bool> expanded: false;
+    property <bool> compact: root.height < 320px;
+    property <string> current-entry: view.entry-id;
+    changed current-entry => { root.expanded = false; reading.content-y = 0px; }
+    VerticalLayout {
+        spacing: root.compact ? Theme.space-1 : Theme.space-3;
+        HorizontalLayout {
+            OrbitText { text: root.view.position + " / " + root.view.total; color: Theme.secondary; font-size: Theme.type-hint; vertical-alignment: center; }
+            OrbitText { text: root.view.category == 10 ? "أذكار المساء ☾" : "أذكار الصباح ☀"; horizontal-alignment: right; color: Theme.text; font-size: Theme.type-title; font-weight: 600; }
+        }
+        Rectangle {
+            height: 5px; border-radius: 3px; background: Theme.separator;
+            Rectangle { x: parent.width - self.width; width: root.view.total == 0 ? 0px : parent.width * (root.view.done ? 1 : max(0,root.view.position - 1) / root.view.total); height: parent.height; border-radius: 3px; background: Theme.adhkar-accent; }
+        }
+        Rectangle {
+            min-height: 0px; vertical-stretch: 1;
+            reading := ScrollView {
+                width: parent.width + Theme.space-4;
+                height: parent.height;
+                enabled: root.enabled; horizontal-scrollbar-policy: always-off;
+                VerticalLayout {
+                    width: reading.width; height: self.preferred-height;
+                    padding-right: Theme.space-4;
+                    alignment: start; spacing: Theme.space-4;
+                    if root.view.done: OrbitText { text: "✓"; font-size: 48px; color: Theme.success; horizontal-alignment: center; }
+                    if root.view.headline != "": OrbitText {
+                        text: root.view.headline; color: Theme.adhkar-accent;
+                        horizontal-alignment: right; font-size: Theme.type-control; wrap: word-wrap;
+                    }
+                    OrbitText {
+                        text: root.view.content; color: Theme.text; font-family: "Amiri";
+                        font-size: Theme.adhkar-reading-size; wrap: word-wrap; horizontal-alignment: right;
+                    }
+                    if root.view.done: OrbitText { text: root.view.category == 10 ? "أتممت أذكار المساء كاملة.\nجعلها الله حفظًا لك ونورًا في ليلتك." : "أتممت أذكار الصباح كاملة.\nجعلها الله حفظًا لك ونورًا في يومك."; color: Theme.secondary; font-size: Theme.type-body; wrap: word-wrap; horizontal-alignment: right; }
+                }
+            }
+        }
+        if root.expanded && !root.view.done && root.view.details != "": Rectangle {
+            min-height: 0px; max-height: min(120px, root.height / 4); vertical-stretch: 1;
+            preferred-height: source-details.preferred-height;
+            details-scroll := ScrollView {
+                enabled: root.enabled; horizontal-scrollbar-policy: always-off;
+                width: parent.width + Theme.space-4; height: parent.height;
+                source-details := OrbitText { width: max(0px, details-scroll.width - Theme.space-4); text: root.view.details; color: Theme.secondary; font-size: Theme.type-control; wrap: word-wrap; horizontal-alignment: right; }
+            }
+        }
+        if !root.view.done && root.view.entry-id != "": Rectangle {
+            height: root.compact ? max(counter.height, actions.preferred-height) : counter.height + Theme.space-3 + actions.preferred-height;
+            counter := Rectangle {
+                x: root.compact ? 0px : (parent.width - self.width) / 2;
+                y: root.compact ? (parent.height - self.height) / 2 : 0px;
+                width: root.compact ? 48px : 80px; height: self.width;
+                border-radius: self.width / 2; border-width: 4px;
+                border-color: focus.has-focus ? Theme.adhkar-accent : Theme.separator;
+                background: hit.pressed ? Theme.press-overlay : hit.has-hover ? Theme.hover-overlay : transparent;
+                accessible-role: button; accessible-label: "عدّ الذكر: " + root.view.remaining + " من " + root.view.required;
+                accessible-action-default => { LocalWidgets.adhkar(root.widget-id, root.view.entry-id, "count"); }
+                forward-focus: focus;
+                OrbitText { y: root.compact ? 3px : 8px; height: root.compact ? 24px : 32px; width: parent.width; text: root.view.remaining == 0 ? "✓" : root.view.remaining; horizontal-alignment: center; color: Theme.text; font-size: root.compact ? Theme.type-title : 24px; font-weight: 600; }
+                OrbitText { y: root.compact ? 25px : 44px; height: root.compact ? 16px : 20px; width: parent.width; text: "من " + root.view.required; horizontal-alignment: center; color: Theme.secondary; font-size: Theme.type-hint; }
+                hit := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { focus.focus(); LocalWidgets.adhkar(root.widget-id,root.view.entry-id,"count"); } }
+                focus := FocusScope { width: 0px; height: 0px; enabled: root.enabled;
+                    key-pressed(event) => { if event.text == " " || event.text == "\n" { LocalWidgets.adhkar(root.widget-id,root.view.entry-id,"count"); return accept; } reject; }
+                }
+            }
+            actions := VerticalLayout {
+                x: root.compact ? counter.width + Theme.space-2 : 0px;
+                y: root.compact ? 0px : counter.height + Theme.space-3;
+                width: parent.width - self.x; height: self.preferred-height;
+                spacing: root.compact ? Theme.space-1 : Theme.space-3;
+                if root.view.details != "": VerticalLayout {
+                    spacing: Theme.space-2;
+                    if !root.compact: Rectangle { height: Theme.border-width; background: Theme.separator; }
+                    Rectangle {
+                        height: root.compact ? Theme.widget-action-height : Theme.control-height;
+                        border-radius: Theme.radius-control;
+                        border-width: source-focus.has-focus ? Theme.focus-width : Theme.border-width;
+                        border-color: source-focus.has-focus ? Theme.focus : Theme.border;
+                        background: source-hit.pressed ? Theme.selection : source-hit.has-hover ? Theme.raised : Theme.field;
+                        accessible-role: button; accessible-label: "الفضل والمصدر"; accessible-enabled: root.enabled;
+                        accessible-action-default => { if root.enabled { root.expanded = !root.expanded; } }
+                        forward-focus: source-focus;
+                        OrbitText { text: "الفضل والمصدر"; color: Theme.adhkar-accent; font-size: Theme.type-control; horizontal-alignment: center; vertical-alignment: center; }
+                        OrbitText { x: Theme.space-3; width: 20px; height: parent.height; text: root.expanded ? "⌃" : "⌄"; color: Theme.adhkar-accent; font-size: Theme.type-title; horizontal-alignment: center; vertical-alignment: center; }
+                        source-hit := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { source-focus.focus(); root.expanded = !root.expanded; } }
+                        source-focus := FocusScope {
+                            width: 0px; height: 0px; enabled: root.enabled;
+                            key-pressed(event) => { if event.text == " " || event.text == "\n" { root.expanded = !root.expanded; return accept; } reject; }
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    WidgetAction { label: "تخطي"; option-width: (parent.width - Theme.space-2) / 2; enabled: root.enabled; clicked => { LocalWidgets.adhkar(root.widget-id,root.view.entry-id,"skip"); } }
+                    WidgetAction { label: "السابق"; option-width: (parent.width - Theme.space-2) / 2; enabled: root.enabled && root.view.position > 1; clicked => { LocalWidgets.adhkar(root.widget-id,root.view.entry-id,"previous"); } }
+                }
+            }
+        }
+        if root.view.done: WidgetAction { label: "إعادة الأذكار"; primary: true; option-width: parent.width; enabled: root.enabled; clicked => { LocalWidgets.adhkar(root.widget-id,"","restart"); } }
+    }
+}
+
+component AzanWidget inherits Rectangle {
+    in property <string> widget-id;
+    in property <WidgetView> view;
+    in property <bool> enabled;
+    property <bool> wide: root.width >= 440px;
+    VerticalLayout {
+        spacing: Theme.space-3;
+        OrbitText { height: Theme.widget-action-height; text: root.view.city + ", " + root.view.country; color: Theme.secondary; font-size: Theme.type-control; vertical-alignment: center; overflow: elide; }
+        schedule := ScrollView {
+            horizontal-scrollbar-policy: always-off; min-height: 0px; vertical-stretch: 1;
+            GridLayout {
+                width: schedule.visible-width; height: self.preferred-height;
+                spacing: Theme.space-3; padding-right: Theme.space-2;
+                VerticalLayout {
+                    col: 0; row: 0; alignment: start; spacing: Theme.space-2;
+                    OrbitText { text: root.view.done ? "SAVED SCHEDULE" : root.view.resource == "" ? "TODAY" : "NEXT PRAYER"; color: Theme.secondary; font-size: Theme.type-hint; font-weight: 600; }
+                    OrbitText { text: root.view.headline; color: Theme.text; font-size: Theme.widget-word-size; font-weight: 600; wrap: word-wrap; }
+                    if root.view.resource != "": OrbitText { text: root.view.resource; color: Theme.focus; font-size: Theme.azan-time-size; font-weight: 600; }
+                    if root.view.content != "": OrbitText { text: root.view.content; color: root.view.done ? Theme.secondary : Theme.focus; font-size: Theme.type-control; wrap: word-wrap; }
+                }
+                VerticalLayout {
+                    col: root.wide ? 1 : 0; row: root.wide ? 0 : 1;
+                    alignment: start; spacing: Theme.space-1;
+                    for prayer in root.view.rows: Rectangle {
+                        height: Theme.space-6; border-radius: Theme.radius-control;
+                        background: prayer.done ? Theme.selection : transparent;
+                        HorizontalLayout {
+                            padding-left: Theme.space-2; padding-right: Theme.space-2;
+                            OrbitText { text: prayer.content; color: prayer.done ? Theme.text : Theme.secondary; font-size: Theme.type-body; font-weight: prayer.done ? 600 : 400; vertical-alignment: center; }
+                            OrbitText { text: prayer.resource; color: prayer.done ? Theme.focus : Theme.text; font-size: Theme.type-body; font-weight: 500; horizontal-alignment: right; vertical-alignment: center; }
+                        }
+                    }
+                }
+                OrbitText { col: 0; row: root.wide ? 1 : 2; colspan: root.wide ? 2 : 1; text: root.view.details; color: root.view.done ? Theme.warning : Theme.secondary; font-size: Theme.type-hint; wrap: word-wrap; }
+            }
+        }
+    }
+}
+
+component AchievementsWidget inherits Rectangle {
+    in property <WidgetView> view;
+    in property <bool> enabled;
+    property <bool> compact: root.height < 180px;
+    VerticalLayout {
+        spacing: root.compact ? Theme.space-2 : Theme.space-3;
+        HorizontalLayout {
+            vertical-stretch: 0;
+            OrbitText { text: "Today"; color: Theme.text; font-size: Theme.type-title; font-weight: 600; }
+            OrbitText { text: root.view.details; color: Theme.secondary; font-size: Theme.type-hint; horizontal-alignment: right; vertical-alignment: center; }
+        }
+        HorizontalLayout {
+            vertical-stretch: 0; spacing: Theme.space-2; alignment: start;
+            OrbitText { text: root.view.rows.length; color: Theme.focus; font-size: root.compact ? Theme.widget-word-size : Theme.azan-time-size; font-weight: 600; }
+            OrbitText { text: "completed"; color: Theme.secondary; font-size: Theme.type-control; vertical-alignment: center; }
+        }
+        Rectangle { height: Theme.border-width; background: Theme.separator; }
+        achievements := ScrollView {
+            enabled: root.enabled; horizontal-scrollbar-policy: always-off;
+            min-height: 0px; vertical-stretch: 1;
+            VerticalLayout {
+                width: achievements.visible-width; height: self.preferred-height;
+                alignment: start; spacing: Theme.space-2;
+                if root.view.rows.length == 0: OrbitText {
+                    text: root.view.content; color: Theme.secondary; font-size: Theme.type-body; wrap: word-wrap;
+                }
+                for row in root.view.rows: Rectangle {
+                    height: max(44px, achievement-label.preferred-height + Theme.space-4);
+                    background: Theme.widget-row; border-radius: Theme.radius-control;
+                    accessible-role: text; accessible-label: row.content;
+                    Rectangle {
+                        x: Theme.space-2; y: (parent.height - self.height) / 2;
+                        width: 22px; height: 22px; border-radius: 11px; background: Theme.widget-completed;
+                        OrbitText { width: parent.width; height: parent.height; text: "✓"; color: Theme.focus; font-size: Theme.type-control; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    achievement-label := OrbitText {
+                        x: 40px; y: (parent.height - self.height) / 2; width: max(0px, parent.width - self.x - Theme.space-3);
+                        height: self.preferred-height; text: row.content; color: Theme.text; font-size: Theme.type-body; wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component LocalWidget inherits Rectangle {
+    in property <string> widget-id;
+    in property <bool> enabled: true;
+    property <WidgetView> view: LocalWidgets.lookup(widget-id, LocalWidgets.views);
+    // Content owns its input; the page retains the header and resize corner.
+    TouchArea { enabled: root.enabled; clicked => { } }
+    if root.view.category == 9 || root.view.category == 10: AdhkarWidget { widget-id: root.widget-id; view: root.view; enabled: root.enabled; }
+    if root.view.category == 8: AchievementsWidget { view: root.view; enabled: root.enabled; }
+    if root.view.category == 6: AzanWidget { widget-id: root.widget-id; view: root.view; enabled: root.enabled; }
+    if root.view.category != 6 && root.view.category != 8 && root.view.category != 9 && root.view.category != 10: VerticalLayout {
+        spacing: Theme.space-3;
+        content-scroll := ScrollView {
+            enabled: root.enabled;
+            horizontal-scrollbar-policy: always-off;
+            vertical-stretch: 1;
+            min-height: 0px;
+            VerticalLayout {
+                width: content-scroll.visible-width;
+                height: self.preferred-height;
+                alignment: start;
+                spacing: Theme.space-3;
+                if root.view.category == 0 && root.view.entry-id != "": OrbitText {
+                    text: "“"; color: Theme.focus; font-size: 48px; height: 32px;
+                }
+                if root.view.headline != "": OrbitText {
+                    text: root.view.headline; color: Theme.text;
+                    font-size: root.view.category == 4 ? Theme.widget-word-size : Theme.widget-reading-size;
+                    font-weight: 600; wrap: word-wrap;
+                }
+                if root.view.content != "" && (root.view.category != 7 || root.view.rows.length == 0): VerticalLayout {
+                    spacing: 0px;
+                    for line in TextDirection.lines(root.view.content): OrbitText {
+                        text: line;
+                        color: root.view.done ? Theme.success : Theme.text;
+                        font-size: root.view.entry-id == "" ? Theme.type-body : root.view.category <= 3 || root.view.category == 5 ? Theme.widget-reading-size : Theme.type-body;
+                        font-weight: root.view.category == 2 || root.view.category == 3 ? 500 : 400;
+                        wrap: word-wrap;
+                    }
+                }
+                if root.view.category == 7: VerticalLayout {
+                    spacing: Theme.space-2;
+                    HorizontalLayout {
+                        OrbitText { text: "Today"; color: Theme.text; font-size: Theme.type-title; font-weight: 600; }
+                        Rectangle { horizontal-stretch: 1; }
+                        OrbitText { text: root.view.completed + " / " + root.view.rows.length; color: Theme.focus; font-size: Theme.type-control; vertical-alignment: center; }
+                    }
+                    Rectangle {
+                        height: 3px; background: Theme.separator; border-radius: 1.5px;
+                        Rectangle { x: 0px; y: 0px; width: root.view.rows.length == 0 ? 0px : parent.width * root.view.completed / root.view.rows.length; height: parent.height; background: Theme.focus; border-radius: 1.5px; }
+                    }
+                    for row in root.view.rows: HabitRow {
+                        label: row.content; checked: row.done; enabled: root.enabled;
+                        toggled => { LocalWidgets.finish(root.widget-id,row.id); }
+                    }
+                }
+                if root.view.details != "" && root.view.category != 7: OrbitText {
+                    text: root.view.details; color: Theme.secondary; font-size: Theme.type-control; wrap: word-wrap;
+                }
+                if root.view.category == 5 && root.view.resource == "": OrbitText {
+                    text: "Add local audio in Settings → Data to play a recitation.";
+                    color: Theme.secondary; font-size: Theme.type-hint; wrap: word-wrap;
+                }
+            }
+        }
+        if root.view.category < 6: VerticalLayout {
+            spacing: Theme.space-3;
+            Rectangle { height: Theme.border-width; background: Theme.separator; }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                if root.view.category == 3 || root.view.category == 4: WidgetAction {
+                    label: root.view.done ? "Undo" : root.view.category == 4 ? "Learn" : "Done";
+                    primary: !root.view.done;
+                    option-width: min(96px,(root.width - Theme.space-2)/2);
+                    enabled: root.enabled && root.view.entry-id != "";
+                    clicked => { LocalWidgets.finish(root.widget-id,root.view.entry-id); }
+                }
+                if root.view.category == 5: WidgetAction {
+                    label: "Play"; primary: true;
+                    option-width: min(96px,(root.width - Theme.space-2)/2);
+                    enabled: root.enabled && root.view.resource != "";
+                    clicked => { LocalWidgets.play(root.widget-id); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                WidgetAction {
+                    label: root.view.category >= 3 ? "Next" : "Refresh";
+                    option-width: min(96px,(root.width - Theme.space-2)/2);
+                    enabled: root.enabled && root.view.entry-id != "";
+                    clicked => { LocalWidgets.refresh(root.widget-id); }
+                }
+            }
+        }
+    }
+}

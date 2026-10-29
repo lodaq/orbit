@@ -1,7 +1,9 @@
 #[path = "add-item.rs"]
 mod add_item;
+mod adhkar;
 mod ai;
 mod apps;
+mod azan;
 mod config;
 mod daemon;
 #[path = "english-assistance.rs"]
@@ -22,12 +24,20 @@ mod search_edit;
 mod shortcuts;
 mod spatial;
 mod storage;
+#[path = "text-direction.rs"]
+mod text_direction;
 mod ticktick;
 #[path = "ticktick-ui.rs"]
 mod ticktick_ui;
 mod toast;
 #[path = "website-icons.rs"]
 mod website_icons;
+#[path = "widget-data.rs"]
+mod widget_data;
+#[path = "widget-data-ui.rs"]
+mod widget_data_ui;
+#[path = "widget-views.rs"]
+mod widget_views;
 
 slint::include_modules!();
 

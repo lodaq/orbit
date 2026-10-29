@@ -97,6 +97,89 @@ pub fn apply(
     true
 }
 
+pub fn place_search_result(
+    config: &mut Config,
+    item: Item,
+    page: usize,
+    target: i32,
+    pin: bool,
+) -> Result<bool, String> {
+    if config.layout_locked {
+        return Err("Unlock layout to make changes".into());
+    }
+    if page > config.pages.len() || page >= 9 {
+        return Err("Page is missing".into());
+    }
+    if pin
+        && config.pinned.len() >= crate::config::PINNED_LIMIT
+        && !config.pinned.iter().any(|id| id == item.id())
+    {
+        return Err("Dock is full".into());
+    }
+    if pin && config.pinned.iter().any(|id| id == item.id()) {
+        return Ok(false);
+    }
+    let mut next = config.clone();
+    let source = find(&next, item.id());
+    if !pin
+        && target < 0
+        && source.is_some_and(|source| source.0 == page && source.2.is_none())
+        && !next.pinned.iter().any(|id| id == item.id())
+    {
+        return Ok(false);
+    }
+    let rect = if pin {
+        None
+    } else {
+        Some(search_result_rect(&next, item.id(), page, target)?)
+    };
+    let id = item.id().to_owned();
+    let item = source.map(|source| take(&mut next, source)).unwrap_or(item);
+    if page == next.pages.len() {
+        next.pages.push(Page {
+            id: crate::config::new_page_id(),
+            items: Vec::new(),
+        });
+    }
+    next.pages[page].items.push(item);
+    next.pinned.retain(|pinned| pinned != &id);
+    if let Some(rect) = rect {
+        next.positions.insert(id, rect);
+        next.active_page = page;
+    } else {
+        next.pinned.push(id);
+    }
+    crate::spatial::reconcile(&mut next)?;
+    *config = next;
+    Ok(true)
+}
+
+fn search_result_rect(
+    config: &Config,
+    id: &str,
+    page: usize,
+    target: i32,
+) -> Result<crate::spatial::Rect, String> {
+    let span = crate::spatial::item_span(1, config.item_size, config.grid_gap);
+    let mut occupied = crate::spatial::occupied(config, page);
+    occupied.remove(id);
+    let rect = if target >= 0 {
+        crate::spatial::Rect {
+            row: target as usize / config.columns,
+            col: target as usize % config.columns,
+            width: span,
+            height: span,
+        }
+    } else {
+        crate::spatial::find_first_fit(&occupied, span, span, config.columns, config.rows)
+            .ok_or("Page is full")?
+    };
+    if !crate::spatial::can_place(rect, &occupied, config.columns, config.rows) {
+        return Err("Not enough free space".into());
+    }
+    Ok(rect)
+}
+
 // Indices describe the final order. IDs keep the source and folder target stable
 // when removing an item shifts indices or removes an empty source folder.
 fn apply_ordered(
@@ -231,6 +314,56 @@ fn take(config: &mut Config, source: (usize, usize, Option<usize>)) -> Item {
 mod tests {
     use super::*;
     use crate::config::{App, Icon, Launch};
+
+    #[test]
+    fn search_file_can_be_placed_pinned_and_returned_to_page() {
+        let mut config = config();
+        let file = Item::File {
+            id: "search-file".into(),
+            name: "better-websites.canvas".into(),
+            path: "/notes/better-websites.canvas".into(),
+            icon: Icon::Letter,
+        };
+        place_search_result(&mut config, file.clone(), 1, 40, false).unwrap();
+        assert_eq!(config.positions[file.id()].col, 40);
+        assert!(config.pages[1].items == vec![file.clone()]);
+        place_search_result(&mut config, file.clone(), 1, -1, true).unwrap();
+        assert!(config.pinned.iter().any(|id| id == file.id()));
+        assert!(!crate::spatial::occupied(&config, 1).contains_key(file.id()));
+        place_search_result(&mut config, file.clone(), 2, -1, false).unwrap();
+        assert!(!config.pinned.iter().any(|id| id == file.id()));
+        assert!(
+            !config.pages[1]
+                .items
+                .iter()
+                .any(|item| item.id() == file.id())
+        );
+        assert_eq!(
+            config.pages[2]
+                .items
+                .iter()
+                .filter(|item| item.id() == file.id())
+                .count(),
+            1
+        );
+        assert!(config.pages[2].items.contains(&file));
+    }
+
+    #[test]
+    fn search_placement_rejects_occupied_space_and_locked_layout_atomically() {
+        let mut config = config();
+        let before = serde_json::to_value(&config).unwrap();
+        assert!(place_search_result(&mut config, app("new"), 0, 0, false).is_err());
+        assert_eq!(serde_json::to_value(&config).unwrap(), before);
+        config.layout_locked = true;
+        assert!(place_search_result(&mut config, app("new"), 1, -1, true).is_err());
+        assert!(
+            !config
+                .pages
+                .iter()
+                .any(|page| page.items.iter().any(|item| item.id() == "new"))
+        );
+    }
 
     fn app(id: &str) -> Item {
         Item::App(App {

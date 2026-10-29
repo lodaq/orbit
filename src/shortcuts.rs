@@ -1,6 +1,6 @@
 use crate::{Launcher, ShortcutEntry};
 use serde::{Deserialize, Serialize};
-use slint::winit_030::winit::keyboard::{Key, ModifiersState, NamedKey};
+use slint::winit_030::winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use slint::{ComponentHandle, Model};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -93,10 +93,72 @@ fn chord(key: &Key, modifiers: ModifiersState) -> Option<String> {
     Some(result)
 }
 
+fn shortcut_key(key: &Key, physical: PhysicalKey, modifiers: ModifiersState) -> Key {
+    if !(modifiers.control_key() || modifiers.alt_key() || modifiers.super_key())
+        || !matches!(key, Key::Character(text) if !text.is_ascii())
+    {
+        return key.clone();
+    }
+    use KeyCode::*;
+    let letters = [
+        KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO,
+        KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY, KeyZ,
+    ];
+    letters
+        .iter()
+        .position(|code| physical == PhysicalKey::Code(*code))
+        .map(|index| Key::Character(char::from(b'a' + index as u8).to_string().into()))
+        .unwrap_or_else(|| key.clone())
+}
+
+pub fn handle_event(
+    launcher: &Launcher,
+    event: &slint::winit_030::winit::event::KeyEvent,
+    modifiers: ModifiersState,
+) -> bool {
+    let key = shortcut_key(&event.logical_key, event.physical_key, modifiers);
+    if handle(launcher, &key, modifiers) {
+        return true;
+    }
+    // Native editing must receive the same letter as Orbit's shortcut matcher.
+    if key != event.logical_key
+        && launcher.get_search_editing()
+        && let Key::Character(text) = key
+    {
+        launcher
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: text.as_str().into(),
+            });
+        launcher
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::KeyReleased {
+                text: text.as_str().into(),
+            });
+        return true;
+    }
+    false
+}
+
 pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool {
     let Some(keys) = chord(key, modifiers) else {
         return false;
     };
+    if !launcher
+        .global::<crate::AzanSettings>()
+        .get_widget_id()
+        .is_empty()
+    {
+        if launcher
+            .get_shortcuts()
+            .iter()
+            .any(|binding| binding.action == 1 && binding.keys == keys)
+        {
+            launcher.invoke_close_top_layer();
+            return true;
+        }
+        return false;
+    }
     if launcher.get_shortcut_recording() {
         launcher.set_shortcut_draft(keys.into());
         launcher.set_shortcut_recording(false);
@@ -235,9 +297,40 @@ mod tests {
     }
 
     #[test]
+    fn arabic_layout_keeps_modified_letter_shortcuts() {
+        for (arabic, code, latin) in [
+            ("ش", KeyCode::KeyA, "a"),
+            ("ث", KeyCode::KeyE, "e"),
+            ("ص", KeyCode::KeyW, "w"),
+            ("ن", KeyCode::KeyK, "k"),
+            ("ؤ", KeyCode::KeyC, "c"),
+        ] {
+            let key = Key::Character(arabic.into());
+            assert_eq!(
+                shortcut_key(&key, PhysicalKey::Code(code), ModifiersState::CONTROL),
+                Key::Character(latin.into())
+            );
+            assert_eq!(
+                shortcut_key(&key, PhysicalKey::Code(code), ModifiersState::empty()),
+                key
+            );
+        }
+        let key = Key::Character("q".into());
+        assert_eq!(
+            shortcut_key(
+                &key,
+                PhysicalKey::Code(KeyCode::KeyA),
+                ModifiersState::CONTROL
+            ),
+            key
+        );
+    }
+
+    #[test]
     fn deletes_words_in_search_and_keeps_native_undo_and_rebinding() {
         i_slint_backend_testing::init_no_event_loop();
         let ui = Launcher::new().unwrap();
+        ui.on_text_is_rtl(|text| crate::text_direction::text_is_rtl(&text));
         ui.set_shortcuts(model(defaults()));
         ui.show().unwrap();
         ui.set_launcher_visible(true);
@@ -245,6 +338,7 @@ mod tests {
         for (text, remaining) in [
             ("hello world", "hello "),
             ("hello عالم", "hello "),
+            ("انا اسمي خالد مصباح", "انا اسمي خالد "),
             ("🙂 hello", "🙂 "),
         ] {
             ui.set_search_text("".into());
@@ -265,6 +359,22 @@ mod tests {
                 text: "\u{0011}".into(),
             });
         }
+        ui.window().dispatch_event(WindowEvent::KeyPressed {
+            text: "\u{0011}".into(),
+        });
+        let Key::Character(select_all) = shortcut_key(
+            &Key::Character("ش".into()),
+            PhysicalKey::Code(KeyCode::KeyA),
+            ModifiersState::CONTROL,
+        ) else {
+            panic!("select all must be a letter")
+        };
+        input(&ui, select_all.as_str());
+        ui.window().dispatch_event(WindowEvent::KeyReleased {
+            text: "\u{0011}".into(),
+        });
+        input(&ui, "عربي");
+        assert_eq!(ui.get_search_text(), "عربي");
         ui.set_settings(true);
         assert!(!handle(
             &ui,

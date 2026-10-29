@@ -25,7 +25,7 @@ The approved supplied UI update adds the reference launcher appearance, search a
 
 - `src/backup.rs`: the platform module’s backup export, validation and import, including the native chooser and retention of previous data.
 
-- `src/shortcuts.rs`: saved shortcut defaults, conflict validation, key recording and action routing.
+- `src/shortcuts.rs`: saved shortcut defaults, conflict validation, key recording, layout-independent modified letters and action routing.
 
 - `src/item-drop.rs`: shared item move rules for page and folder drops, stable ID lookup, shortcut-preserving folder extraction, empty folder cleanup, and regression tests.
 
@@ -33,6 +33,8 @@ The approved supplied UI update adds the reference launcher appearance, search a
 - `src/ticktick.rs`: TickTick API requests, personal-token storage in the operating system credential store, and task moves, which the API only accepts as a copy into the new list followed by deleting the original.
 - `src/toast.rs`: user feedback levels, short message queue, duplicate suppression and handling while the Launcher is hidden.
 - `src/storage.rs`: shared versioned config, recent, installed-app, icon and backup storage across supported desktop platforms.
+- `src/widget-data.rs`: the local SQLite text collections, stable entry IDs, editing, deletion, search, pagination and storage sizes.
+- `src/widget-data-ui.rs`: Settings → Data callbacks, collection counts, storage meter values, completed TickTick titles and a dedicated worker; database initialization, migrations and reads stay outside the launcher show path.
 - `src/platform-windows.rs`: Windows resident launcher IPC, fullscreen window behavior, registered-file opening, process launch, system actions and Installed apps discovery.
 - `tests/desktop-gestures.py`: opt-in real pointer and persistence checks using an isolated config directory on Hyprland.
 
@@ -60,3 +62,25 @@ The approved v2 UX specification is `Orbit_Desktop_Launcher_UX_Spec_v2.md`; it s
 
 - `src/ai.rs`: independent AI provider/model settings, local model discovery, credential-store access, single-question HTTP requests, response validation and cancelled/stale-result protection.
 - Search bar → AI and the AI Prefix answer panel in `ui/launcher.slint` reuse shared controls and native text selection/clipboard behavior.
+
+- `src/widget-starters.rs`: original bilingual starter text, vocabulary examples, unfinished starter habits, Quran passage attribution and a dated Cairo prayer-time example.
+- `src/widget-views.rs`: local selections, persistent shuffled rotations, completion references, habit state, today's achievements and saved prayer countdowns.
+- `ui/local-widget.slint`: local widget reading hierarchy, scrollable content, fixed action footers, grouped habit rows, an Achievements summary with scrollable completion rows, and local audio actions, displayed above the page gesture surface. `src/widget-data-ui.rs` separates vocabulary and prayer headlines for display without changing saved content.
+
+- `Panel`, `MenuOption` and `SettingsToggle` in `ui/controls.slint` share floating material, menu rows and labeled switches across the complete native interface.
+
+Search locations in `ui/launcher.slint` groups all search paths and file exclusions; Refresh in `src/apps.rs` rebuilds both Installed apps and the file/directory cache on the worker.
+
+Search-result saving in `src/apps.rs` resolves cached results to shortcuts; `src/item-drop.rs` validates atomic page placement, existing-item extraction and exclusive dock ownership. `ui/launcher.slint` provides result context actions and a search drag mode that reveals Pages while preserving the source result.
+
+- `src/adhkar.rs`: Morning and Evening Remembrances starter import, daily per-instance SQLite progress, repetition counting, navigation, completion rules and daily Achievements recording.
+- `data/morning-adhkar.json`: the 25 Arabic remembrances supplied by the user, preserved with their source details.
+- `data/evening-adhkar.json`: the 25 supplied evening remembrances, preserving their wording, repetition counts, source details and notes.
+- `ui/fonts/amiri.ttf` and `AMIRI-OFL.txt`: embedded Amiri Arabic reading font and its SIL OFL license.
+- `ui/assets/adhkar-complete.wav` and `adhkar-all-complete.wav`: distinct generated chimes for one remembrance and the full collection.
+
+- `src/azan.rs`: per-widget prayer locations, named time-zone validation, explicit Aladhan schedule requests, accepted schedule references and zone-aware countdowns.
+- `ui/azan-settings.slint`: Azan settings state and the location/preview sheet; the Azan reading card remains in `ui/local-widget.slint`.
+
+`ui/controls.slint` owns `OrbitText` and the `TextDirection` callbacks for content-aware text alignment throughout the interface.
+- `src/text-direction.rs`: shared Unicode first-strong direction detection for Arabic, English and mixed text.

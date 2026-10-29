@@ -68,6 +68,7 @@ enum Action {
     DeletePrefix(String),
     FilterInstalled(String),
     OpenResult(i32, usize),
+    SaveSearchResult(i32, usize, i32, usize, i32, bool),
     OpenDock(usize, usize, i32),
     Pin(usize),
     Unpin(String),
@@ -127,6 +128,7 @@ impl Action {
             | Self::Unpin(..)
             | Self::Delete(..)
             | Self::AddPage
+            | Self::SaveSearchResult(..)
             | Self::Drop(..)
             | Self::AddPredefined(..)
             | Self::AddInstalledApp(..)
@@ -207,6 +209,7 @@ pub fn connect(launcher: &Launcher) {
             let saving = matches!(
                 action,
                 Action::Pin(_)
+                    | Action::SaveSearchResult(..)
                     | Action::Unpin(_)
                     | Action::Save(..)
                     | Action::SaveWebsite(..)
@@ -228,7 +231,8 @@ pub fn connect(launcher: &Launcher) {
                     | Action::SavePrefix(..)
                     | Action::DeletePrefix(..)
             );
-            let drag_drop = matches!(action, Action::Drop(..));
+            let save_search_result = matches!(action, Action::SaveSearchResult(..));
+            let drag_drop = matches!(action, Action::Drop(..) | Action::SaveSearchResult(..));
             let save_shortcut = matches!(action, Action::SaveShortcut(..));
             let save_action = matches!(
                 action,
@@ -297,7 +301,11 @@ pub fn connect(launcher: &Launcher) {
             } else if success && (update || recent_changed || recent_removed) {
                 apps.update(&weak, page_only);
             }
-            if drag_drop && !success {
+            if save_search_result && success {
+                let _ =
+                    weak.upgrade_in_event_loop(|launcher| launcher.invoke_search_result_saved());
+            }
+            if drag_drop {
                 let _ = weak.upgrade_in_event_loop(|launcher| launcher.invoke_finish_drag());
             }
             if save_shortcut && success {
@@ -323,7 +331,7 @@ pub fn connect(launcher: &Launcher) {
                 launching && success,
                 if success {
                     if refreshing {
-                        Some("Installed apps refreshed")
+                        Some("Search locations refreshed")
                     } else {
                         action_feedback
                     }
@@ -432,6 +440,18 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         let _ = sender.send(Action::TransferData(import));
     });
     let sender = send.clone();
+    launcher
+        .global::<crate::TextDirection>()
+        .on_is_rtl(|text| crate::text_direction::text_is_rtl(&text));
+    launcher.global::<crate::TextDirection>().on_lines(|text| {
+        std::rc::Rc::new(slint::VecModel::from(
+            text.split('\n')
+                .map(slint::SharedString::from)
+                .collect::<Vec<_>>(),
+        ))
+        .into()
+    });
+    launcher.on_text_is_rtl(|text| crate::text_direction::text_is_rtl(&text));
     launcher.on_first_letter(|name| crate::icons::first_letter(&name).into());
     launcher.on_valid_name(|name| add_item::valid_name(&name));
     launcher.on_valid_command(|command| add_item::valid_command(&command));
@@ -693,6 +713,17 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     let sender = send.clone();
     launcher.on_select_ticktick_list(move |widget, project| {
         let _ = sender.send(Action::SelectTickTickList(widget.into(), project.into()));
+    });
+    let sender = send.clone();
+    launcher.on_save_search_result(move |source, index, child, page, target, pin| {
+        let _ = sender.send(Action::SaveSearchResult(
+            source,
+            index as usize,
+            child,
+            page as usize,
+            target,
+            pin,
+        ));
     });
     let sender = send.clone();
     launcher.on_drop_item(move |id, page, target, into| {
@@ -1084,6 +1115,20 @@ impl Apps {
                 self.load_installed_icons();
                 Ok(())
             }
+            Action::SaveSearchResult(source, index, child, page, target, pin) => {
+                let item = self.search_result_item(source, index, child)?;
+                let mut config = self.config.clone();
+                if !crate::item_drop::place_search_result(&mut config, item, page, target, pin)? {
+                    return Ok(());
+                }
+                config
+                    .save()
+                    .map_err(|error| format!("Couldn't save config.json: {error}"))?;
+                self.config = config;
+                self.page = self.config.active_page;
+                self.load_icons()?;
+                Ok(())
+            }
             Action::Pin(index) => {
                 let Some(item) = self.config.pages[self.page].items.get(index) else {
                     return Ok(());
@@ -1283,7 +1328,7 @@ impl Apps {
                 Ok(())
             }
             Action::Widget(variant, slot) => {
-                if !matches!(variant, 7 | 8) {
+                if !(7..crate::spatial::WIDGETS.len()).contains(&variant) {
                     return Err("Unknown widget type".into());
                 }
                 let id = new_id()?;
@@ -1797,6 +1842,67 @@ impl Apps {
         Ok(())
     }
 
+    fn search_result_item(&self, page: i32, index: usize, child: i32) -> Result<Item, String> {
+        if page >= 0 {
+            let item = self
+                .config
+                .pages
+                .get(page as usize)
+                .and_then(|page| page.items.get(index))
+                .ok_or("Item is missing")?;
+            return match item {
+                Item::Folder { apps, .. } if child >= 0 => apps
+                    .get(child as usize)
+                    .cloned()
+                    .map(App::into_item)
+                    .ok_or("Item is missing".into()),
+                _ => Ok(item.clone()),
+            };
+        }
+        self.cached_search_result(page, index).map(App::into_item)
+    }
+
+    fn cached_search_result(&self, page: i32, index: usize) -> Result<App, String> {
+        let (name, icon, launch) = match page {
+            -1 => {
+                let (_, name, action) = ACTIONS.get(index).ok_or("Action is missing")?;
+                ((*name).into(), Icon::Letter, Launch::Action(action.clone()))
+            }
+            -2 => {
+                let app = self
+                    .inventory
+                    .apps()
+                    .get(index)
+                    .ok_or("Installed app is missing")?;
+                (
+                    app.name.clone(),
+                    app.icon.clone(),
+                    Launch::Installed(app.id.clone()),
+                )
+            }
+            -3 | -4 => {
+                let path = self
+                    .search_paths
+                    .as_ref()
+                    .and_then(|paths| paths.get(index))
+                    .ok_or("Path is missing")?;
+                let launch = if path.directory {
+                    Launch::Directory(path.path.clone())
+                } else {
+                    Launch::File(path.path.clone())
+                };
+                (path.name.clone(), Icon::Letter, launch)
+            }
+            _ => return Err("Item cannot be added".into()),
+        };
+        Ok(App {
+            id: new_id()?,
+            name,
+            icon,
+            launch,
+        })
+    }
+
     fn refresh_installed_apps(
         &mut self,
         requests: &RequestSequence,
@@ -1822,6 +1928,7 @@ impl Apps {
         )
         .map_err(|error| format!("Couldn't save installed apps: {error}"))?;
         self.inventory.replace(installed_apps);
+        self.search_paths = Some(index_search_paths(&self.config));
         self.load_installed_icons();
         Ok(())
     }
@@ -3036,7 +3143,7 @@ pub(crate) fn parse_ticktick_query(query: &str) -> Result<TickTickDraft, String>
                 "medium" => 3,
                 "low" => 1,
                 "none" => 0,
-                "today" => {
+                "today" | "!" => {
                     today = true;
                     continue;
                 }
@@ -3292,6 +3399,7 @@ struct Tile {
     item_size: i32,
     grid_gap: i32,
     widget: bool,
+    widget_kind: i32,
     ticktick: bool,
     ticktick_next: bool,
     ticktick_project_id: String,
@@ -3353,6 +3461,7 @@ impl Tile {
                 ..
             } => {
                 tile.widget = true;
+                tile.widget_kind = *variant as i32;
                 tile.ticktick = matches!(*variant, 7 | 8);
                 tile.ticktick_next = *variant == 8;
                 tile.ticktick_project_id = ticktick_project_id.clone();
@@ -3459,6 +3568,7 @@ impl Tile {
             span_x: self.rect.width.max(1) as i32,
             span_y: self.rect.height.max(1) as i32,
             widget: self.widget,
+            widget_kind: self.widget_kind,
             ticktick: self.ticktick,
             ticktick_next: self.ticktick_next,
             ticktick_project_id: self.ticktick_project_id.into(),
@@ -4010,6 +4120,28 @@ mod tests {
                 .id,
             "inbox-id"
         );
+    }
+
+    #[test]
+    fn ticktick_double_exclamation_sets_today_like_today_metadata() {
+        for date in ["!today", "!!"] {
+            for query in [
+                format!("Buy milk {date} !high #home ~Shopping List"),
+                format!("{date} Buy milk !high #home ~Shopping List"),
+                format!("Buy milk !high #home ~Shopping List {date}"),
+            ] {
+                let task = parse_ticktick_query(&query).unwrap();
+                assert!(task.today, "{query}");
+                assert_eq!(task.title, "Buy milk");
+                assert_eq!(task.priority, 5);
+                assert_eq!(task.tags, ["home"]);
+                assert_eq!(task.list.as_deref(), Some("Shopping List"));
+            }
+            assert!(parse_ticktick_query(date).is_err());
+        }
+        let task = parse_ticktick_query("Buy milk!!").unwrap();
+        assert_eq!(task.title, "Buy milk!!");
+        assert!(!task.today);
     }
 
     #[test]

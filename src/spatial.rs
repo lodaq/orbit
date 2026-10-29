@@ -286,7 +286,7 @@ fn folder_target(
 }
 
 // Legacy indexes remain readable only so old saved widgets can be migrated.
-pub const WIDGETS: [&str; 9] = [
+pub const WIDGETS: [&str; 20] = [
     "Random Text",
     "Random Quote",
     "Random Fact",
@@ -296,8 +296,19 @@ pub const WIDGETS: [&str; 9] = [
     "Custom Text",
     "TickTick Tasks",
     "TickTick Focus Task",
+    "Random Quote",
+    "Random Fact",
+    "Motivation",
+    "Affirmation",
+    "Vocabulary Builder",
+    "Achievements",
+    "Quran Player",
+    "Azan Reminder",
+    "Habit Tracker",
+    "Morning Remembrances",
+    "Evening Remembrances",
 ];
-pub const WIDGET_SPANS: [(usize, usize); 9] = [
+pub const WIDGET_SPANS: [(usize, usize); 20] = [
     (2, 2),
     (2, 2),
     (2, 2),
@@ -307,8 +318,19 @@ pub const WIDGET_SPANS: [(usize, usize); 9] = [
     (2, 2),
     (2, 2),
     (4, 2),
+    (2, 2),
+    (2, 2),
+    (2, 2),
+    (2, 2),
+    (2, 2),
+    (2, 2),
+    (3, 2),
+    (2, 2),
+    (2, 2),
+    (3, 5),
+    (3, 5),
 ];
-pub const WIDGET_MIN_SPANS: [(usize, usize); 9] = [
+pub const WIDGET_MIN_SPANS: [(usize, usize); 20] = [
     (2, 1),
     (2, 1),
     (2, 1),
@@ -318,8 +340,30 @@ pub const WIDGET_MIN_SPANS: [(usize, usize); 9] = [
     (2, 1),
     (2, 2),
     (4, 1),
+    (2, 2),
+    (2, 2),
+    (2, 2),
+    (2, 2),
+    (2, 2),
+    (2, 2),
+    (3, 2),
+    (2, 2),
+    (2, 2),
+    (3, 3),
+    (3, 3),
 ];
-pub const WIDGET_MAX_SPANS: [(usize, usize); 9] = [
+pub const WIDGET_MAX_SPANS: [(usize, usize); 20] = [
+    (128, 128),
+    (128, 128),
+    (128, 128),
+    (128, 128),
+    (128, 128),
+    (128, 128),
+    (128, 128),
+    (128, 128),
+    (128, 128),
+    (128, 128),
+    (128, 128),
     (128, 128),
     (128, 128),
     (128, 128),

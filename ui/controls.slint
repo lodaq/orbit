@@ -1,5 +1,14 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
+export global TextDirection {
+    pure callback is-rtl(string) -> bool;
+    pure callback lines(string) -> [string];
+}
+
+export component OrbitText inherits Text {
+    horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left;
+}
+
 // A native keycap for shortcut hints and editable shortcut displays.
 export component Kbd inherits Rectangle {
     in property <string> label;
@@ -15,7 +24,7 @@ export component Kbd inherits Rectangle {
     border-color: Theme.kbd-border; border-width: Theme.border-width;
     border-radius: Theme.kbd-radius;
     Rectangle { x: Theme.kbd-radius; y: parent.height - Theme.border-width; width: max(0px, parent.width - 2 * self.x); height: Theme.border-width; background: Theme.kbd-shadow; }
-    key-label := Text {
+    key-label := OrbitText {
         x: Theme.kbd-padding; width: max(0px, parent.width - 2 * self.x); height: parent.height;
         text: root.display; color: Theme.secondary; font-size: Theme.kbd-font-size; font-weight: 500;
         horizontal-alignment: center; vertical-alignment: center; overflow: elide;
@@ -23,6 +32,7 @@ export component Kbd inherits Rectangle {
 }
 
 export component AddOption inherits Rectangle {
+    in property <bool> menu-style;
     in property <bool> add-style;
     in property <bool> type-tile;
     in property <bool> source-tab;
@@ -51,13 +61,14 @@ export component AddOption inherits Rectangle {
     accessible-role: button;
     accessible-label: shortcut != "" ? shortcut : label;
     accessible-enabled: enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
     accessible-checked: selected;
     forward-focus: keyboard-focus;
     border-radius: root.source-tab ? 0px : root.type-tile ? 12px : root.add-style ? Theme.add-radius : (root.settings-style ? Theme.settings-r-control : Theme.radius-control);
-    border-width: focused ? Theme.focus-width : root.source-tab ? 0px : root.navigation-style || root.tab-style || root.dashed-style ? 0px : Theme.border-width;
+    border-width: focused ? Theme.focus-width : root.menu-style ? 0px : root.source-tab ? 0px : root.navigation-style || root.tab-style || root.dashed-style ? 0px : Theme.border-width;
     border-color: root.add-style ? (focused || selected ? Theme.add-focus : Theme.add-border) : focused ? (root.settings-style ? Theme.settings-icon-accent : Theme.focus) : root.settings-style && root.destructive ? Theme.settings-danger-border : (selected ? (root.settings-style ? Theme.settings-border-control : Theme.primary) : (root.settings-style ? Theme.settings-border-control : Theme.border));
     opacity: enabled || settings-style || add-style ? 1 : 0.45;
-    background: root.add-style ? (root.source-tab ? transparent : !root.enabled ? #1f2647 : root.primary ? Theme.add-primary : root.selected ? Theme.add-selected : root.hovered ? Theme.add-hover : Theme.add-field) : root.settings-style
+    background: root.menu-style ? (root.selected ? Theme.selection : root.hovered ? Theme.raised : transparent) : root.add-style ? (root.source-tab ? transparent : !root.enabled ? Theme.settings-disabled-bg : root.primary ? Theme.add-primary : root.selected ? Theme.add-selected : root.hovered ? Theme.add-hover : Theme.add-field) : root.settings-style
         ? !enabled ? Theme.settings-disabled-bg
             : hit-area.pressed ? Theme.settings-bg-inset
             : destructive ? Theme.settings-danger-bg
@@ -66,24 +77,32 @@ export component AddOption inherits Rectangle {
             : hovered ? Theme.settings-disabled-bg
             : root.dashed-style ? Theme.settings-bg-inset : root.navigation-style || root.tab-style ? transparent : Theme.settings-bg-control
         : destructive ? Theme.error-background : primary ? Theme.primary : selected ? Theme.selection : hovered ? Theme.raised : Theme.field;
+    // Keep the hit target fixed while the surface responds to the press.
+    Rectangle {
+        width: parent.width; height: parent.height;
+        border-radius: parent.border-radius;
+        background: Theme.press-overlay;
+        opacity: hit-area.pressed && root.enabled ? 1 : 0;
+        animate opacity { duration: hit-area.pressed ? 0ms : Theme.control-release; easing: ease-out; }
+    }
     if root.source-tab && root.selected: Rectangle { y: parent.height - 2px; height: 2px; width: parent.width; background: Theme.add-focus; }
     if icon-present: Image { x: root.type-tile ? (parent.width - self.width) / 2 : root.settings-style && root.width <= 40px ? 10px : Theme.space-3; y: root.type-tile ? 13px : (parent.height - self.height) / 2; width: root.type-tile ? 22px : root.settings-style ? 18px : Theme.icon-control-size; height: self.width; source: root.icon; image-fit: contain; }
-    option-label := Text {
+    option-label := OrbitText {
         x: root.type-tile ? 2px : root.settings-style && root.width <= 40px ? 0px : root.icon-present ? Theme.space-3 + (root.settings-style ? 18px : Theme.icon-control-size) + Theme.space-3 : Theme.space-3;
         y: root.type-tile ? 39px : 0px;
-        width: root.type-tile ? parent.width - 4px : max(0px, parent.width - self.x - (root.settings-style && root.width <= 40px ? 0px : root.trailing == "" ? Theme.space-3 : root.settings-style ? 32px : 72px));
+        width: root.type-tile ? parent.width - 4px : max(0px, parent.width - self.x - (root.settings-style && root.width <= 40px ? 0px : root.trailing == "" ? Theme.space-3 : root.settings-style || root.menu-style ? 32px : 72px));
         height: root.type-tile ? 22px : parent.height;
         text: root.label;
         color: root.add-style ? (!root.enabled ? Theme.add-secondary : root.selected || root.primary ? white : Theme.add-text) : root.settings-style && !root.enabled ? Theme.settings-disabled-text : root.dashed-style ? Theme.settings-text-accent : root.navigation-style && !root.selected ? Theme.settings-text-muted : root.destructive ? (root.settings-style ? Theme.settings-danger-text : Theme.error) : root.primary ? Theme.on-primary : (root.settings-style ? Theme.settings-text : Theme.text);
         font-size: (root.settings-style ? Theme.type-body : Theme.type-control);
         font-weight: root.selected || root.primary ? 600 : 500;
-        horizontal-alignment: root.full-width || root.trailing != "" ? left : center;
+        horizontal-alignment: root.menu-style || root.full-width || root.trailing != "" ? (TextDirection.is-rtl(self.text) ? right : left) : center;
         vertical-alignment: center;
         overflow: elide;
     }
-    if trailing != "": Text {
+    if trailing != "": OrbitText {
         x: parent.width - self.width - Theme.space-3;
-        width: root.settings-style ? 24px : 72px;
+        width: root.settings-style || root.menu-style ? 24px : 72px;
         height: parent.height;
         text: root.trailing;
         color: root.primary ? Theme.on-primary : (root.settings-style ? Theme.settings-text-muted : Theme.secondary);
@@ -98,9 +117,10 @@ export component AddOption inherits Rectangle {
     hit-area := TouchArea {
         enabled: root.enabled;
         mouse-cursor: pointer;
-        clicked => { if root.settings-style { keyboard-focus.focus(); } root.clicked(); }
+        clicked => { keyboard-focus.focus(); root.clicked(); }
     }
     keyboard-focus := FocusScope {
+        enabled: root.enabled;
         width: 0px;
         height: 0px;
         key-pressed(event) => {
@@ -116,12 +136,14 @@ export component AddOption inherits Rectangle {
 export component AddField inherits VerticalLayout {
     in property <bool> add-style;
     in property <bool> settings-style;
+    in property <string> accessible-name: label;
     in property <string> label;
     in property <string> placeholder;
     in property <string> error;
     in-out property <string> text;
     in property <bool> enabled: true;
     in property <bool> multiline;
+    in property <length> multiline-height: Theme.field-multiline-height;
     in property <bool> secret;
     callback accepted;
     callback edited;
@@ -130,31 +152,31 @@ export component AddField inherits VerticalLayout {
     horizontal-stretch: 1;
     forward-focus: input-field;
 
-    if root.label != "": Text {
+    if root.label != "": OrbitText {
         text: root.label;
         color: (root.add-style ? Theme.add-text : root.settings-style ? Theme.settings-text-muted : Theme.text);
         font-size: Theme.type-control;
         font-weight: root.add-style ? 600 : 500;
     }
     Rectangle {
-        height: root.add-style ? (root.multiline ? 132px : Theme.add-control-height) : root.multiline ? Theme.field-multiline-height : Theme.control-height;
+        height: root.add-style ? (root.multiline ? 132px : Theme.add-control-height) : root.multiline ? root.multiline-height : Theme.control-height;
         horizontal-stretch: 1;
         border-radius: (root.add-style ? Theme.add-radius : root.settings-style ? Theme.settings-r-control : Theme.radius-control);
         background: (root.add-style ? Theme.add-field : root.settings-style ? Theme.settings-bg-inset : Theme.field);
         border-width: input-field.has-focus ? Theme.focus-width : Theme.border-width;
         border-color: root.error != "" ? (root.settings-style ? Theme.settings-danger-text : Theme.error) : input-field.has-focus ? (root.add-style ? Theme.add-focus : root.settings-style ? Theme.settings-icon-accent : Theme.focus) : (root.add-style ? Theme.add-border : root.settings-style ? Theme.settings-border-control : Theme.border);
-        Text { x: Theme.space-3; y: Theme.space-2; width: parent.width - 2 * Theme.space-3; visible: root.text == ""; text: root.placeholder; color: (root.add-style ? Theme.add-secondary : root.settings-style ? Theme.settings-text-muted : Theme.secondary); font-size: Theme.type-body;
+        OrbitText { x: Theme.space-3; y: Theme.space-2; width: parent.width - 2 * Theme.space-3; visible: root.text == ""; text: root.placeholder; color: (root.add-style ? Theme.add-secondary : root.settings-style ? Theme.settings-text-muted : Theme.secondary); font-size: Theme.type-body;
             font-family: root.add-style && root.multiline ? "monospace" : "Inter"; }
         field-scroll := ScrollView {
             x: Theme.space-3; y: Theme.space-2;
             width: parent.width - 2 * Theme.space-3;
             height: parent.height - 2 * Theme.space-2;
-            horizontal-scrollbar-policy: always-off;
-            vertical-scrollbar-policy: root.multiline ? ScrollBarPolicy.as-needed : ScrollBarPolicy.always-off;
-            content-width: self.visible-width;
+            horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+            vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+            content-width: root.multiline ? self.visible-width : max(self.visible-width, input-field.preferred-width + Theme.border-width);
             content-height: root.multiline ? max(self.visible-height, input-field.preferred-height) : self.visible-height;
             input-field := TextInput {
-                width: field-scroll.visible-width;
+                width: field-scroll.content-width;
                 height: field-scroll.content-height;
                 wrap: root.multiline ? TextWrap.word-wrap : TextWrap.no-wrap;
                 page-height: field-scroll.visible-height;
@@ -166,8 +188,13 @@ export component AddField inherits VerticalLayout {
                         } else if point.y + line-height + field-scroll.content-y > field-scroll.visible-height {
                             field-scroll.content-y = min(0px, max(field-scroll.visible-height - self.height, field-scroll.visible-height - point.y - line-height));
                         }
+                    } else if point.x + field-scroll.content-x < 0px {
+                        field-scroll.content-x = min(0px, -point.x);
+                    } else if point.x + Theme.border-width + field-scroll.content-x > field-scroll.visible-width {
+                        field-scroll.content-x = min(0px, max(field-scroll.visible-width - self.width, field-scroll.visible-width - point.x - Theme.border-width));
                     }
                 }
+                horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left;
                 text <=> root.text;
                 enabled: root.enabled;
                 single-line: !root.multiline;
@@ -189,7 +216,7 @@ export component AddField inherits VerticalLayout {
             }
         }
     }
-    if error != "": Text {
+    if error != "": OrbitText {
         text: "! " + root.error;
         color: (root.settings-style ? Theme.settings-danger-text : Theme.error);
         font-size: Theme.type-hint;
@@ -242,6 +269,22 @@ export component SmoothCaret inherits Rectangle {
 }
 
 
+// Floating layers share a material; the content chooses its own geometry.
+export component Panel inherits Rectangle {
+    background: Theme.sheet;
+    border-width: Theme.border-width;
+    border-color: Theme.border;
+    border-radius: Theme.radius-sheet;
+    drop-shadow-color: Theme.surface-shadow;
+    drop-shadow-blur: Theme.surface-shadow-blur;
+    drop-shadow-offset-y: Theme.space-2;
+}
+
+export component MenuOption inherits AddOption {
+    menu-style: true;
+    height: Theme.control-height;
+}
+
 export component SettingsButton inherits AddOption {
     settings-style: true;
     accessible-action-default => { if root.enabled { root.clicked(); } }
@@ -275,13 +318,13 @@ export component SettingsCard inherits Rectangle {
     border-radius: Theme.settings-r-card;
 }
 
-export component SettingsTitle inherits Text {
+export component SettingsTitle inherits OrbitText {
     color: Theme.settings-text;
     font-size: Theme.settings-card-title-size;
-    font-weight: 500;
+    font-weight: 600;
 }
 
-export component SettingsDescription inherits Text {
+export component SettingsDescription inherits OrbitText {
     color: Theme.settings-text-muted;
     font-size: Theme.type-control;
     wrap: word-wrap;
@@ -309,6 +352,7 @@ export component SettingsTab inherits SettingsButton {
 }
 
 export component SettingsSwitch inherits Rectangle {
+    in property <string> label: "Smooth cursor";
     in property <bool> checked;
     in property <bool> enabled: true;
     callback toggled;
@@ -317,11 +361,25 @@ export component SettingsSwitch inherits Rectangle {
     background: checked ? Theme.settings-primary : Theme.settings-border-control;
     border-width: focus.has-focus ? Theme.focus-width : 0px; border-color: Theme.settings-icon-accent;
     opacity: enabled ? 1 : 0.45;
-    accessible-role: switch; accessible-label: "Smooth cursor"; accessible-checked: checked; accessible-enabled: enabled;
+    accessible-role: switch; accessible-label: label; accessible-checked: checked; accessible-enabled: enabled;
     forward-focus: focus;
-    Rectangle { x: root.checked ? 23px : 3px; y: 3px; width: 20px; height: 20px; border-radius: 10px; background: root.checked ? Theme.settings-primary-text : Theme.settings-text-muted; }
+    animate background { duration: Theme.control-release; }
+    Rectangle { x: root.checked ? 23px : 3px; y: 3px; width: 20px; height: 20px; border-radius: Theme.radius-control; background: Theme.settings-primary-text;
+        animate x { duration: Theme.control-release; easing: ease-out; }
+    }
     TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { focus.focus(); root.toggled(); } }
     focus := FocusScope { key-pressed(event) => { if root.enabled && (event.text == " " || event.text == "\n") { root.toggled(); return accept; } reject; } }
+}
+
+export component SettingsToggle inherits HorizontalLayout {
+    in property <string> label;
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled;
+    height: Theme.settings-h-control;
+    spacing: Theme.space-4;
+    OrbitText { text: root.label; color: Theme.text; font-size: Theme.type-body; vertical-alignment: center; horizontal-stretch: 1; }
+    SettingsSwitch { label: root.label; checked: root.checked; enabled: root.enabled; toggled => { root.toggled(); } }
 }
 
 export component SettingsChip inherits Rectangle {
@@ -335,7 +393,7 @@ export component SettingsChip inherits Rectangle {
     height: 30px;
     background: Theme.settings-bg-inset; border-radius: Theme.settings-r-small;
     border-width: Theme.border-width; border-color: accent ? Theme.settings-border-dashed : Theme.settings-border-panel;
-    Text {
+    OrbitText {
         x: 12px; y: 0px; width: max(0px, parent.width - 42px); height: parent.height;
         text: root.label; font-family: root.path-name ? "monospace" : "Inter";
         color: root.accent ? Theme.settings-text-accent : Theme.settings-text-chip;
@@ -404,19 +462,21 @@ export component SettingsSelect inherits Rectangle {
     in property <bool> enabled: true;
     in property <string> label: "Choose";
     width: 220px; height: Theme.settings-h-control;
-    background: hit.has-hover ? Theme.settings-bg-control : Theme.settings-bg-inset;
+    background: hit.pressed ? Theme.selection : hit.has-hover ? Theme.settings-bg-control : Theme.settings-bg-inset;
     border-radius: Theme.settings-r-control;
     border-width: focus.has-focus ? Theme.focus-width : Theme.border-width;
     border-color: focus.has-focus ? Theme.settings-icon-accent : Theme.settings-border-control;
+    opacity: enabled ? 1 : 0.45;
     accessible-role: combobox; accessible-label: label;
     accessible-action-expand => { if root.enabled { choices.show(); } }
     accessible-value: model[current-index]; accessible-enabled: enabled;
     forward-focus: focus;
-    Text { x: 14px; width: parent.width - 48px; height: parent.height; text: root.model[root.current-index]; color: root.enabled ? Theme.settings-text : Theme.settings-disabled-text; font-size: Theme.type-body; vertical-alignment: center; overflow: elide; }
-    Text { x: parent.width - 30px; width: 16px; height: parent.height; text: "⌄"; color: Theme.settings-text-muted; vertical-alignment: center; }
+    OrbitText { x: 14px; width: parent.width - 48px; height: parent.height; text: root.model[root.current-index]; color: root.enabled ? Theme.settings-text : Theme.settings-disabled-text; font-size: Theme.type-body; vertical-alignment: center; overflow: elide; }
+    OrbitText { x: parent.width - 30px; width: 16px; height: parent.height; text: "⌄"; color: Theme.settings-text-muted; vertical-alignment: center; }
     hit := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { focus.focus(); choices.show(); } }
     focus := FocusScope {
         enabled: root.enabled;
+        width: 0px; height: 0px;
         key-pressed(event) => {
             if event.text == Key.UpArrow { root.current-index = max(0, root.current-index - 1); root.selected(); return accept; }
             if event.text == Key.DownArrow { root.current-index = min(root.model.length - 1, root.current-index + 1); root.selected(); return accept; }
@@ -435,7 +495,7 @@ export component SettingsSelect inherits Rectangle {
                 if event.text == "\n" || event.text == Key.Escape { choices.close(); focus.focus(); return accept; }
                 reject;
             }
-        Rectangle {
+        Panel {
             width: parent.width; height: parent.height;
             background: Theme.settings-bg-panel; border-color: Theme.settings-border-control; border-width: 1px; border-radius: Theme.settings-r-control;
             Flickable {
@@ -444,7 +504,7 @@ export component SettingsSelect inherits Rectangle {
                 content-y: -max(0px, min(root.current-index * 42px, self.content-height - self.height));
                 VerticalLayout {
                     width: root.width - 8px; spacing: 2px;
-                    for choice[index] in root.model: SettingsButton {
+                    for choice[index] in root.model: MenuOption {
                         label: choice; selected: root.current-index == index; option-width: root.width - 8px;
                         clicked => { root.current-index = index; root.selected(); choices.close(); focus.focus(); }
                     }
@@ -468,14 +528,14 @@ export component AddItemRow inherits Rectangle {
     background: Theme.add-field;
     border-width: 1px;
     border-color: Theme.add-border;
-    border-radius: 12px;
+    border-radius: Theme.radius-preview;
     Rectangle {
         x: 12px; y: 12px; width: 40px; height: 40px;
-        background: Theme.add-selected; border-radius: 10px;
+        background: Theme.add-selected; border-radius: Theme.radius-control;
         if root.icon-present: Image { source: root.icon; image-fit: contain; width: 22px; height: 22px; x: 9px; y: 9px; }
-        if !root.icon-present: Text { text: root.letter; color: Theme.add-focus; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+        if !root.icon-present: OrbitText { text: root.letter; color: Theme.add-focus; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
     }
-    Text { x: 64px; y: root.description == "" ? 0px : 10px; width: max(0px, parent.width - 160px); height: root.description == "" ? parent.height : 22px; text: root.label; color: Theme.add-text; font-size: 14px; font-weight: 500; vertical-alignment: center; overflow: elide; }
-    if root.description != "": Text { x: 64px; y: 34px; width: max(0px, parent.width - 160px); height: 18px; text: root.description; color: Theme.add-secondary; font-size: 12px; overflow: elide; }
+    OrbitText { x: 64px; y: root.description == "" ? 0px : 10px; width: max(0px, parent.width - 160px); height: root.description == "" ? parent.height : 22px; text: root.label; color: Theme.add-text; font-size: Theme.type-body; font-weight: 500; vertical-alignment: center; overflow: elide; }
+    if root.description != "": OrbitText { x: 64px; y: 34px; width: max(0px, parent.width - 160px); height: 18px; text: root.description; color: Theme.add-secondary; font-size: Theme.type-hint; overflow: elide; }
     AddOption { add-style: true; x: parent.width - 88px; y: 12px; width: 76px; height: 40px; label: "+ Add"; accessible-label: "Add " + root.label; enabled: root.enabled; clicked => { root.clicked(); } }
 }

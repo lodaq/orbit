@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# Resolve named prayer time zones and seasonal clock changes locally.
+chrono-tz = "=0.10.4"
+# Store editable widget content transactionally in one portable local database.
+rusqlite = { version = "=0.41.0", default-features = false, features = ["bundled"] }
 # Use the already bundled Slint core to apply native text edits independently of held shortcut modifiers.
 i-slint-core = "=1.18.1"
 # Release the local model on normal process termination without platform-specific signal code.
@@ -22,6 +26,8 @@ image = { version = "=0.25.10", default-features = false, features = ["ico"] }
 # Open native file and directory choosers through the desktop portal.
 rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal"] }
 
+# Resolve displayed and editable text direction using Unicode’s first-strong rule.
+unicode-bidi = "=0.3.18"
 # Count visible characters, including joined emoji, in Letter icons.
 unicode-segmentation = "1.13"
 # Make TickTick and AI HTTP/JSON requests on background workers.

@@ -55,6 +55,10 @@ Correct first, then simple, then minimal, then fast. The exception is the hot pa
 
 Project filenames use kebab-case. Keep tool-required names such as `Cargo.toml`, `Cargo.lock` and `AGENTS.md`, and upstream license filenames. Rust module identifiers keep Rust syntax; a path attribute maps a kebab-case filename when needed.
 
+## Arabic text
+
+Always support Arabic right-to-left text throughout Orbit, including widgets, lists, Settings, sheets and editable fields. Use the shared Unicode first-strong direction check: Arabic-leading text aligns right and English-leading text aligns left; preserve bidirectional shaping and punctuation. Align independently rendered multilingual paragraphs by their own text. Keep intentionally centered icons and short control labels centered. Verify Arabic, English and mixed content when changing text controls.
+
 ## 6. Before finishing a task
 
 - `cargo fmt` and `cargo clippy -- -D warnings` must pass.

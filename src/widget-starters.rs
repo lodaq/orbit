@@ -1,0 +1,112 @@
+// Original starter text is kept local; no service is contacted when a collection opens.
+pub const TEXT: &[(&str, &str, &str, &str)] = &[
+    (
+        "quotes",
+        "A small beginning is still a beginning.",
+        "Orbit starter",
+        "",
+    ),
+    ("quotes", "Make room for what matters.", "Orbit starter", ""),
+    (
+        "quotes",
+        "خطوة صغيرة اليوم خير من انتظار البداية المثالية.",
+        "نص تجريبي من Orbit",
+        "",
+    ),
+    (
+        "facts",
+        "One kilometre equals 1,000 metres.",
+        "Metric units",
+        "",
+    ),
+    (
+        "facts",
+        "A full circle measures 360 degrees.",
+        "Geometry",
+        "",
+    ),
+    (
+        "facts",
+        "يتكوّن جزيء الماء من ذرتَي هيدروجين وذرة أكسجين.",
+        "H₂O",
+        "",
+    ),
+    (
+        "motivation",
+        "Choose one small thing and finish it.",
+        "Orbit starter",
+        "",
+    ),
+    (
+        "motivation",
+        "Rest, then take the next step.",
+        "Orbit starter",
+        "",
+    ),
+    (
+        "motivation",
+        "تقدّم على مهل، لكن استمر.",
+        "نص تجريبي من Orbit",
+        "",
+    ),
+    (
+        "affirmations",
+        "I can take this one step at a time.",
+        "Orbit starter",
+        "",
+    ),
+    (
+        "affirmations",
+        "I am learning at my own pace.",
+        "Orbit starter",
+        "",
+    ),
+    (
+        "affirmations",
+        "أستطيع أن أتعلم وأن أتقدم كل يوم.",
+        "نص تجريبي من Orbit",
+        "",
+    ),
+    (
+        "vocabulary",
+        "curious · فضولي\nEager to learn or understand.\nA curious reader asks questions.\nالقارئ الفضولي يطرح الأسئلة.",
+        "Original example",
+        "",
+    ),
+    (
+        "vocabulary",
+        "steady · ثابت\nContinuing at an even pace.\nSmall, steady progress adds up.\nالتقدم الصغير والثابت يصنع فرقًا.",
+        "Original example",
+        "",
+    ),
+    (
+        "vocabulary",
+        "kind · لطيف\nShowing care for others.\nA kind word can help.\nقد تساعد كلمة لطيفة.",
+        "Original example",
+        "",
+    ),
+    (
+        "habits",
+        "Read for ten minutes",
+        "Choose a book you enjoy.",
+        "",
+    ),
+    (
+        "habits",
+        "تعلّم شيئًا جديدًا",
+        "اختر فكرة صغيرة لتتعلمها اليوم.",
+        "",
+    ),
+    (
+        "quran_player",
+        "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ\nIn the name of Allah, the Merciful, the Compassionate.",
+        "Quran 1:1 · https://quran.com/1/1",
+        "",
+    ),
+    (
+        "azan_reminder",
+        "Fajr 05:36\nDhuhr 12:39\nAsr 15:51\nMaghrib 18:14\nIsha 19:32",
+        "Example · Cairo, Egypt · Africa/Cairo · Egyptian General Authority of Survey · https://aladhan.com",
+        "2026-10-25",
+    ),
+];

@@ -109,7 +109,7 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
             winit::event::WindowEvent::KeyboardInput { event, .. }
                 if event.state == winit::event::ElementState::Pressed =>
             {
-                if crate::shortcuts::handle(&launcher, &event.logical_key, modifiers) {
+                if crate::shortcuts::handle_event(&launcher, event, modifiers) {
                     return EventResult::PreventDefault;
                 }
             }
@@ -353,12 +353,31 @@ pub fn scan_installed_apps() -> io::Result<Vec<InstalledApp>> {
 }
 
 pub fn play_completion_sound() {
-    let Ok(path) = config_path().map(|p| p.with_file_name("task-complete.wav")) else {
+    play_sound(
+        "task-complete.wav",
+        include_bytes!("../ui/assets/task-complete.wav"),
+    );
+}
+
+pub fn play_adhkar_sound(all_done: bool) {
+    if all_done {
+        play_sound(
+            "adhkar-all-complete.wav",
+            include_bytes!("../ui/assets/adhkar-all-complete.wav"),
+        );
+    } else {
+        play_sound(
+            "adhkar-complete.wav",
+            include_bytes!("../ui/assets/adhkar-complete.wav"),
+        );
+    }
+}
+
+fn play_sound(name: &str, bytes: &[u8]) {
+    let Ok(path) = config_path().map(|p| p.with_file_name(name)) else {
         return;
     };
-    if !path.exists()
-        && std::fs::write(&path, include_bytes!("../ui/assets/task-complete.wav")).is_err()
-    {
+    if !path.exists() && std::fs::write(&path, bytes).is_err() {
         return;
     }
     let _ = Command::new("powershell.exe")

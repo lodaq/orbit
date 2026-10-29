@@ -39,7 +39,7 @@ Actions with no default binding can also be assigned: Open Settings, Add page an
 
 ## Desktop navigation
 
-Type a Prefix Token followed by Tab or Space to activate it. The Prefix name appears as a badge and search results are hidden until the Prefix is cleared. Backspace removes the active Prefix when the query is empty. Enter sends the remaining text to its Action. For a TickTick task, type `t`, press Tab or Space, then enter `Buy milk !today !high #home ~Buy` and press Enter. `!today` sets today's due date; `!high`, `!medium`, `!low` and `!none` set priority; `#tag` adds a tag; `~` and `^` select a list. Put a multiword list name at the end, for example `~hall of fame`. Leading emoji may be omitted when the readable name identifies one list. Omit the list to use Inbox. Task creation updates the widget immediately, then confirms the save or rolls back with a specific error.
+Type a Prefix Token followed by Tab or Space to activate it. The Prefix name appears as a badge and search results are hidden until the Prefix is cleared. Backspace removes the active Prefix when the query is empty. Enter sends the remaining text to its Action. For a TickTick task, type `t`, press Tab or Space, then enter `Buy milk !today !high #home ~Buy` and press Enter. `!today` or `!!` sets today's due date; `!high`, `!medium`, `!low` and `!none` set priority; `#tag` adds a tag; `~` and `^` select a list. Put a multiword list name at the end, for example `~hall of fame`. Leading emoji may be omitted when the readable name identifies one list. Omit the list to use Inbox. Task creation updates the widget immediately, then confirms the save or rolls back with a specific error.
 
 Search engines: `:br` Brave, `:g` Google, `:d` DuckDuckGo, `:q` Qwant, `:b` Bing, `:sp` Startpage and `:e` Ecosia. Other site-search Tokens are `g` or `ل` for ChatGPT, `c` or `ؤ` for Claude, `gh` for GitHub, `m` for Google Maps, `i` or `ه` for Image Search, `p` or `ح` for Perplexity, `w` or `ص` for Wikipedia, `ف` for Arabic-to-English Translate, `tr` for English-to-Arabic Translate, and `y` or `غ` for YouTube. Type a Token, press Space or Tab, enter the query, then press Enter.
 
@@ -63,6 +63,7 @@ Search engines: `:br` Brave, `:g` Google, `:d` DuckDuckGo, `:q` Qwant, `:b` Bing
 | Right-click a Recent dock item | Remove from Recent |
 | Drag an item | Move it between pages, into a folder, or reorder it |
 | Wheel up / down | Scroll the page |
+| Two-finger horizontal touchpad swipe | Move the page left or right, following the scroll direction configured on the desktop |
 | Shift + wheel up | Next page |
 | Shift + wheel down | Previous page |
 | Click a page dot | Open that page |
@@ -98,3 +99,9 @@ Personal Hyprland binding: **Alt+T** runs `orbit ticktick`, opening Search anyth
 AI Prefix: type **ai**, then **Space** or **Tab**. Enter submits a fresh question to the selected Ollama, OpenAI or Gemini model and displays the answer inside Orbit. Ask submits with the mouse; Cancel invalidates the pending reply; Copy copies the answer. Backspace on an empty prompt or Esc clears the Prefix through the existing navigation rules.
 
 While AI is active, page-switch shortcuts and hidden-result navigation do nothing. Arrow keys edit the prompt or select answer text normally; Enter in the prompt still submits the AI question.
+
+The launcher footer does not display shortcut hints. The shortcuts themselves and Settings → Shortcuts remain available.
+
+Search results: right-click → Pin or Add to Page. Drag a result to reveal Pages, then drop on free space or the dock. Esc cancels without adding the item. Lock layout disables placement.
+
+Search bar shortcuts keep their English letter positions on Arabic layouts, including Ctrl+A (select all), Ctrl+E (accept the available next-word prediction), Ctrl+W (delete previous word), clipboard and undo shortcuts. Ordinary Arabic typing is unchanged. Arabic-leading search text aligns right; English-leading text aligns left.

@@ -1,0 +1,74 @@
+import { OrbitText, TextDirection } from "controls.slint";
+import { Theme } from "theme.slint";
+import { Panel, AddOption, AddField } from "controls.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export global AzanSettings {
+    in-out property <string> widget-id;
+    in-out property <string> city: "Sohag";
+    in-out property <string> country: "Egypt";
+    in-out property <string> timezone: "Africa/Cairo";
+    in-out property <string> error;
+    in-out property <bool> busy;
+    in-out property <string> fetched-content;
+    in-out property <string> fetched-date;
+    in-out property <int> session;
+    callback fetch;
+    callback save;
+    public function invalidate() {
+        self.session += 1;
+        self.fetched-content = ""; self.fetched-date = ""; self.error = "";
+    }
+    public function close() {
+        self.widget-id = ""; self.busy = false; self.invalidate();
+    }
+    public function open(id: string, city: string, country: string, timezone: string) {
+        self.close(); self.widget-id = id;
+        self.city = city; self.country = country; self.timezone = timezone;
+    }
+}
+
+export component AzanSettingsSheet inherits Rectangle {
+    init => { city-field.focus(); }
+    background: Theme.backdrop;
+    TouchArea { clicked => { AzanSettings.close(); } }
+    Panel {
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+        width: min(460px, parent.width - Theme.space-6);
+        height: min(680px, parent.height - Theme.space-6);
+        background: Theme.sheet;
+        TouchArea { }
+        VerticalLayout {
+            padding: Theme.space-6; spacing: Theme.space-4;
+            HorizontalLayout {
+                OrbitText { text: "Azan settings"; color: Theme.text; font-size: Theme.type-title; font-weight: 600; vertical-alignment: center; }
+                AddOption { label: "×"; accessible-label: "Close Azan settings"; option-width: Theme.control-height; clicked => { AzanSettings.close(); } }
+            }
+            fields := ScrollView {
+                horizontal-scrollbar-policy: always-off; min-height: 0px; vertical-stretch: 1;
+                VerticalLayout {
+                    width: fields.visible-width; height: self.preferred-height;
+                    spacing: Theme.space-4; padding-right: Theme.space-2;
+                    OrbitText { text: "Choose your location and time zone. Fetch today's times, review them, then Save."; color: Theme.secondary; font-size: Theme.type-body; wrap: word-wrap; }
+                    city-field := AddField { label: "City"; text <=> AzanSettings.city; enabled: !AzanSettings.busy; edited => { AzanSettings.invalidate(); } }
+                    AddField { label: "Country"; text <=> AzanSettings.country; enabled: !AzanSettings.busy; edited => { AzanSettings.invalidate(); } }
+                    AddField { label: "Time zone"; placeholder: "Africa/Cairo"; text <=> AzanSettings.timezone; enabled: !AzanSettings.busy; edited => { AzanSettings.invalidate(); } }
+                    OrbitText { text: "Sohag uses Africa/Cairo, including seasonal clock changes."; color: Theme.secondary; font-size: Theme.type-hint; wrap: word-wrap; }
+                    AddOption { label: AzanSettings.busy ? "Working…" : "Fetch times"; option-width: parent.width; enabled: !AzanSettings.busy; clicked => { AzanSettings.fetch(); } }
+                    OrbitText { text: "Aladhan · Egyptian General Authority of Survey. Times are fetched only when requested."; color: Theme.secondary; font-size: Theme.type-hint; wrap: word-wrap; }
+                    if AzanSettings.fetched-date != "": VerticalLayout {
+                        spacing: Theme.space-2;
+                        OrbitText { text: "Review · " + AzanSettings.fetched-date; color: Theme.focus; font-size: Theme.type-body; font-weight: 600; }
+                        OrbitText { text: AzanSettings.fetched-content; color: Theme.text; font-size: Theme.type-body; }
+                    }
+                    if AzanSettings.error != "": OrbitText { text: AzanSettings.error; color: Theme.error; wrap: word-wrap; font-size: Theme.type-body; }
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                AddOption { label: "Cancel"; option-width: (parent.width - Theme.space-2) / 2; clicked => { AzanSettings.close(); } }
+                AddOption { label: "Save"; primary: true; option-width: (parent.width - Theme.space-2) / 2; enabled: !AzanSettings.busy; clicked => { AzanSettings.save(); } }
+            }
+        }
+    }
+}
