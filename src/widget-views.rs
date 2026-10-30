@@ -35,11 +35,17 @@ pub fn views(
     db: &Connection,
     specs: &[Spec],
     force: &str,
-    opened: bool,
+    opened: &[String],
 ) -> Result<Vec<View>, String> {
     specs
         .iter()
-        .map(|spec| view(db, spec, spec.id == force || (opened && spec.category == 4)))
+        .map(|spec| {
+            view(
+                db,
+                spec,
+                spec.id == force || (opened.iter().any(|id| id == &spec.id) && spec.category == 4),
+            )
+        })
         .collect()
 }
 

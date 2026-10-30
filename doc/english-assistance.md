@@ -1,6 +1,6 @@
 # Local English assistance for Orbit
 
-Implemented and verified in stage order, 2026-10-22. Choose an installed local Ollama generation model (existing settings retain `qwen3:4b`); keep the selected model loaded while any assistance feature is enabled. Cloud support and automatic replacement are deferred.
+Implemented and verified in stage order, 2026-10-22. Choose an installed local Ollama generation model (the default is `qwen3.5:2b`; existing model selections are preserved); keep the selected model loaded while any assistance feature is enabled. Cloud support and automatic replacement are deferred.
 
 ## Settings and shared behavior
 
@@ -20,7 +20,7 @@ Preserve native text editing and undo history. Slint stores replacement as delet
 
 ## Stage 2 — Autocomplete
 
-Show one predicted next word in muted text after the caret at the end of the query. Do not request a continuation immediately after sentence-ending punctuation. Ctrl+E accepts exactly that word; Accept word provides the same action with the mouse. Tab also accepts the visible next word; an exact Prefix Token takes priority. Add configurable Accept next word through the existing shortcut settings, without taking an already assigned chord. Typing, moving the caret, selecting text or changing state invalidates the prediction. Do not insert automatically.
+Show one predicted word in muted text after the caret at the end of the query. Without trailing whitespace, predict the completed or corrected current word and replace that word on acceptance. After whitespace, predict and append the next word. The former default next-word-only prompt migrates to this behavior; custom prompts are preserved. Do not request a continuation immediately after sentence-ending punctuation. Ctrl+E accepts exactly that word; Accept word provides the same action with the mouse. Tab also accepts the visible next word; an exact Prefix Token takes priority. Add configurable Accept next word through the existing shortcut settings, without taking an already assigned chord. Typing, moving the caret, selecting text or changing state invalidates the prediction. Do not insert automatically.
 
 ## Stage 3 — Grammar feedback
 
@@ -76,3 +76,21 @@ All four corrected “She go to school every day.” The smallest Qwen produced 
 Ctrl+E inserts through Slint's native composition commit so a held Ctrl modifier cannot suppress insertion. Native Undo remains available. Tab uses the same acceptance callback after checking Prefix activation. The search-engine select outside the left of Search anything opens the engine list and immediately saves the selected default without submitting a query.
 
 Follow-up verification: the rebuilt launcher listed local models, switched to Qwen2.5 1.5B and warmed it, saved and restored an edited Suggestions prompt, and preserved model/prompts/default engine across restart. Physical Ctrl+E and Tab accepted predictions; native Undo restored the query. The engine menu opened on one click and saved a choice without launching. Original Qwen3 and Perplexity selections were restored after testing. Formatting and Clippy passed; 71 unit tests passed, with 6 opt-in account tests ignored.
+
+## Autocomplete repair (2026-10-30)
+
+Autocomplete now keeps the replacement word separate from its inline preview. `I need to impro` shows only muted `ve`; Ctrl+E, Tab and Accept word all produce `I need to improve`. A spelling correction that changes typed letters uses an explicit `original → replacement` preview in the Autocomplete row, rather than appending the full replacement after the typed word. The row owns its Accept word button and shortcut hint even when grammar finishes later. Grammar corrections and sentence suggestions retain their own click actions; Ctrl+E does not select a grammar issue or submit a query.
+
+The same source-aware completion edit drives preview and acceptance. Reject unchanged words, unrelated substitutions, repeated last words after whitespace and stale editing state. Structured completion output is constrained to the typed fragment or a single substitution/adjacent transposition that preserves its first letter; Rust checks the relationship again. Empty output is valid. `predic` may complete to `predict`; `predict` is rejected for an unrelated fragment. Caret and selection offsets invalidate predictions, while a layout-only caret geometry change does not restart generation.
+
+The three built-in prompts now request actual meaning-preserving rewrites, explicit current-word/next-word completion, and explanations of the exact grammar edit. Grammar includes examples distinguishing present habitual agreement from past tense. Known previous built-ins migrate once on load; custom prompts, feature switches, endpoints and explicit model choices are preserved. The current word is protected from grammar corrections until a word boundary is typed; earlier completed words remain checkable.
+
+Qwen3.5 2B runs with thinking disabled and temperature zero. Typical requests and warming use context 8192. Longer prompts/input receive a conservatively larger power-of-two context, reserving room for the answer rather than silently truncating the query. Completion has a 64-token answer budget; sentence suggestions and grammar retain 768. These are bounded local requests on the existing background worker, not work performed when showing Orbit. Model output can still miss mistakes or choose poor wording; replacement is always explicit and undoable.
+
+Inline Accept word and Retry preserve search focus; moving focus to a button must not invalidate the edit before its callback. An operation error stays visible with Retry even if a later operation succeeds, while usable sibling results remain available. Empty valid results do not show an error Retry button.
+
+Final repair verification: formatting, Clippy, release build and 127 tests passed (six existing account tests ignored). The rebuilt launcher was exercised on an isolated Xvfb display/profile with a Hyprland IPC fixture: physical Ctrl+E, Tab and mouse acceptance, native Undo/Redo, grammar and suggestion clicks, wrapped queries, Arabic/mixed input, malformed replies, missing model, offline endpoint and partial-error Retry. The native Hyprland backend and launcher show/RSS budgets were not remeasured; timeout recovery was not completed as a UI check. The normal profile selects local `qwen3.5:2b`, and its final release daemon was restarted hidden after stopping the isolated processes.
+
+Suggestions display Ctrl+1/2/3 badges for direct application. With Search anything focused, Ctrl+N/J moves down and Ctrl+P/K moves up through rewrites; Enter applies the highlighted rewrite without submitting. Selection starts empty and resets when results change; boundaries stop rather than wrap. These contextual keys take precedence over launcher bindings only while current suggestions are available. All application paths reuse the existing source-checked, undoable replacement.
+
+Suggestion keyboard verification (2026-10-30): 120 binary tests passed with six existing account tests ignored; final focused shortcut tests, formatting, Clippy and release build passed. In the isolated rebuilt launcher, Settings → Search bar → English assistance → Back → search showed three Ctrl+number keycaps. Physical Ctrl+1/2/3 applied the corresponding rewrite and Undo restored the query; Ctrl+N/J and Ctrl+P/K highlighted the expected row and Enter applied it without launching. Screenshots are under `target/english-assistance/isolated/suggestion-*.png`. The normal daemon was restarted hidden after isolated cleanup.

@@ -105,3 +105,7 @@ The launcher footer does not display shortcut hints. The shortcuts themselves an
 Search results: right-click → Pin or Add to Page. Drag a result to reveal Pages, then drop on free space or the dock. Esc cancels without adding the item. Lock layout disables placement.
 
 Search bar shortcuts keep their English letter positions on Arabic layouts, including Ctrl+A (select all), Ctrl+E (accept the available next-word prediction), Ctrl+W (delete previous word), clipboard and undo shortcuts. Ordinary Arabic typing is unchanged. Arabic-leading search text aligns right; English-leading text aligns left.
+
+Accept next word also completes the current partial word. The Autocomplete row shows the exact word or spelling replacement Ctrl+E and Accept word will apply; the inline ghost shows only the untyped suffix. A grammar issue is applied by clicking that issue, independently of Ctrl+E.
+
+English Suggestions: Ctrl+1, Ctrl+2 and Ctrl+3 apply the corresponding displayed rewrite. Ctrl+N or Ctrl+J highlights the next suggestion; Ctrl+P or Ctrl+K highlights the previous one. Enter applies the highlighted suggestion without submitting. Navigation stops at the ends; the first down/up selects the first/last suggestion. Editing or refreshing suggestions clears the highlight. While suggestions are available in Search anything, Ctrl+K navigates them; otherwise it retains its search-focus action.

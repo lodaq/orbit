@@ -489,12 +489,12 @@ component DockTile inherits Rectangle {
 export component Launcher inherits Window {
     callback load-widget-data();
     callback save-widget-data(string, string, string, string);
-    callback load-local-widgets([AppTile],bool);
+    callback load-local-widgets([AppTile],[PageItems],bool);
     callback record-widget-completions([CompletedReference]);
     callback choose-widget-audio();
     callback restore-widget-word(string);
     in-out property <string> widget-data-resource;
-    changed items => { root.load-local-widgets(root.items,false); }
+    changed items => { root.load-local-widgets(root.items,root.page-previews,false); }
     callback delete-widget-data(string);
     in-out property <bool> widget-data-busy;
     in-out property <int> widget-data-category;
@@ -625,14 +625,20 @@ export component Launcher inherits Window {
     in-out property <bool> english-grammar-checked;
     callback english-correct(int);
     in-out property <string> english-completion;
+    in-out property <string> english-completion-suffix;
+    in-out property <string> english-completion-label;
+    changed english-cursor => { root.english-changed(); }
+    changed english-anchor => { root.english-changed(); }
     out property <int> english-cursor: search-input.cursor-position-byte-offset;
     out property <int> english-anchor: search-input.anchor-position-byte-offset;
     callback accept-next-word();
     in property <string> english-address: "http://127.0.0.1:11434";
     private property <string> english-address-draft: root.english-address;
     in-out property <[string]> english-suggestions;
+    in-out property <int> english-suggestion-selection: -1;
     in-out property <string> english-source;
     in-out property <string> english-status;
+    in-out property <string> english-error;
     in-out property <string> english-connection: "English assistance disabled";
     in-out property <bool> english-loading;
     private property <bool> english-dismissed;
@@ -1021,7 +1027,7 @@ export component Launcher inherits Window {
     private property <int> context-index: -1;
     private property <bool> page-context;
     changed current-page => { root.page-context = false; }
-    changed launcher-visible => { if root.launcher-visible { root.load-local-widgets(root.items,true); } if !root.launcher-visible { root.page-context = false; root.clear-ai(); root.ai-key-draft = ""; } }
+    changed launcher-visible => { if root.launcher-visible { root.load-local-widgets(root.items,root.page-previews,true); } if !root.launcher-visible { root.page-context = false; root.clear-ai(); root.ai-key-draft = ""; } }
     private property <string> dock-context;
     private property <string> context-id;
     private property <int> editing: -1;
@@ -1891,7 +1897,6 @@ export component Launcher inherits Window {
                 single-line: false; wrap: word-wrap;
                 cursor-position-changed(point) => {
                     root.search-edit-generation += 1;
-                    root.english-changed();
                     root.search-cursor-x = point.x;
                     root.search-cursor-y = point.y;
                     let top = self.y + point.y + search-scroll.content-y;
@@ -1908,6 +1913,7 @@ export component Launcher inherits Window {
                     if event.text == Key.Backspace && self.text == "" && root.activated-prefix-id != "" {
                         root.clear-ai(); root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); accept;
                     }
+                    else if event.text == "\n" && root.english-active && root.english-suggestion-selection >= 0 { root.english-apply(root.english-suggestion-selection); accept; }
                     else if event.text == "\n" { if self.text != "" || root.activated-prefix-id != "" { root.run-activated-prefix(); } accept; }
                     else if event.text == Key.Tab {
                         let matched = root.match-prefix(root.search-text);
@@ -1923,15 +1929,15 @@ export component Launcher inherits Window {
                 }
             }
         }
-        completion-measure := OrbitText { visible: false; text: root.english-completion; font-size: Theme.search-font-size; }
+        completion-measure := OrbitText { visible: false; text: root.english-completion-suffix; font-size: Theme.search-font-size; }
         completion-ghost := OrbitText {
-            visible: root.english-active && root.english-completion != "";
+            visible: root.english-active && root.english-completion-suffix != "";
             property <bool> next-line: completion-measure.preferred-width > search-input.width - root.search-cursor-x - 4px;
             x: search-scroll.x + search-input.x + (self.next-line ? 0px : root.search-cursor-x + 2px);
             y: search-scroll.y + search-input.y + root.search-cursor-y + search-scroll.content-y + (self.next-line ? root.search-cursor-height : 0px);
             width: max(0px,search-input.width - (self.next-line ? 0px : root.search-cursor-x));
             height: root.search-cursor-height;
-            text: root.english-completion; font-size: Theme.search-font-size; color: Theme.secondary; overflow: elide;
+            text: root.english-completion-suffix; font-size: Theme.search-font-size; color: Theme.secondary; overflow: elide;
         }
         if root.search-cursor-overlay: Rectangle {
             x: search-scroll.x; y: search-scroll.y;
@@ -2026,11 +2032,25 @@ export component Launcher inherits Window {
                     visible: self.position >= 0 && !preview.preview-items[index].pinned;
                     x: mod(self.position, preview.columns) * preview.tile-size + 8px;
                     y: floor(self.position / preview.columns) * preview.tile-size + 8px;
-                    width: root.item-size * 1px; height: self.width;
+                    width: preview.preview-items[index].span-x * preview.tile-size - root.grid-gap * 1px;
+                    height: preview.preview-items[index].span-y * preview.tile-size - root.grid-gap * 1px;
                     items: preview.preview-items;
                     index: index;
                     animate x { duration: 120ms; easing: ease-out; }
                     animate y { duration: 120ms; easing: ease-out; }
+                }
+                if root.page-dragging || root.transitioning: Rectangle {
+                    width: parent.width; height: parent.height;
+                    background: transparent; border-width: 0px;
+                    for item in preview.preview-items: LocalWidget {
+                        widget-id: item.id;
+                        visible: item.widget && !item.ticktick && !item.pinned;
+                        enabled: false;
+                        x: item.col * 1px + root.grid-gap * 0.5px + 16px;
+                        y: item.row * 1px + root.grid-gap * 0.5px + 48px;
+                        width: max(0px,item.span-x * 1px - root.grid-gap * 1px - 32px);
+                        height: max(0px,item.span-y * 1px - root.grid-gap * 1px - (item.widget-kind == 18 || item.widget-kind == 19 ? 60px : 84px));
+                    }
                 }
             }
             grid := Rectangle {
@@ -2206,7 +2226,7 @@ export component Launcher inherits Window {
                 }
             }
             for item in grid.display-items: AddOption {
-                visible: item.widget && item.widget-kind == 16 && !item.pinned && !root.transitioning && root.placing-widget < 0;
+                visible: item.widget && item.widget-kind == 16 && !item.pinned && root.placing-widget < 0;
                 enabled: !root.dragging && !root.busy && !root.sheet && !root.alert && !root.settings && !root.folder-open;
                 x: grid.x + (item.col + item.span-x) * grid.tile-size - root.grid-gap * 0.5px - 56px;
                 y: grid.y + item.row * grid.tile-size + root.grid-gap * 0.5px + Theme.space-2;
@@ -2220,7 +2240,7 @@ export component Launcher inherits Window {
             }
             for item in grid.display-items: LocalWidget {
                 widget-id: item.id;
-                visible: item.widget && !item.ticktick && !item.pinned && !root.transitioning && root.placing-widget < 0;
+                visible: item.widget && !item.ticktick && !item.pinned && root.placing-widget < 0;
                 opacity: root.dragging && item.id == root.drag-item.id ? 0.2 : 1;
                 enabled: !root.dragging && !root.busy && !root.sheet && !root.alert && !root.settings && !root.folder-open;
                 x: grid.x + item.col * grid.tile-size + root.grid-gap * 0.5px + 16px;
@@ -2491,26 +2511,40 @@ export component Launcher inherits Window {
         }
     }
     english-panel := Panel {
-        visible: !(root.drag-from-search && root.dragging) && !root.ai-active && root.english-active && (root.english-loading || root.english-status != "" || root.english-suggestions.length > 0 || root.english-grammar-checked);
+        visible: !(root.drag-from-search && root.dragging) && !root.ai-active && root.english-active && (root.english-loading || root.english-error != "" || root.english-status != "" || root.english-suggestions.length > 0 || root.english-grammar-checked);
         x: search-bar.x; y: search-bar.y + search-bar.height + 12px;
         width: search-bar.width; height: max(48px,min(400px, root.height - self.y - 160px, english-list.preferred-height + 24px));
         background: Theme.sheet; border-width: Theme.border-width; border-color: Theme.border; border-radius: Theme.radius-sheet; clip: true;
-        Flickable {
+        english-scroll := Flickable {
             x: 12px; y: 12px; width: parent.width - 24px; height: parent.height - 24px;
             content-width: self.width; content-height: english-list.preferred-height;
             english-list := VerticalLayout {
                 width: parent.width; alignment: start; spacing: 8px;
                 HorizontalLayout { height: max(24px,english-status-text.preferred-height); spacing: 8px;
-                    english-status-text := OrbitText { horizontal-stretch: 1; wrap: word-wrap; text: root.english-loading ? "Preparing English assistance…" : root.english-status; color: Theme.secondary; font-size: Theme.type-hint; overflow: elide; vertical-alignment: center; }
-                    if root.english-completion != "": AddOption { label: "Accept word"; height: 24px; option-width: 112px; clicked => { root.accept-next-word(); } }
-                    if root.english-completion != "" && root.shortcut-hints[13] != "": Kbd { label: root.shortcut-hints[13]; }
-                    if !root.english-loading && root.english-suggestions.length == 0: AddOption { label: "Retry"; height: 24px; option-width: 60px; clicked => { root.english-retry(); } }
+                    english-status-text := OrbitText { horizontal-stretch: 1; wrap: word-wrap; text: root.english-error != "" ? root.english-error : root.english-status != "" ? root.english-status : root.english-loading ? "Preparing English assistance…" : ""; color: Theme.secondary; font-size: Theme.type-hint; overflow: elide; vertical-alignment: center; }
+                    if !root.english-loading && root.english-error != "": AddOption { label: "Retry"; focus-on-click: false; height: 24px; option-width: 60px; clicked => { root.english-retry(); } }
+                }
+                if root.english-completion != "": HorizontalLayout {
+                    height: max(28px, completion-label.preferred-height); spacing: 8px;
+                    completion-label := OrbitText { horizontal-stretch: 1; text: "Autocomplete · " + root.english-completion-label; color: Theme.text; wrap: word-wrap; font-size: Theme.type-control; }
+                    AddOption { label: "Accept word"; focus-on-click: false; height: 24px; option-width: 112px; clicked => { root.accept-next-word(); } }
+                    if root.shortcut-hints[13] != "": Kbd { label: root.shortcut-hints[13]; }
                 }
                 if root.english-suggestions.length > 0: OrbitText { text: "Suggestions"; color: Theme.text; font-size: Theme.type-control; font-weight: 600; }
                 for text[index] in root.english-suggestions: Rectangle {
+                    private property <bool> selected: root.english-suggestion-selection == index;
+                    changed selected => {
+                        if self.selected {
+                            if self.y + english-scroll.content-y < 0px { english-scroll.content-y = -self.y; }
+                            else if self.y + self.height + english-scroll.content-y > english-scroll.height {
+                                english-scroll.content-y = -min(self.y, self.y + self.height - english-scroll.height);
+                            }
+                        }
+                    }
                     height: max(44px,suggestion-text.preferred-height + 20px);
-                    background: suggestion-hit.pressed ? Theme.selection : suggestion-hit.has-hover ? Theme.raised : Theme.field; border-radius: Theme.radius-control;
-                    suggestion-text := OrbitText { x: 12px; y: 10px; width: parent.width - 24px; text: text; wrap: word-wrap; color: Theme.text; font-size: Theme.type-body; }
+                    background: suggestion-hit.pressed || self.selected ? Theme.selection : suggestion-hit.has-hover ? Theme.raised : Theme.field; border-radius: Theme.radius-control;
+                    suggestion-text := OrbitText { x: 12px; y: 10px; width: parent.width - suggestion-kbd.width - 36px; text: text; wrap: word-wrap; color: Theme.text; font-size: Theme.type-body; }
+                    suggestion-kbd := Kbd { x: parent.width - self.width - 12px; y: (parent.height - self.height) / 2; label: "Ctrl+" + (index + 1); }
                     suggestion-hit := TouchArea { mouse-cursor: pointer; clicked => { root.english-apply(index); } }
                 }
                 if root.english-grammar-checked: OrbitText { text: "Grammar feedback"; color: Theme.text; font-size: Theme.type-control; font-weight: 600; }

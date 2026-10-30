@@ -191,9 +191,9 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | **English assistance** | Search bar settings for local English suggestions, autocomplete and grammar feedback. |
 | **Suggestions** | Clickable improved versions of the sentence in Search anything; choosing one replaces text without submitting. |
-| **Autocomplete** | An optional next-word prediction accepted with the configured Accept next word shortcut. |
+| **Autocomplete** | An optional completion or spelling correction of the current word, or a next-word prediction after whitespace, accepted with the configured Accept next word shortcut. |
 | **Grammar feedback** | English mistakes with simple explanations and clickable corrections. |
-| **Accept next word** | The configurable action that inserts the visible predicted word. |
+| **Accept next word** | The configurable action that applies the displayed Autocomplete word or spelling replacement. |
 
 - **Model prompts** — editable system instructions sent to the selected local model for each English assistance feature.
 

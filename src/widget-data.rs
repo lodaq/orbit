@@ -657,20 +657,19 @@ mod tests {
         };
         let mut shown = std::collections::HashSet::new();
         for _ in 0..3 {
-            let view =
-                crate::widget_views::views(&db, std::slice::from_ref(&spec), &spec.id, false)
-                    .unwrap()
-                    .remove(0);
+            let view = crate::widget_views::views(&db, std::slice::from_ref(&spec), &spec.id, &[])
+                .unwrap()
+                .remove(0);
             assert!(shown.insert(view.entry_id));
         }
-        let before = crate::widget_views::views(&db, std::slice::from_ref(&spec), "", false)
+        let before = crate::widget_views::views(&db, std::slice::from_ref(&spec), "", &[])
             .unwrap()
             .remove(0)
             .entry_id;
         drop(db);
         db = open(&path).unwrap();
         assert_eq!(
-            crate::widget_views::views(&db, std::slice::from_ref(&spec), "", false).unwrap()[0]
+            crate::widget_views::views(&db, std::slice::from_ref(&spec), "", &[]).unwrap()[0]
                 .entry_id,
             before
         );

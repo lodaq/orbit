@@ -50,6 +50,7 @@ export component AddOption inherits Rectangle {
     in property <image> icon;
     in property <bool> icon-present;
     in property <bool> enabled: true;
+    in property <bool> focus-on-click: true;
     in property <bool> full-width;
     in property <length> available-width: 460px;
     in property <length> option-width: Theme.control-option-width;
@@ -117,7 +118,7 @@ export component AddOption inherits Rectangle {
     hit-area := TouchArea {
         enabled: root.enabled;
         mouse-cursor: pointer;
-        clicked => { keyboard-focus.focus(); root.clicked(); }
+        clicked => { if root.focus-on-click { keyboard-focus.focus(); } root.clicked(); }
     }
     keyboard-focus := FocusScope {
         enabled: root.enabled;

@@ -868,6 +868,7 @@ fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
             && config.valid()
         {
             let mut changed = config.initialize_ai();
+            changed |= config.english_assistance.migrate_prompts();
             if config.version < 3 {
                 let pitch = crate::spatial::cell_pitch(config.item_size, config.grid_gap);
                 for rect in config.positions.values_mut() {

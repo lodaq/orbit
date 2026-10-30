@@ -136,6 +136,7 @@ From top to bottom: top bar, the open page, page dots, dock.
 - No names. At least 1, at most 9.
 - A new page is created by dropping an item past the right edge of the last page, clicking + beside the page dots, or clicking Add page in the empty-space Context menu.
 - Drag an empty area of the page left or right to move to the previous or next page. The page follows the pointer without delay and settles into place after release. At the first or last page, it moves only a little and returns to the center.
+- Widgets keep their full content visible on both pages throughout a page swipe and its settling transition.
 - Two-finger horizontal touchpad scrolling changes pages in the scroll direction configured on the desktop. Small movements below 40 px do not change pages; momentum stays on the same page change until scrolling pauses for 350 ms. Vertical scrolling remains available inside widgets and pages.
 - A 24 px gap separates page surfaces during a swipe.
 - The page area fills the available width and height. The + beside the page dots creates and opens an empty page with the mouse.
@@ -315,7 +316,7 @@ Add item has a stationary top edge based on its maximum height (760 px, viewport
 
 ## Local English assistance (2026-10-22)
 
-The approved staged behavior is in `english-assistance.md`: local Ollama qwen3:4b supplies sentence suggestions, then Ctrl+E next-word completion, then English grammar explanations with clickable corrections. Features are independent and default disabled in Search bar → English assistance. Sentence suggestions appear above ordinary search results after two words, and replace text only when clicked. Model work is asynchronous, text snapshots reject stale results, syntax is protected, and native undo remains available. Cloud support and automatic replacement are deferred.
+The approved staged behavior is in `english-assistance.md`: a selected local Ollama generation model (default `qwen3.5:2b`) supplies sentence suggestions, then Ctrl+E next-word completion, then English grammar explanations with clickable corrections. Features are independent and default disabled in Search bar → English assistance. Sentence suggestions appear above ordinary search results after two words, and replace text only when explicitly chosen. Model work is asynchronous, text snapshots reject stale results, syntax is protected, and native undo remains available. Cloud support and automatic replacement are deferred.
 
 English assistance now supports choosing installed local Ollama generation models and editing the three system prompts in Settings → Search bar → English assistance. Ctrl+E and Tab accept a visible next word; exact Prefix Tokens retain Tab priority. The select outside the left of Search anything displays and saves the default search engine.
 
@@ -352,3 +353,7 @@ Azan Reminder (2026-10-28) has a settings icon for per-widget City, Country and 
 TickTick widget update (2026-10-28): the header picker scrolls through Today, Next 7 Days, all tasks, Lists and Tags. A tag selection filters tasks by the exact tag and persists per widget. Header add/menu controls use matching inset icon buttons. High, Medium and Low priorities use red, amber and blue checkboxes; no priority uses the neutral checkbox. Arabic-first titles use RTL row placement, right alignment and the embedded Arabic font. Wheel and trackpad scrolling uses a higher proportional scroll distance with no interpolation delay, so rapid wheel input accumulates immediately.
 
 Focus task redesign (2026-10-28): the TickTick Focus Task card uses a wrapping task title, quiet list context, priority/date metadata, tags and readable notes/checklists. A circular priority-colored completion control stays at the upper right, and Open task opens the existing editor. Details reveals the full task metadata inside the same scrollable body. Short cards use a compact title layout. Arabic titles and notes keep their own text direction. Header dragging, resizing and immediate wheel scrolling remain available.
+
+English assistance displays only the untyped completion suffix; corrections to typed letters use an explicit Autocomplete replacement preview. Ctrl+E, Tab and Accept word accept the same validated current-word or next-word edit. Grammar corrections remain separate clicks. Known built-in prompts migrate without replacing custom prompts; grammar defers the word still being typed. See `english-assistance.md` for the 2026-10-30 repair and verification.
+
+English Suggestions show Ctrl+1/2/3 keycaps for direct application. Ctrl+N/J moves the highlight down, Ctrl+P/K moves it up, and Enter applies the selected rewrite without submitting. The selection resets on refreshed or invalidated results. Ctrl+K keeps its normal focus action outside current suggestions.

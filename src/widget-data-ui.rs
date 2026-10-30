@@ -1,6 +1,6 @@
 use crate::{
-    AppTile, AzanSettings, CompletedReference, Launcher, LocalWidgets, WidgetDataEntry, WidgetView,
-    widget_data as data, widget_views as widgets,
+    AppTile, AzanSettings, CompletedReference, Launcher, LocalWidgets, PageItems, WidgetDataEntry,
+    WidgetView, widget_data as data, widget_views as widgets,
 };
 use slint::{ComponentHandle, Model};
 use std::{path::Path, sync::mpsc};
@@ -20,7 +20,7 @@ enum Action {
 enum Work {
     Initialize,
     Data(Request),
-    Widgets(Vec<widgets::Spec>, bool),
+    Widgets(Vec<widgets::Spec>, Vec<String>),
     Refresh(String),
     Finish(String, String),
     Completed(Vec<(String, String, String, bool)>),
@@ -57,10 +57,10 @@ pub fn connect(ui: &Launcher) -> slint::Timer {
             let (force, opened) = match &work {
                 Work::Widgets(new, opened) => {
                     specs = new.clone();
-                    (String::new(), *opened)
+                    (String::new(), opened.clone())
                 }
-                Work::Refresh(id) => (id.clone(), false),
-                _ => (String::new(), false),
+                Work::Refresh(id) => (id.clone(), Vec::new()),
+                _ => (String::new(), Vec::new()),
             };
             if specs.is_empty() && db.is_none() && matches!(work, Work::Widgets(..) | Work::Minute)
             {
@@ -127,7 +127,7 @@ pub fn connect(ui: &Launcher) -> slint::Timer {
                     }
                     _ => None,
                 };
-                Ok::<_, String>((reply, widgets::views(database, &specs, &force, opened)?))
+                Ok::<_, String>((reply, widgets::views(database, &specs, &force, &opened)?))
             })();
             let changed = matches!(
                 &work,
@@ -324,9 +324,10 @@ fn connect_widgets(ui: &Launcher, sender: &mpsc::Sender<Work>) {
             })
     });
     let send = sender.clone();
-    ui.on_load_local_widgets(move |tiles, opened| {
-        let specs = tiles
+    ui.on_load_local_widgets(move |tiles, pages, opened| {
+        let specs = pages
             .iter()
+            .flat_map(|page: PageItems| page.items.iter().collect::<Vec<_>>())
             .filter_map(|tile: AppTile| {
                 widgets::category(tile.widget_kind)
                     .filter(|_| tile.widget)
@@ -336,6 +337,15 @@ fn connect_widgets(ui: &Launcher, sender: &mpsc::Sender<Work>) {
                     })
             })
             .collect();
+        let opened = if opened {
+            tiles
+                .iter()
+                .filter(|tile: &AppTile| tile.widget)
+                .map(|tile| tile.id.to_string())
+                .collect()
+        } else {
+            Vec::new()
+        };
         let _ = send.send(Work::Widgets(specs, opened));
     });
     let send = sender.clone();
@@ -585,7 +595,7 @@ fn play(
         .iter()
         .find(|s| s.id == id && s.category == 5)
         .ok_or("Quran widget no longer exists")?;
-    let views = widgets::views(db, std::slice::from_ref(spec), "", false)?;
+    let views = widgets::views(db, std::slice::from_ref(spec), "", &[])?;
     let resource = &views[0].resource;
     if resource.is_empty() {
         return Err("Add a local recitation in Settings → Data.".into());

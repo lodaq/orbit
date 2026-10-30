@@ -1,5 +1,7 @@
 # File structure
 
+- `tasks/plan.md` and `tasks/todo.md`: the current English assistance repair plan, ordered tasks and acceptance checks.
+
 - `src/main.rs`: the `daemon`, `toggle` and `ticktick` commands.
 - `src/config.rs`: versioned config data, page limits, app, file and directory search paths, file-search exclusion defaults, named Actions and Prefixes, first-run data, and damaged config recovery.
 - `src/add-item.rs`: Add item state for the cached Installed apps inventory, cancellation of stale requests, and local field validation.
@@ -57,7 +59,7 @@ The approved v2 UX specification is `Orbit_Desktop_Launcher_UX_Spec_v2.md`; it s
 
 - `doc/english-assistance.md`: approved local Search anything suggestions, autocomplete and grammar feedback, including settings, staged behavior, verification results and measured limits.
 
-- `src/english-assistance.rs`: local Ollama model discovery and settings, editable prompts, background model requests, latest-text cancellation, response validation and assistance results.
+- `src/english-assistance.rs`: local Ollama model discovery and settings, editable prompts, background model requests, latest-text cancellation, source-aware completion edits, response validation and assistance results.
 - `src/search-edit.rs`: native selection replacements and grouped undo/redo for assistance edits.
 
 - `src/ai.rs`: independent AI provider/model settings, local model discovery, credential-store access, single-question HTTP requests, response validation and cancelled/stale-result protection.

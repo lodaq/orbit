@@ -284,7 +284,7 @@ mod tests {
             id: "sohag".into(),
             category: 6,
         };
-        let mut view = crate::widget_views::views(&db, &[spec], "", false)
+        let mut view = crate::widget_views::views(&db, &[spec], "", &[])
             .unwrap()
             .remove(0);
         let schedule = Schedule {
