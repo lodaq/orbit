@@ -285,7 +285,21 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         9 => launcher.set_settings(!launcher.get_settings()),
         10 if !launcher.get_layout_locked() => launcher.invoke_add_page(),
         11 if !launcher.get_layout_locked() => launcher.invoke_confirm_delete_page(),
-        12 if launcher.get_search_editing() => delete_previous_word(launcher.window()),
+        12 if launcher.get_search_editing() => {
+            if launcher.get_search_text().is_empty() {
+                let text = slint::platform::Key::Backspace.into();
+                launcher
+                    .window()
+                    .dispatch_event(slint::platform::WindowEvent::KeyPressed { text });
+                launcher
+                    .window()
+                    .dispatch_event(slint::platform::WindowEvent::KeyReleased {
+                        text: slint::platform::Key::Backspace.into(),
+                    });
+            } else {
+                delete_previous_word(launcher.window());
+            }
+        }
         12 => return false,
         13 if launcher.get_search_editing() => launcher.invoke_accept_next_word(),
         13 => return false,
@@ -395,6 +409,17 @@ mod tests {
                 text: "\u{0011}".into(),
             });
         }
+        ui.set_search_text("".into());
+        ui.invoke_activate_ticktick_prefix();
+        assert!(!ui.get_activated_prefix_id().is_empty());
+        assert!(handle(
+            &ui,
+            &Key::Character("w".into()),
+            ModifiersState::CONTROL
+        ));
+        assert!(ui.get_activated_prefix_id().is_empty());
+        assert!(ui.get_activated_prefix_name().is_empty());
+        assert!(ui.get_search_focused());
         ui.window().dispatch_event(WindowEvent::KeyPressed {
             text: "\u{0011}".into(),
         });

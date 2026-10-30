@@ -88,7 +88,7 @@ Search engines: `:br` Brave, `:g` Google, `:d` DuckDuckGo, `:q` Qwant, `:b` Bing
 8. **Toggle Orbit is not a key in Orbit.** The toggle key lives in `hyprland.conf`.
 9. **Any keyboard layout.** All keys here work the same on every layout.
 
-Search anything: **Ctrl+W** deletes the previous word using native text editing, including selected text and undo. Manage or remove **Delete previous word** in Settings → Shortcuts. It acts only while Search anything is focused with no Settings or layer open. Existing bindings are preserved; an already assigned Ctrl+W is not replaced.
+Search anything: **Ctrl+W** deletes the previous word using native text editing, including selected text and undo. When the query is empty, it removes the active Prefix. Manage or remove **Delete previous word** in Settings → Shortcuts. It acts only while Search anything is focused with no Settings or layer open. Existing bindings are preserved; an already assigned Ctrl+W is not replaced.
 
 The top-bar Lock layout / Unlock layout button has no default shortcut. While locked, Add page and Delete page shortcuts are disabled; page navigation remains available.
 
