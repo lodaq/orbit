@@ -222,6 +222,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Evening Remembrances (Adhkar)** | Offline Arabic evening remembrances with required repetition counts, source details and independent daily widget progress. |
 | **أذكار المساء** | Arabic heading for Evening Remembrances. |
 | **الفضل والمصدر** | Expand the supplied virtue and source details. |
+| **اكمل** | Complete the whole remembrance and advance to the next one. |
 | **تخطي** | Skip the current remembrance without completing it. |
 | **السابق** | Return to the previous remembrance while retaining its count. |
 | **إعادة الأذكار** | Restart this widget's daily remembrances. |

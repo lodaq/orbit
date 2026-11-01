@@ -90,7 +90,13 @@ impl Progress {
             return 0;
         };
         let mut sound = 0;
-        if action == "count" {
+        if action == "complete" {
+            let count = self.counts.entry(id.clone()).or_default();
+            if *count < *required {
+                *count = *required;
+                sound = 1;
+            }
+        } else if action == "count" {
             let count = self.counts.entry(id.clone()).or_default();
             if *count < *required {
                 *count += 1;
@@ -733,6 +739,38 @@ mod tests {
         assert_eq!(progress.act(&entries, "count"), 2);
         assert_eq!(progress.act(&entries, "count"), 0);
         assert_eq!(progress.current, 2);
+    }
+
+    #[test]
+    fn complete_finishes_remembrance_and_advances() {
+        let entries = vec![
+            ("first".into(), 33),
+            ("second".into(), 100),
+            ("last".into(), 1),
+        ];
+        let mut progress = Progress::default();
+        assert_eq!(progress.act(&entries, "complete"), 1);
+        assert_eq!(progress.counts["first"], 33);
+        assert_eq!(progress.current, 1);
+
+        assert_eq!(progress.act(&entries, "complete"), 1);
+        assert_eq!(progress.counts["second"], 100);
+        assert_eq!(progress.current, 2);
+
+        assert_eq!(progress.act(&entries, "complete"), 2);
+        assert_eq!(progress.counts["last"], 1);
+        assert_eq!(progress.current, 3);
+    }
+
+    #[test]
+    fn complete_with_partial_counts_fills_remainder_and_advances() {
+        let entries = vec![("first".into(), 100), ("last".into(), 1)];
+        let mut progress = Progress::default();
+        progress.act(&entries, "count");
+        assert_eq!(progress.counts["first"], 1);
+        assert_eq!(progress.act(&entries, "complete"), 1);
+        assert_eq!(progress.counts["first"], 100);
+        assert_eq!(progress.current, 1);
     }
 
     #[test]

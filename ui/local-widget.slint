@@ -160,8 +160,9 @@ component AdhkarWidget inherits Rectangle {
                 }
                 HorizontalLayout {
                     spacing: Theme.space-2;
-                    WidgetAction { label: "تخطي"; option-width: (parent.width - Theme.space-2) / 2; enabled: root.enabled; clicked => { LocalWidgets.adhkar(root.widget-id,root.view.entry-id,"skip"); } }
-                    WidgetAction { label: "السابق"; option-width: (parent.width - Theme.space-2) / 2; enabled: root.enabled && root.view.position > 1; clicked => { LocalWidgets.adhkar(root.widget-id,root.view.entry-id,"previous"); } }
+                    WidgetAction { label: "اكمل"; option-width: (parent.width - 2 * Theme.space-2) / 3; enabled: root.enabled; clicked => { LocalWidgets.adhkar(root.widget-id,root.view.entry-id,"complete"); } }
+                    WidgetAction { label: "تخطي"; option-width: (parent.width - 2 * Theme.space-2) / 3; enabled: root.enabled; clicked => { LocalWidgets.adhkar(root.widget-id,root.view.entry-id,"skip"); } }
+                    WidgetAction { label: "السابق"; option-width: (parent.width - 2 * Theme.space-2) / 3; enabled: root.enabled && root.view.position > 1; clicked => { LocalWidgets.adhkar(root.widget-id,root.view.entry-id,"previous"); } }
                 }
             }
         }
