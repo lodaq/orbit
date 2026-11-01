@@ -15,8 +15,11 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Orbit** | The application. |
 | **Launcher** | The fullscreen view with pages and the dock. Shown by `orbit toggle`. Hidden by launching an app, pressing Esc, toggling again, losing focus, or the Close button. It always opens with all folders closed. |
 | **Daemon** | The background process that starts at login and keeps Orbit ready, so showing the launcher is instant. |
-| **Settings** | The dark panel with General, Shortcuts, Search bar and Back. The Back button or Esc returns to the launcher. |
-| **Background** | The radial gradient behind the pages, from the supplied SVG reference. |
+| **Settings** | The dark panel with General, Appearance, Shortcuts, Search bar and Back. The Back button or Esc returns to the launcher. |
+| **Background** | The color or image behind the pages. Reset restores the supplied radial background. |
+| **Background color** | A solid Home Screen background entered as a six-digit hex value. |
+| **Background image** | A PNG, JPEG or SVG shown behind the Home Screen pages. |
+| **Background images folder** | The folder used by the Home Screen image-change button. |
 | **Top bar** | The row at the top of the launcher: the Orbit logo and name on the left, the Settings and Close icons on the right. |
 
 ## Things you arrange
@@ -66,7 +69,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | Term | Meaning |
 |---|---|
-| **Dock** | The semi-transparent horizontal bar at the bottom. It shows 48 px icons with names, Recent and Pinned sections, and scrolls horizontally when its contents overflow. |
+| **Dock** | The semi-transparent horizontal bar at the bottom. It shows 48 px icons without names, Recent and Pinned sections, and scrolls horizontally when its contents overflow. Hovering magnifies the icon under the pointer and its neighbours and slides them apart. |
 | **Recent** | Successfully opened items, newest first. Up to five newest unpinned Apps, Websites, Files or Directories appear on the left side of the dock; folders are excluded. |
 | **Pinned** | Up to ten items you chose to show in the dock. Pinning is a flag: the item also stays on its page. Displayed in saved pin order. |
 | **Separator** | The thin vertical line between Recent and Pinned when both are present. |
@@ -122,7 +125,6 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | Close (as the name of the action) | Close the top layer |
 | Color (on an app or folder) | Removed |
 | Customize | Removed |
-| Background image | Not in the MVP (see `planned-features.md`) |
 
 ## Supplied UI terms
 

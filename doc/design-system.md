@@ -2,6 +2,8 @@
 
 The launcher reference remains authoritative for pages and the dock. The current `add-item/` HTML, PNG and PDF define Add item, with the retained behavior documented below; `doc/add-item/` supplies the earlier sheet atlas. These are references, not application code. `ui/theme.slint` is the source of truth for colors, spacing, typography and common geometry; shared controls live in `ui/controls.slint`.
 
+New and updated UI follows the relevant Apple Human Interface Guidelines (HIG), adapted to Orbit's Slint desktop launcher and existing behavior. Use legible semantic color, clear hierarchy, keyboard and screen-reader access, and motion that does not block input. Translucent surfaces over changing wallpaper need enough opaque tint and edge definition to keep their contents legible; use no blur unless Orbit's performance and visual specifications are revised.
+
 ## Tokens and components
 
 Use `Theme` tokens for repeated colors, spacing, type sizes, control sizes, radii and borders. The spacing scale is 4, 8, 12, 16, 24, 40 and 48 px. Type roles are hint (12 px), control (13 px), body (14 px) and title (20 px). Common sizes include 40 px controls, 52 px result rows, 88 px multiline fields, 48 px previews, 10 px control corners and 20 px sheet corners. Add a token when a visual value is repeated or defines a shared role; keep one-off layout geometry local when it depends on content or available space.
@@ -183,7 +185,7 @@ Focus verification: the release launcher on an isolated X11 desktop exercised Fo
 
 ## Achievements reading card
 
-Achievements keeps the shared widget material and draggable header. Its body starts with Today and the saved date, followed by a prominent count of completed items. A quiet separator leads into individually spaced, wrapping rows with read-only circular checkmarks. The list scrolls independently; the summary remains visible. Small cards reduce the count size and spacing. An empty day shows zero and the existing empty-state text. No progress target, action button or entrance animation is added.
+Achievements keeps the shared widget material and draggable header. Its body starts with Today and the saved date, followed by a prominent count of completed items. A quiet separator leads into individually spaced, wrapping rows with read-only circular checkmarks, aligned at the top of the list area even when there are only a few. The list scrolls independently; the summary remains visible. Small cards reduce the count size and spacing. An empty day shows zero and the existing empty-state text. No progress target, action button or entrance animation is added.
 
 Verification (2026-10-28): the release launcher on isolated X11 display :96 followed empty space → Add item → Widgets → Achievements → Auto. Checked live habit completion/undo, empty Today state, eleven completed items, long mixed English/Arabic wrapping, scrolling to the last rows, and corner resizing from 272×272 to 377×394. Formatting, Clippy and all 106 enabled logic tests passed (six opt-in tests ignored). Captures: `target/ui-check/achievements-redesign/`.
 

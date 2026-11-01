@@ -49,6 +49,7 @@ pub fn connect(ui: &Launcher) -> slint::Timer {
     std::thread::spawn(move || {
         let mut db = None;
         let mut specs = Vec::<widgets::Spec>::new();
+        let mut usage = crate::internet_usage::Cache::default();
         for work in receiver {
             if matches!(work, Work::Audio) {
                 choose_audio(&weak);
@@ -65,6 +66,9 @@ pub fn connect(ui: &Launcher) -> slint::Timer {
             if specs.is_empty() && db.is_none() && matches!(work, Work::Widgets(..) | Work::Minute)
             {
                 continue;
+            }
+            if specs.iter().any(|spec| spec.category == 11) {
+                usage.refresh_if_due();
             }
             let result = (|| {
                 let path = crate::storage::config_path()
@@ -127,7 +131,10 @@ pub fn connect(ui: &Launcher) -> slint::Timer {
                     }
                     _ => None,
                 };
-                Ok::<_, String>((reply, widgets::views(database, &specs, &force, &opened)?))
+                Ok::<_, String>((
+                    reply,
+                    widgets::views_with_usage(database, &specs, &force, &opened, &usage.usage)?,
+                ))
             })();
             let changed = matches!(
                 &work,
@@ -259,6 +266,14 @@ fn view_model(view: widgets::View) -> WidgetView {
         completed,
         resource: view.resource.into(),
         rows: model(rows),
+        total_value: view.usage.total_value.into(),
+        total_unit: view.usage.total_unit.into(),
+        down_value: view.usage.down_value.into(),
+        down_unit: view.usage.down_unit.into(),
+        up_value: view.usage.up_value.into(),
+        up_unit: view.usage.up_unit.into(),
+        updated: view.usage.updated.into(),
+        down_ratio: view.usage.down_ratio,
     }
 }
 

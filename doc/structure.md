@@ -3,15 +3,15 @@
 - `tasks/plan.md` and `tasks/todo.md`: the current English assistance repair plan, ordered tasks and acceptance checks.
 
 - `src/main.rs`: the `daemon`, `toggle` and `ticktick` commands.
-- `src/config.rs`: versioned config data, page limits, app, file and directory search paths, file-search exclusion defaults, named Actions and Prefixes, first-run data, and damaged config recovery.
+- `src/config.rs`: versioned config data, page limits, background color, image and image-folder settings, app, file and directory search paths, file-search exclusion defaults, named Actions and Prefixes, first-run data, and damaged config recovery.
 - `src/add-item.rs`: Add item state for the cached Installed apps inventory, cancellation of stale requests, and local field validation.
-- `src/apps.rs`: app and folder actions, page selection, page creation and deletion, search across pages, folder contents and configured paths with file exclusion matching and worker cache invalidation, generic Prefix recognition/dispatch, dock pinning and Recent display, website favicon retrieval, and cached icons capped at the displayed size; file writes and decoding run on a worker thread.
+- `src/apps.rs`: app and folder actions, page selection, page creation and deletion, search across pages, folder contents and configured paths with file exclusion matching and worker cache invalidation, generic Prefix recognition/dispatch, dock pinning and Recent display, background image-folder selection, website favicon retrieval, and cached icons capped at the displayed size; file writes and decoding run on a worker thread.
 - `src/recent.rs`: saved Recent order, duplicate removal, and the history limit.
 - `src/daemon.rs`: the resident Slint event loop and toggle delivery.
 - `src/platform.rs`: config and Recent file access and atomic writes, installed app discovery including configured executables and executable symlinks, detached commands, the Unix socket, single-daemon lock, Hyprland monitors, fullscreen, and window hiding.
-- `ui/assets/`: vector artwork extracted from `doc/orbit-ui/orbit.svg`. `search-engines/` contains bundled search engine brand icons and their source list.
+- `ui/assets/`: vector artwork extracted from `doc/orbit-ui/orbit.svg`, including the Home Screen image-change icon. `search-engines/` contains bundled search engine brand icons and their source list.
 - `ui/fonts/`: embedded Inter font and its OFL license.
-- `ui/launcher.slint`: the top bar, banner, Prefix badge and search results, scrolling page grid, page dots, Home Screen Settings, Search bar Settings with General, Prefixes and Actions, TickTick Widget Gallery and task editor, app and folder sheets, open folder panel, Icon picker, item and empty-space context menus, and delete alert; `build.rs` compiles it.
+- `ui/launcher.slint`: the top bar, banner, Prefix badge and search results, scrolling page grid, page dots, Home Screen and Appearance Settings, Search bar Settings with General, Prefixes and Actions, TickTick Widget Gallery and task editor, app and folder sheets, open folder panel, Icon picker, item and empty-space context menus, and delete alert; `build.rs` compiles it.
 - `Cargo.toml` and `Cargo.lock`: dependencies and their locked versions. Speed results are in `doc/spec.md`, section 3.
 
 Steps 1–4 are complete. Step 4 adds folders, item drops, page swipes and page creation. Leaving an empty page does not remove it. Step 5 adds Websites, Files, Directories, Actions, Custom command and Installed apps. Pinning and Recent come with the dock in step 6, grid shortcuts in step 7, Settings and appearance in step 8, glyphs in step 9, and packaging in step 10.
@@ -67,6 +67,7 @@ The approved v2 UX specification is `Orbit_Desktop_Launcher_UX_Spec_v2.md`; it s
 
 - `src/widget-starters.rs`: original bilingual starter text, vocabulary examples, unfinished starter habits, Quran passage attribution and a dated Cairo prayer-time example.
 - `src/widget-views.rs`: local selections, persistent shuffled rotations, completion references, habit state, today's achievements and saved prayer countdowns.
+- `src/internet-usage.rs`: worker-side vnStat JSON reading, local-day interface totals, binary unit formatting and last-successful-value caching.
 - `ui/local-widget.slint`: local widget reading hierarchy, scrollable content, fixed action footers, grouped habit rows, an Achievements summary with scrollable completion rows, and local audio actions, displayed above the page gesture surface. `src/widget-data-ui.rs` separates vocabulary and prayer headlines for display without changing saved content.
 
 - `Panel`, `MenuOption` and `SettingsToggle` in `ui/controls.slint` share floating material, menu rows and labeled switches across the complete native interface.

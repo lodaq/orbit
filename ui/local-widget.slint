@@ -6,7 +6,7 @@ import { AddOption } from "controls.slint";
 import { ScrollView } from "std-widgets.slint";
 
 export struct WidgetDataEntry { id: string, content: string, preview: string, attribution: string, resource: string, done: bool }
-export struct WidgetView { id: string, category: int, city: string, country: string, timezone: string, headline: string, content: string, details: string, entry-id: string, done: bool, completed: int, position: int, total: int, required: int, remaining: int, resource: string, rows: [WidgetDataEntry] }
+export struct WidgetView { id: string, category: int, city: string, country: string, timezone: string, headline: string, content: string, details: string, entry-id: string, done: bool, completed: int, position: int, total: int, required: int, remaining: int, resource: string, rows: [WidgetDataEntry], total-value: string, total-unit: string, down-value: string, down-unit: string, up-value: string, up-unit: string, updated: string, down-ratio: float }
 export global LocalWidgets {
     in-out property <[WidgetView]> views;
     pure callback lookup(string, [WidgetView]) -> WidgetView;
@@ -225,7 +225,7 @@ component AchievementsWidget inherits Rectangle {
             enabled: root.enabled; horizontal-scrollbar-policy: always-off;
             min-height: 0px; vertical-stretch: 1;
             VerticalLayout {
-                width: achievements.visible-width; height: self.preferred-height;
+                width: achievements.visible-width; height: max(achievements.visible-height, self.preferred-height);
                 alignment: start; spacing: Theme.space-2;
                 if root.view.rows.length == 0: OrbitText {
                     text: root.view.content; color: Theme.secondary; font-size: Theme.type-body; wrap: word-wrap;
@@ -249,16 +249,120 @@ component AchievementsWidget inherits Rectangle {
     }
 }
 
+component UsageAmount inherits HorizontalLayout {
+    in property <string> value;
+    in property <string> unit;
+    in property <length> value-size: 19px;
+    in property <length> unit-size: 12px;
+    alignment: start;
+    spacing: 3px;
+    OrbitText {
+        text: root.value; font-size: root.value-size;
+        horizontal-stretch: 0; vertical-stretch: 0;
+        font-weight: 600; color: Theme.text; vertical-alignment: bottom;
+    }
+    OrbitText {
+        text: root.unit; font-size: root.unit-size;
+        horizontal-stretch: 0; vertical-stretch: 0;
+        font-weight: 600; color: Theme.secondary; vertical-alignment: bottom;
+    }
+}
+
+component UsageBadge inherits Rectangle {
+    in property <string> glyph;
+    in property <color> tint;
+    width: 26px; height: 26px; border-radius: 13px;
+    background: root.tint.with-alpha(0.18);
+    OrbitText {
+        text: root.glyph; font-size: 14px;
+        font-weight: 700; color: root.tint;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+}
+
+component UsageStat inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <string> unit;
+    in property <string> glyph;
+    in property <color> tint;
+    horizontal-stretch: 1;
+    spacing: 10px;
+    UsageBadge { glyph: root.glyph; tint: root.tint; }
+    VerticalLayout {
+        alignment: center; spacing: 1px;
+        OrbitText {
+            text: root.label; font-size: 12px;
+            font-weight: 500; color: Theme.secondary;
+        }
+        UsageAmount { value: root.value; unit: root.unit; }
+    }
+}
+
+export component InternetUsageWidget inherits Rectangle {
+    in property <WidgetView> view;
+    background: transparent;
+    border-width: 0px;
+    clip: true;
+    VerticalLayout {
+        padding: 16px; spacing: 6px;
+        alignment: start;
+        HorizontalLayout {
+            alignment: space-between;
+            VerticalLayout {
+                spacing: 1px;
+                OrbitText {
+                    text: "TODAY"; font-size: 11px;
+                    font-weight: 600; color: Theme.focus;
+                }
+                UsageAmount {
+                    value: root.view.total-value; unit: root.view.total-unit;
+                    value-size: 34px; unit-size: 17px;
+                }
+            }
+            OrbitText {
+                text: "Updated " + root.view.updated;
+                font-size: 10px; font-weight: 400; color: Theme.secondary;
+                horizontal-alignment: right; vertical-alignment: bottom;
+            }
+        }
+        Rectangle {
+            height: 6px; border-radius: 3px; background: Theme.separator; clip: true;
+            Rectangle {
+                x: 0px; y: 0px;
+                width: parent.width * clamp(root.view.down-ratio, 0.04, 0.96);
+                height: parent.height; background: Theme.focus;
+                animate width { duration: 400ms; easing: ease-in-out; }
+            }
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            UsageStat {
+                label: "Download"; value: root.view.down-value; unit: root.view.down-unit;
+                glyph: "↓"; tint: Theme.focus;
+            }
+            UsageStat {
+                label: "Upload"; value: root.view.up-value; unit: root.view.up-unit;
+                glyph: "↑"; tint: Theme.success;
+            }
+        }
+    }
+}
+
 export component LocalWidget inherits Rectangle {
     in property <string> widget-id;
     in property <bool> enabled: true;
     property <WidgetView> view: LocalWidgets.lookup(widget-id, LocalWidgets.views);
     // Content owns its input; the page retains the header and resize corner.
     TouchArea { enabled: root.enabled; clicked => { } }
+    if root.view.category == 11: InternetUsageWidget {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        view: root.view;
+    }
     if root.view.category == 9 || root.view.category == 10: AdhkarWidget { widget-id: root.widget-id; view: root.view; enabled: root.enabled; }
     if root.view.category == 8: AchievementsWidget { view: root.view; enabled: root.enabled; }
     if root.view.category == 6: AzanWidget { widget-id: root.widget-id; view: root.view; enabled: root.enabled; }
-    if root.view.category != 6 && root.view.category != 8 && root.view.category != 9 && root.view.category != 10: VerticalLayout {
+    if root.view.category != 6 && root.view.category != 8 && root.view.category != 9 && root.view.category != 10 && root.view.category != 11: VerticalLayout {
         spacing: Theme.space-3;
         content-scroll := ScrollView {
             enabled: root.enabled;

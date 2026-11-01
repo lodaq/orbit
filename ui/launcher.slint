@@ -453,27 +453,62 @@ component DockTile inherits Rectangle {
     in property <AppTile> item;
     in property <bool> enabled;
     in property <bool> recent;
+    // Pointer x in the window; far away while the pointer is outside the dock.
+    in property <length> pointer-x: -10000px;
+    // False when the pointer is not over a dock icon, so a tile can tell that it was left for good.
+    in property <bool> pointer-on-tiles: false;
     callback gesture(int,length,length);
     callback open();
     callback context-menu(bool, string, length, length);
-    height: 82px;
-    border-radius: Theme.radius-sheet;
-    background: dock-touch.pressed ? Theme.press-overlay : dock-touch.has-hover ? Theme.hover-overlay : transparent;
+    callback pointer-left();
+    callback hover-entered(string, string, length);
+    callback hover-moved(length);
+    callback hover-left(string);
+    background: transparent;
     accessible-role: button; accessible-label: item.name; accessible-enabled: enabled;
     accessible-action-default => { if root.enabled { root.open(); } }
-    ItemIcon {
-        x: (parent.width - 48px) / 2; y: 6px; width: 48px; height: 48px; item: item; dock: true;
-        transform-origin: { x: self.width / 2, y: self.height / 2 };
-        transform-scale-x: dock-touch.pressed ? 94% : 100%; transform-scale-y: self.transform-scale-x;
-        animate transform-scale-x { duration: dock-touch.pressed ? 0ms : Theme.control-release; easing: ease-out; }
-        animate transform-scale-y { duration: dock-touch.pressed ? 0ms : Theme.control-release; easing: ease-out; }
+
+    // The macOS dock magnifies the icon under the pointer and its neighbours, with a smooth falloff.
+    private property <length> center-x: self.absolute-position.x + self.width / 2;
+    private property <float> pointer-distance: min(1.0, abs(self.center-x - root.pointer-x) / 170px);
+    private property <float> pointer-falloff: (1.0 - self.pointer-distance) * (1.0 - self.pointer-distance) * (1.0 + 2.0 * self.pointer-distance);
+    private property <float> hover-scale: 1.0 + 0.6 * self.pointer-falloff;
+    // Magnified icons spread apart, as in the macOS dock: each icon moves by the room the icons before it take.
+    private property <float> spread-distance: root.pointer-on-tiles ? clamp((self.center-x - root.pointer-x) / 170px, -1.0, 1.0) : 0.0;
+    private property <float> spread-reach: abs(self.spread-distance);
+    private property <float> spread-amount: (self.spread-distance < 0 ? -1.0 : 1.0)
+        * (self.spread-reach - self.spread-reach * self.spread-reach * self.spread-reach + self.spread-reach * self.spread-reach * self.spread-reach * self.spread-reach / 2);
+    private property <length> icon-center-x: self.center-x + root.spread-amount * 72px;
+    private property <bool> hovered: dock-touch.has-hover;
+
+    changed hovered => {
+        // Keep a pointer that moved into a neighbour; clear one that left this slot or the dock.
+        if !self.hovered && (!root.pointer-on-tiles || abs(self.center-x - root.pointer-x) < self.width / 2) {
+            root.pointer-left();
+        }
+        if self.hovered {
+            root.hover-entered(root.item.id, root.item.name, self.icon-center-x);
+        } else {
+            root.hover-left(root.item.id);
+        }
     }
-    OrbitText { y: 65px; width: parent.width; height: 16px; text: item.name; color: Theme.text; font-size: 11px; horizontal-alignment: center; overflow: elide; }
+    ItemIcon {
+        x: (parent.width - 48px) / 2 + root.spread-amount * 72px; y: parent.height - 56px; width: 48px; height: 48px; item: item; dock: true;
+        animate x { duration: 80ms; easing: ease-out; }
+        // Grow upward from the dock's bottom edge, as the macOS dock does.
+        transform-origin: { x: self.width / 2, y: self.height };
+        transform-scale-x: root.hover-scale * (dock-touch.pressed ? 0.94 : 1.0); transform-scale-y: self.transform-scale-x;
+        animate transform-scale-x { duration: dock-touch.pressed ? 0ms : 80ms; easing: ease-out; }
+        animate transform-scale-y { duration: dock-touch.pressed ? 0ms : 80ms; easing: ease-out; }
+    }
     dock-touch := TouchArea {
         mouse-cursor: pointer; enabled: root.enabled;
 
         pointer-event(event) => {
-            if event.kind == PointerEventKind.move { root.gesture(1,self.absolute-position.x + self.mouse-x,self.absolute-position.y + self.mouse-y); }
+            if event.kind == PointerEventKind.move {
+                root.gesture(1,self.absolute-position.x + self.mouse-x,self.absolute-position.y + self.mouse-y);
+                root.hover-entered(root.item.id, root.item.name, root.icon-center-x);
+            }
             if event.kind == PointerEventKind.cancel { root.gesture(3,0px,0px); }
             if event.button == PointerEventButton.left {
                 if event.kind == PointerEventKind.down { root.gesture(0,self.absolute-position.x + self.mouse-x,self.absolute-position.y + self.mouse-y); }
@@ -544,6 +579,55 @@ export component Launcher inherits Window {
     private property <length> grab-y;
     private property <int> focused-item: 0;
     private property <bool> keyboard-grid;
+    private property <string> dock-hovered-id;
+    private property <string> dock-hovered-name;
+    private property <length> dock-hovered-x: -10000px;
+    private property <bool> dock-tooltip-visible;
+    private property <bool> show-dock-tooltip: root.dock-tooltip-visible && root.dock-hovered-name != "" && !root.dragging && root.dock-context == "" && !root.sheet && !root.alert && !root.folder-open && !root.settings;
+
+    dock-tooltip-timer := Timer {
+        interval: 50ms;
+        running: false;
+        triggered => {
+            if root.dock-hovered-id != "" && !root.dragging && root.dock-context == "" && !root.sheet && !root.alert && !root.folder-open && !root.settings {
+                root.dock-tooltip-visible = true;
+            }
+            self.stop();
+        }
+    }
+
+    function dock-hover-entered(id: string, name: string, x: length) {
+        if root.dock-hovered-id != id {
+            root.dock-hovered-id = id;
+            root.dock-hovered-name = name;
+            root.dock-hovered-x = x;
+            root.dock-tooltip-visible = false;
+            dock-tooltip-timer.start();
+        } else {
+            root.dock-hovered-x = x;
+        }
+    }
+
+    function dock-hover-moved(x: length) {
+        root.dock-hovered-x = x;
+    }
+
+    function dock-hover-left(id: string) {
+        if root.dock-hovered-id == id {
+            root.dock-hovered-id = "";
+            root.dock-hovered-name = "";
+            root.dock-tooltip-visible = false;
+            dock-tooltip-timer.stop();
+        }
+    }
+
+    function dock-clear-hover() {
+        root.dock-hovered-id = "";
+        root.dock-hovered-name = "";
+        root.dock-tooltip-visible = false;
+        dock-tooltip-timer.stop();
+    }
+
     private property <int> dock-source-index: -1;
     out property <bool> grid-navigation: !root.search-context && !root.ai-active && page-focus.has-focus && !root.page-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open;
     pure callback next-grid-item([AppTile],int,int) -> int;
@@ -693,6 +777,17 @@ export component Launcher inherits Window {
     in-out property <bool> settings;
     private property <bool> shortcuts-tab;
     private property <int> settings-tab;
+    in-out property <string> background-color-input;
+    in-out property <string> background-folder-input;
+    in property <color> background-color: Theme.launcher-background;
+    in property <bool> background-color-active;
+    in property <image> background-image;
+    in property <bool> background-image-active;
+    callback save-background-color(string);
+    callback choose-background-image();
+    callback reset-background();
+    callback save-background-folder(string);
+    callback change-background-image();
     in property <[UserActionChoice]> user-actions;
     in-out property <int> ai-provider;
     in-out property <string> ai-address: "http://127.0.0.1:11434";
@@ -1853,14 +1948,21 @@ export component Launcher inherits Window {
         }
         return reject;
     }
-    init => { Palette.color-scheme = ColorScheme.dark; }
     default-font-family: "Inter";
     default-font-size: Theme.type-body;
     title: "Orbit";
     no-frame: true;
     full-screen: true;
-    background: Theme.launcher-background;
-    Image { width: root.width; height: root.height; source: @image-url("assets/background.svg"); image-fit: fill; }
+    background: root.background-image-active ? transparent : root.background-color-active ? root.background-color : Theme.launcher-background;
+    if root.background-image-active: Image { width: root.width; height: root.height; source: root.background-image; image-fit: cover; }
+    if !root.background-image-active && !root.background-color-active: Image { width: root.width; height: root.height; source: @image-url("assets/background.svg"); image-fit: fill; }
+    if root.home-visible: Rectangle {
+        x: root.width - 72px; y: root.height - 92px; width: 48px; height: 48px;
+        background: Theme.dock-surface; border-width: 1px; border-color: Theme.dock-border; border-radius: 24px;
+        accessible-role: button; accessible-label: "Change background image"; accessible-action-default => { root.change-background-image(); }
+        Image { x: 12px; y: 12px; width: 24px; height: 24px; source: @image-url("assets/change-background.svg"); image-fit: contain; }
+        TouchArea { mouse-cursor: pointer; clicked => { root.change-background-image(); } }
+    }
     Image { x: root.width < 1200px ? 16px : 48px; y: 40px; width: root.width < 1200px ? 80px : 90px; height: 32px; source: @image-url("assets/orbit.svg"); image-fit: contain; }
     search-bar := Rectangle {
         x: (root.width - self.width) / 2; y: 34px; width: min(root.ai-active && !root.settings ? 820px : 560px, max(240px, root.width - 440px));
@@ -1977,7 +2079,7 @@ export component Launcher inherits Window {
             }
         }
         border-radius: Theme.radius-control;
-        background: top-button.pressed ? Theme.press-overlay : index == 0 && root.layout-locked ? Theme.search-focus-border : top-button.has-hover ? Theme.hover-overlay : transparent;
+        background: top-button.pressed ? Theme.press-overlay : index == 0 && root.layout-locked ? Theme.search-focus-border : top-button.has-hover ? Theme.hover-overlay : Theme.search-background;
         Image { x: 8px; y: 10px; width: 20px; height: 20px;
             source: index == 0 ? (root.layout-locked ? @image-url("assets/lock.svg") : @image-url("assets/unlock.svg")) : index == 1 ? @image-url("assets/settings.svg") : @image-url("assets/close.svg"); }
         top-button := TouchArea {
@@ -2036,6 +2138,27 @@ export component Launcher inherits Window {
                     height: preview.preview-items[index].span-y * preview.tile-size - root.grid-gap * 1px;
                     items: preview.preview-items;
                     index: index;
+                    ticktick-tasks: index < preview.preview-items.length && preview.preview-items[index].ticktick
+                        ? root.ticktick-visible-tasks(root.ticktick-tasks,preview.preview-items[index].ticktick-next ? "@today" : preview.preview-items[index].ticktick-project-id,
+                            preview.preview-items[index].ticktick-next ? false : root.ticktick-show-completed,0,
+                            preview.preview-items[index].ticktick-next ? 1 : max(0,floor((self.height - 68px) / 36px)) + 1) : [];
+                    ticktick-total-count: index < preview.preview-items.length && preview.preview-items[index].ticktick && !preview.preview-items[index].ticktick-next
+                        ? root.ticktick-task-count(root.ticktick-tasks,preview.preview-items[index].ticktick-project-id,root.ticktick-show-completed) : 0;
+                    ticktick-scroll-offset: index < preview.preview-items.length && !preview.preview-items[index].ticktick-next
+                        && root.ticktick-scroll-widget-id == preview.preview-items[index].id ? root.ticktick-scroll-offset : 0px;
+                    ticktick-scroll-shift: self.ticktick-scroll-offset - floor(self.ticktick-scroll-offset / 36px) * 36px;
+                    ticktick-list-name: index < preview.preview-items.length && preview.preview-items[index].ticktick
+                        ? root.ticktick-list-name(root.ticktick-projects,preview.preview-items[index].ticktick-next && self.ticktick-tasks.length > 0
+                            ? self.ticktick-tasks[0].project-id : preview.preview-items[index].ticktick-project-id) : "";
+                    focus-expanded: index < preview.preview-items.length && root.ticktick-focus-details-id == preview.preview-items[index].id;
+                    ticktick-focus-scroll: index < preview.preview-items.length && root.ticktick-focus-scroll-widget-id == preview.preview-items[index].id
+                        ? root.ticktick-focus-scroll : 0px;
+                    ticktick-status: root.ticktick-status;
+                    ticktick-connected: root.ticktick-connected;
+                    ticktick-refreshing: root.ticktick-refreshing;
+                    ticktick-error: root.ticktick-error;
+                    ticktick-pulse: root.ticktick-pulse;
+                    ticktick-next-completion-sequence: root.ticktick-next-completion-sequence;
                     animate x { duration: 120ms; easing: ease-out; }
                     animate y { duration: 120ms; easing: ease-out; }
                 }
@@ -2063,8 +2186,6 @@ export component Launcher inherits Window {
                 property <int> columns: max(1, floor(self.width / 1px));
                 property <length> tile-size: 1px;
                 property <int> rows: max(1,floor((page.height - root.page-margin * 2px) / self.tile-size));
-                opacity: root.page-dragging || root.transitioning ? 0.88 : 1;
-                animate opacity { duration: 100ms; easing: ease-out; }
                 height: max(page.height - root.page-margin * 2px, self.rows * self.tile-size);
                 border-width: 0px;
                 border-color: transparent;
@@ -2227,7 +2348,7 @@ export component Launcher inherits Window {
             }
             for item in grid.display-items: AddOption {
                 visible: item.widget && item.widget-kind == 16 && !item.pinned && root.placing-widget < 0;
-                enabled: !root.dragging && !root.busy && !root.sheet && !root.alert && !root.settings && !root.folder-open;
+                enabled: !(root.dragging && item.id == root.drag-item.id) && !root.sheet && !root.alert && !root.settings && !root.folder-open;
                 x: grid.x + (item.col + item.span-x) * grid.tile-size - root.grid-gap * 0.5px - 56px;
                 y: grid.y + item.row * grid.tile-size + root.grid-gap * 0.5px + Theme.space-2;
                 option-width: Theme.control-height; height: Theme.widget-action-height;
@@ -2242,7 +2363,7 @@ export component Launcher inherits Window {
                 widget-id: item.id;
                 visible: item.widget && !item.ticktick && !item.pinned && root.placing-widget < 0;
                 opacity: root.dragging && item.id == root.drag-item.id ? 0.2 : 1;
-                enabled: !root.dragging && !root.busy && !root.sheet && !root.alert && !root.settings && !root.folder-open;
+                enabled: !(root.dragging && item.id == root.drag-item.id) && !root.sheet && !root.alert && !root.settings && !root.folder-open;
                 x: grid.x + item.col * grid.tile-size + root.grid-gap * 0.5px + 16px;
                 y: grid.y + item.row * grid.tile-size + root.grid-gap * 0.5px + 48px;
                 width: max(0px,item.span-x * grid.tile-size - root.grid-gap * 1px - 32px);
@@ -2271,72 +2392,153 @@ export component Launcher inherits Window {
         }
     }
     dock := Rectangle {
-        x: (root.width - self.width) / 2; y: root.height - 120px;
+        x: (root.width - self.width) / 2; y: root.height - 22px - self.height;
         property <int> item-count: root.recent-items.length + root.dock-items.length;
-        property <length> content-width: item-count > 0 ? (item-count - 1) * self.slot-width + 88px + 2 * Theme.space-2 : 144px;
-        width: min(root.width - 2 * Theme.space-6, min(1400px, self.content-width + 2 * self.scroll-inset)); height: 98px;
+        property <length> content-width: item-count > 0 ? item-count * self.slot-width + 2 * Theme.space-2 : 144px;
+        property <length> pointer-x: -10000px;
+        // Magnified icons spread apart, so the bar widens to hold them, as the macOS dock does.
+        property <length> magnify-spread: 72px;
+        property <length> widest: min(root.width - 2 * Theme.space-6, 1400px);
+        property <length> rest-width: min(self.widest, self.content-width + 2 * self.scroll-inset);
+        property <length> content-offset: max(0px, (dock-scroll.width - self.content-width) / 2);
+        property <length> tiles-start: self.absolute-position.x + self.content-offset + 8px;
+        property <bool> pointer-on-tiles: self.pointer-x > self.tiles-start && self.pointer-x < self.tiles-start + self.item-count * self.slot-width;
+        width: min(self.widest, self.rest-width + (self.pointer-x > -1000px ? self.magnify-spread : 0px));
+        animate width { duration: 80ms; easing: ease-out; }
+        height: 64px;
         background: Theme.dock-surface; border-width: Theme.border-width; border-color: Theme.dock-border; border-radius: Theme.radius-dock;
-        property <bool> overflowing: self.content-width > self.width - 16px;
+        property <bool> overflowing: self.content-width > self.rest-width - 16px;
         property <length> scroll-inset: 8px;
-        property <length> slot-width: 100px;
+        property <length> slot-width: 68px;
+        // Magnified icons grow above the bar, so the scroll area extends upward to avoid clipping them.
+        property <length> magnify-room: 24px;
+        // A removed dock item cannot report that the pointer left it.
+        changed item-count => { self.pointer-x = -10000px; root.dock-clear-hover(); }
         dock-scroll := Flickable {
-            x: dock.scroll-inset; y: 4px; width: parent.width - 2 * dock.scroll-inset; height: 88px;
+            x: dock.scroll-inset; y: -dock.magnify-room; width: parent.width - 2 * dock.scroll-inset; height: dock.height + dock.magnify-room;
             content-width: max(self.width, dock.content-width); content-height: self.height;
+            // The extra space above the bar must not capture input while the dock fits.
+            interactive: dock.overflowing;
             mouse-drag-pan-enabled: true;
+
+            if root.recent-items.length > 0 && root.dock-items.length > 0: Rectangle {
+                property <length> center-x: dock-scroll.absolute-position.x + dock.content-offset + 8px + root.recent-items.length * dock.slot-width;
+                property <float> spread-distance: dock.pointer-on-tiles ? clamp((self.center-x - dock.pointer-x) / 170px, -1.0, 1.0) : 0.0;
+                property <float> spread-reach: abs(self.spread-distance);
+                property <float> spread-amount: (self.spread-distance < 0 ? -1.0 : 1.0)
+                    * (self.spread-reach - self.spread-reach * self.spread-reach * self.spread-reach + self.spread-reach * self.spread-reach * self.spread-reach * self.spread-reach / 2);
+                x: dock.content-offset + 8px + root.recent-items.length * dock.slot-width - 1px + self.spread-amount * dock.magnify-spread;
+                animate x { duration: 80ms; easing: ease-out; }
+                y: dock.magnify-room + (dock.height - 32px) / 2;
+                width: 2px; height: 32px; border-radius: 1px; background: Theme.dock-border;
+            }
             for item[index] in root.recent-items: DockTile {
-                x: 8px + index * dock.slot-width; y: 4px; width: 88px;
+                x: dock.content-offset + 8px + index * dock.slot-width; y: 0px; width: dock.slot-width; height: dock.height + dock.magnify-room;
+                pointer-x: dock.pointer-x; pointer-on-tiles: dock.pointer-on-tiles;
                 item: item; enabled: !root.busy; recent: true;
-                open => { root.busy = true; root.open-dock-item(item.page, item.index, item.folder-app-index); }
+                hover-entered(id, name, x) => { root.dock-hover-entered(id, name, x); }
+                hover-moved(x) => { root.dock-hover-moved(x); }
+                hover-left(id) => { root.dock-hover-left(id); }
+                pointer-left => { dock.pointer-x = -10000px; root.dock-clear-hover(); }
+                open => { root.dock-clear-hover(); root.busy = true; root.open-dock-item(item.page, item.index, item.folder-app-index); }
                 gesture(kind,x,y) => {
-                    if kind == 0 { root.begin-drag(0,false,x,y); root.drag-from-dock = true; root.dock-source-index = index; root.drag-item = item; root.grab-x = 32px; root.grab-y = 32px; }
-                    if kind == 1 { root.move-drag(x,y); }
+                    // The same move events drive dock magnification and item dragging.
+                    if kind == 1 { dock.pointer-x = x; root.move-drag(x,y); }
+                    if kind == 0 { root.dock-clear-hover(); root.begin-drag(0,false,x,y); root.drag-from-dock = true; root.dock-source-index = index; root.drag-item = item; root.grab-x = 32px; root.grab-y = 32px; }
                     if kind == 2 { root.end-drag(); }
                     if kind == 3 { root.cancel-drag(); }
                 }
                 context-menu(recent, id, x, y) => {
+                    root.dock-clear-hover();
                     root.context-index = -1; root.dock-context = recent ? "recent" : "pinned";
                     root.context-id = id; root.context-x = x; root.context-y = y;
                 }
             }
             for item[index] in root.dock-items: DockTile {
                 property <int> compact: index - (root.drag-item.pinned && index > root.dock-source-index ? 1 : 0);
-                property <int> position: root.on-dock && root.drag-item.id != item.id ? self.compact + (self.compact >= root.dock-target ? 1 : 0) : index;
+                property <int> target-position: root.on-dock && root.drag-item.id != item.id ? self.compact + (self.compact >= root.dock-target ? 1 : 0) : index;
+                property <float> slot-position: root.recent-items.length + self.target-position;
+                animate slot-position { duration: 200ms; easing: ease-out; }
+                x: dock.content-offset + 8px + self.slot-position * dock.slot-width;
+                y: 0px; width: dock.slot-width; height: dock.height + dock.magnify-room;
                 opacity: root.dragging && root.drag-item.id == item.id ? 0.2 : 1;
-                x: 8px + (root.recent-items.length + self.position) * dock.slot-width; y: 4px; width: 88px;
-                animate x { duration: 200ms; easing: ease-out; }
+                pointer-x: dock.pointer-x; pointer-on-tiles: dock.pointer-on-tiles;
                 item: item; enabled: !root.busy; recent: false;
-                open => { root.busy = true; root.open-dock-item(item.page, item.index, item.folder-app-index); }
+                hover-entered(id, name, x) => { root.dock-hover-entered(id, name, x); }
+                hover-moved(x) => { root.dock-hover-moved(x); }
+                hover-left(id) => { root.dock-hover-left(id); }
+                pointer-left => { dock.pointer-x = -10000px; root.dock-clear-hover(); }
+                open => { root.dock-clear-hover(); root.busy = true; root.open-dock-item(item.page, item.index, item.folder-app-index); }
                 gesture(kind,x,y) => {
-                    if kind == 0 { root.begin-drag(0,false,x,y); root.drag-from-dock = true; root.dock-source-index = index; root.drag-item = item; root.grab-x = 32px; root.grab-y = 32px; }
-                    if kind == 1 { root.move-drag(x,y); }
+                    // The same move events drive dock magnification and item dragging.
+                    if kind == 1 { dock.pointer-x = x; root.move-drag(x,y); }
+                    if kind == 0 { root.dock-clear-hover(); root.begin-drag(0,false,x,y); root.drag-from-dock = true; root.dock-source-index = index; root.drag-item = item; root.grab-x = 32px; root.grab-y = 32px; }
                     if kind == 2 { root.end-drag(); }
                     if kind == 3 { root.cancel-drag(); }
                 }
                 context-menu(recent, id, x, y) => {
+                    root.dock-clear-hover();
                     root.context-index = -1; root.dock-context = recent ? "recent" : "pinned";
                     root.context-id = id; root.context-x = x; root.context-y = y;
                 }
             }
-            if root.recent-items.length > 0 && root.dock-items.length > 0: Rectangle {
-                x: 8px + root.recent-items.length * dock.slot-width - 1px;
-                y: 20px; width: 1px; height: 52px; background: Theme.separator;
-            }
         }
         if dock.overflowing: Rectangle {
-            x: 12px; y: 33px; width: 32px; height: 32px; border-radius: Theme.radius-widget; background: Theme.raised.with-alpha(0.8);
+            x: 12px; y: 16px; width: 32px; height: 32px; border-radius: Theme.radius-widget; background: Theme.raised.with-alpha(0.8);
             OrbitText { text: "‹"; color: Theme.text; font-size: Theme.type-title; horizontal-alignment: center; vertical-alignment: center; }
             TouchArea { mouse-cursor: pointer; clicked => { dock-scroll.content-x = max(0px,dock-scroll.content-x - 300px); } }
         }
         if dock.overflowing && dock-scroll.content-x < dock-scroll.content-width - dock-scroll.width: Rectangle {
-            x: parent.width - 44px; y: 33px; width: 32px; height: 32px; border-radius: Theme.radius-widget; background: Theme.raised.with-alpha(0.8);
+            x: parent.width - 44px; y: 16px; width: 32px; height: 32px; border-radius: Theme.radius-widget; background: Theme.raised.with-alpha(0.8);
             OrbitText { text: "›"; color: Theme.text; font-size: Theme.type-title; horizontal-alignment: center; vertical-alignment: center; }
             TouchArea { mouse-cursor: pointer; clicked => { dock-scroll.content-x = min(dock-scroll.content-width - dock-scroll.width,dock-scroll.content-x + 300px); } }
         }
     }
     if root.on-dock: Rectangle {
-        x: dock-scroll.absolute-position.x + (root.recent-items.length + root.dock-target) * dock.slot-width - dock-scroll.content-x;
+        x: dock-scroll.absolute-position.x + dock.content-offset + 8px + (root.recent-items.length + root.dock-target) * dock.slot-width - dock-scroll.content-x;
         y: dock.y + 8px; width: 4px; height: dock.height - 16px;
         background: !root.drag-item.widget && (root.dock-items.length < 10 || root.drag-item.pinned) ? Theme.placement-valid : Theme.placement-invalid;
+    }
+    dock-tooltip := Rectangle {
+        property <length> target-x: max(8px, min(root.width - self.width - 8px, root.dock-hovered-x - self.width / 2));
+        x: self.target-x;
+        // The bottom of the caret sits 6px above the top of the magnified dock icon (-21px relative to dock.y).
+        y: dock.y - self.height - 27px;
+        width: bubble.width;
+        height: bubble.height + 7px;
+        opacity: root.show-dock-tooltip ? 1.0 : 0.0;
+        animate opacity { duration: 80ms; easing: ease-out; }
+        animate x { duration: 80ms; easing: ease-out; }
+
+        bubble := Rectangle {
+            y: 0px;
+            width: max(48px, tooltip-label.preferred-width + 28px);
+            height: 32px;
+            background: #ffffff;
+            border-radius: 8px;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 8px;
+            drop-shadow-offset-y: 2px;
+
+            tooltip-label := OrbitText {
+                width: parent.width;
+                height: parent.height;
+                text: root.dock-hovered-name;
+                color: #171A29;
+                font-size: 13px;
+                font-weight: 500;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+        Path {
+            x: clamp(root.dock-hovered-x - dock-tooltip.x - 7px, 8px, parent.width - 22px);
+            y: bubble.height - 1px;
+            width: 14px;
+            height: 7px;
+            commands: "M 0 0 L 14 0 L 7 7 Z";
+            fill: #ffffff;
+        }
     }
     if root.search-text != "" && !root.settings && root.activated-prefix-id == "": Flickable {
         opacity: root.search-results-visible ? 1 : 0;
@@ -2577,6 +2779,7 @@ export component Launcher inherits Window {
             spacing: 4px;
             OrbitText { text: "Settings"; color: Theme.settings-text; font-size: 22px; font-weight: 600; height: 46px; }
             SettingsNav { label: "General"; icon: @image-url("assets/settings.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 0; clicked => { root.settings-tab = 0; root.shortcuts-tab = false; root.shortcut-recording = false; } }
+            SettingsNav { label: "Appearance"; icon: @image-url("assets/settings.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 8; clicked => { root.settings-tab = 8; root.shortcuts-tab = false; root.shortcut-recording = false; } }
             SettingsNav { label: "Shortcuts"; icon: @image-url("assets/keyboard.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 1; clicked => { root.settings-tab = 1; root.shortcuts-tab = true; } }
             SettingsNav { label: "Search bar"; icon: @image-url("assets/search.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab >= 2 && root.settings-tab <= 6; clicked => { root.settings-tab = 4; root.shortcuts-tab = false; root.shortcut-recording = false; } }
             SettingsNav { label: "Data"; icon: @image-url("assets/add-widgets.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 7; clicked => { root.settings-tab = 7; root.shortcuts-tab = false; root.shortcut-recording = false; root.load-widget-data(); } }
@@ -2588,8 +2791,8 @@ export component Launcher inherits Window {
             width: root.settings-content-width; height: parent.height - 56px;
             spacing: 20px;
             if root.settings-tab != 7: VerticalLayout { spacing: 6px; vertical-stretch: 0; alignment: start;
-                OrbitText { text: root.settings-tab == 0 ? "General" : root.settings-tab == 1 ? "Shortcuts" : root.settings-tab == 7 ? "Data" : "Search bar"; color: Theme.settings-text; font-size: Theme.settings-title-size; font-weight: 600; }
-                SettingsDescription { text: root.settings-tab == 7 ? "Manage locally saved widget content and see Orbit storage use." : root.settings-tab == 0 ? "Home screen layout, integrations and app data." : root.settings-tab == 1 ? "Choose an action, then record its shortcut. Changes are saved automatically." : root.settings-tab == 2 ? "Prefixes route a token to an action. Type one before your query to use it." : root.settings-tab == 3 ? "Choose an action to edit it, or create a new one." : "Control how Orbit finds things and where it looks."; }
+                OrbitText { text: root.settings-tab == 0 ? "General" : root.settings-tab == 1 ? "Shortcuts" : root.settings-tab == 7 ? "Data" : root.settings-tab == 8 ? "Appearance" : "Search bar"; color: Theme.settings-text; font-size: Theme.settings-title-size; font-weight: 600; }
+                SettingsDescription { text: root.settings-tab == 7 ? "Manage locally saved widget content and see Orbit storage use." : root.settings-tab == 0 ? "Home screen layout, integrations and app data." : root.settings-tab == 1 ? "Choose an action, then record its shortcut. Changes are saved automatically." : root.settings-tab == 2 ? "Prefixes route a token to an action. Type one before your query to use it." : root.settings-tab == 3 ? "Choose an action to edit it, or create a new one." : root.settings-tab == 8 ? "Change the Home Screen background color or image, or restore the supplied background." : "Control how Orbit finds things and where it looks."; }
             }
             if root.settings-tab >= 2 && root.settings-tab <= 6: GridLayout {
                 spacing: 12px;
@@ -2846,6 +3049,23 @@ export component Launcher inherits Window {
                             if root.data-status != "": SettingsDescription { text: root.data-status; }
                         }
                     }
+                }
+            }
+            if root.settings-tab == 8: SettingsCard {
+                height: 292px;
+                VerticalLayout {
+                    padding: 20px; spacing: 16px; alignment: start;
+                    SettingsTitle { text: "Background"; }
+                    SettingsDescription { text: root.background-image-active ? "Using the selected image." : root.background-color-active ? "Using " + root.background-color-input + "." : "Using the supplied radial background."; }
+                    SettingsField { label: "Background images folder"; placeholder: "/home/you/Pictures"; text <=> root.background-folder-input; enabled: !root.busy; }
+                    SettingsButton { label: "Save image folder"; option-width: 160px; enabled: !root.busy; clicked => { root.busy = true; root.save-background-folder(root.background-folder-input); } }
+                    SettingsField { label: "Background color (hex)"; placeholder: "#RRGGBB"; text <=> root.background-color-input; enabled: !root.busy; }
+                    HorizontalLayout { spacing: 10px;
+                        SettingsButton { label: "Save color"; option-width: 120px; primary: true; enabled: !root.busy; clicked => { root.busy = true; root.save-background-color(root.background-color-input); } }
+                        SettingsButton { label: "Choose image"; option-width: 136px; enabled: !root.busy; clicked => { root.busy = true; root.sheet-operation = "choosing"; root.choose-background-image(); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    SettingsButton { label: "Reset background"; option-width: 156px; enabled: !root.busy; clicked => { root.busy = true; root.reset-background(); } }
                 }
             }
             if root.settings-tab == 6: SettingsCard {
@@ -3700,8 +3920,8 @@ export component Launcher inherits Window {
                                 width: root.sheet-content-width;
                                 property <int> columns: self.width >= 440px ? 2 : 1;
                                 property <length> card-width: (self.width - (self.columns - 1) * Theme.space-3) / self.columns;
-                                height: ceil(13 / self.columns) * (236px + Theme.space-3) - Theme.space-3;
-                                for name[index] in ["TickTick Tasks", "TickTick Focus Task", "Random Quote", "Random Fact", "Motivation", "Affirmation", "Vocabulary Builder", "Achievements", "Quran Player", "Azan Reminder", "Habit Tracker", "Morning Remembrances", "Evening Remembrances"]: Rectangle {
+                                height: ceil(14 / self.columns) * (236px + Theme.space-3) - Theme.space-3;
+                                for name[index] in ["TickTick Tasks", "TickTick Focus Task", "Random Quote", "Random Fact", "Motivation", "Affirmation", "Vocabulary Builder", "Achievements", "Quran Player", "Azan Reminder", "Habit Tracker", "Morning Remembrances", "Evening Remembrances", "Internet Usage"]: Rectangle {
                                     x: mod(index, gallery.columns) * (gallery.card-width + Theme.space-3);
                                     y: floor(index / gallery.columns) * (236px + Theme.space-3);
                                     width: gallery.card-width; height: 236px;
@@ -3713,7 +3933,7 @@ export component Launcher inherits Window {
                                     }
                                     OrbitText {
                                         x: Theme.space-3; y: 48px; width: parent.width - 2 * Theme.space-3; height: 32px;
-                                        text: index >= 2 ? "Local content · Settings → Data" : index == 0 ? "2 × 2 · choose a list" : "4 × 2 · focus task";
+                                        text: index == 13 ? "Live vnStat · updates every minute" : index >= 2 ? "Local content · Settings → Data" : index == 0 ? "2 × 2 · choose a list" : "4 × 2 · focus task";
                                         color: Theme.secondary; font-size: Theme.type-hint; wrap: word-wrap;
                                     }
                                     Rectangle {
@@ -3723,7 +3943,7 @@ export component Launcher inherits Window {
                                         border-color: Theme.separator; border-radius: Theme.radius-control;
                                         OrbitText {
                                             x: Theme.space-2; y: Theme.space-2; width: parent.width - 2 * Theme.space-2; height: parent.height - 2 * Theme.space-2;
-                                            text: index == 0 ? "Tasks\n☐ Task" : index == 1 ? "Focus task\n☐ Task" : index == 2 ? "“\nMake room" : index == 3 ? "360°\nA full circle" : index == 4 ? "One small\nstep" : index == 5 ? "I can take\nthis step" : index == 6 ? "curious\nفضولي" : index == 7 ? "Today\n✓ Finished" : index == 8 ? "بِسْمِ اللَّهِ\nQuran 1:1" : index == 9 ? "Next prayer\nSaved times" : index == 10 ? "☐ Read\n☐ Learn" : index == 11 ? "أذكار الصباح\n1 / 25" : "أذكار المساء\n1 / 25";
+                                            text: index == 0 ? "Tasks\n☐ Task" : index == 1 ? "Focus task\n☐ Task" : index == 2 ? "“\nMake room" : index == 3 ? "360°\nA full circle" : index == 4 ? "One small\nstep" : index == 5 ? "I can take\nthis step" : index == 6 ? "curious\nفضولي" : index == 7 ? "Today\n✓ Finished" : index == 8 ? "بِسْمِ اللَّهِ\nQuran 1:1" : index == 9 ? "Next prayer\nSaved times" : index == 10 ? "☐ Read\n☐ Learn" : index == 11 ? "أذكار الصباح\n1 / 25" : index == 12 ? "أذكار المساء\n1 / 25" : "910.12 MiB\n428.61 MiB";
                                             color: Theme.secondary; font-size: Theme.type-hint; wrap: word-wrap; vertical-alignment: center;
                                         }
                                     }
@@ -3739,7 +3959,7 @@ export component Launcher inherits Window {
                                         clicked => {
                                             root.placing-widget = 7 + index;
                                             root.placing-width = (index == 1 ? 4 : index == 8 || index >= 11 ? 3 : 2) * root.item-size + (index == 1 ? 3 : index == 8 || index >= 11 ? 2 : 1) * root.grid-gap;
-                                            root.placing-height = (index >= 11 ? 5 : 2) * root.item-size + (index >= 11 ? 4 : 1) * root.grid-gap;
+                                            root.placing-height = (index == 11 || index == 12 ? 5 : 2) * root.item-size + (index == 11 || index == 12 ? 4 : 1) * root.grid-gap;
                                             root.widget-placement-target = -1; root.sheet = false;
                                         }
                                     }
@@ -4029,6 +4249,13 @@ export component Launcher inherits Window {
             width: parent.width; height: parent.height; items: [root.drag-item]; index: 0; hovered: true;
             opacity: root.merge-ready ? 0.72 : 1;
             animate opacity { duration: 180ms; easing: ease-out; }
+        }
+        if root.drag-item.widget: LocalWidget {
+            x: 16px; y: 48px;
+            width: max(0px, parent.width - 32px);
+            height: max(0px, parent.height - (root.drag-item.widget-kind == 18 || root.drag-item.widget-kind == 19 ? 60px : 84px));
+            widget-id: root.drag-item.id;
+            enabled: false;
         }
         if root.drag-item.widget: Rectangle {
             width: parent.width; height: parent.height;

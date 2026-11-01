@@ -49,6 +49,8 @@ enum Action {
     SelectTickTickList(String, String),
     TransferData(bool),
     SaveAppearance(i32, i32, i32, usize, usize),
+    SaveBackgroundFolder(String),
+    ChangeBackground,
     SaveDefaultSearchEngine(i32),
     SaveSmoothCursor(bool),
     SaveEnglish(bool, bool, bool, String),
@@ -262,6 +264,7 @@ pub fn connect(launcher: &Launcher) {
             let page_only = matches!(action, Action::Page(_));
             let refreshing = matches!(action, Action::RefreshInstalledApps(_));
             let filtering = matches!(action, Action::FilterInstalled(_));
+            let searching = matches!(action, Action::Search(..));
             let appearance = match &action {
                 Action::SaveAppearance(margin, size, gap, ..) => Some((*margin, *size, *gap)),
                 _ => None,
@@ -298,6 +301,8 @@ pub fn connect(launcher: &Launcher) {
             }
             if success && filtering {
                 apps.update_installed_apps(&weak);
+            } else if success && searching {
+                apps.update_search_results(&weak);
             } else if success && (update || recent_changed || recent_removed) {
                 apps.update(&weak, page_only);
             }
@@ -391,6 +396,14 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             columns as usize,
             rows as usize,
         ));
+    });
+    let sender = send.clone();
+    launcher.on_save_background_folder(move |path| {
+        let _ = sender.send(Action::SaveBackgroundFolder(path.into()));
+    });
+    let sender = send.clone();
+    launcher.on_change_background_image(move || {
+        let _ = sender.send(Action::ChangeBackground);
     });
     let sender = send.clone();
     let cursor_ui = launcher.as_weak();
@@ -1602,6 +1615,56 @@ impl Apps {
                 self.config = config;
                 Ok(())
             }
+            Action::SaveBackgroundFolder(path) => {
+                let path = PathBuf::from(path.trim());
+                if !path.is_dir() {
+                    return Err("Choose an existing image folder".into());
+                }
+                let mut config = self.config.clone();
+                config.background_folder = path.to_string_lossy().into_owned();
+                config.save().map_err(|error| error.to_string())?;
+                self.config = config;
+                Ok(())
+            }
+            Action::ChangeBackground => {
+                let mut images: Vec<_> = std::fs::read_dir(&self.config.background_folder)
+                    .map_err(|error| format!("Couldn't read image folder: {error}"))?
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| {
+                        path.is_file()
+                            && path.extension().is_some_and(|ext| {
+                                matches!(
+                                    ext.to_string_lossy().to_ascii_lowercase().as_str(),
+                                    "png" | "jpg" | "jpeg" | "svg"
+                                )
+                            })
+                    })
+                    .collect();
+                images.sort();
+                if images.is_empty() {
+                    return Err("No supported images in the image folder".into());
+                }
+                let mut pick = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .subsec_nanos() as usize
+                    % images.len();
+                if images.len() > 1
+                    && images[pick].to_string_lossy() == self.config.background_image
+                {
+                    pick = (pick + 1) % images.len();
+                }
+                if read_background_image(&images[pick]).is_none() {
+                    return Err("Couldn't read background image".into());
+                }
+                let mut config = self.config.clone();
+                config.background_image = images[pick].to_string_lossy().into_owned();
+                config.background_color.clear();
+                config.save().map_err(|error| error.to_string())?;
+                self.config = config;
+                Ok(())
+            }
             Action::SaveShortcut(index, action, keys) => self.save_shortcut(index, action, keys),
             Action::DeleteShortcut(action, keys) => {
                 let mut config = self.config.clone();
@@ -1929,6 +1992,8 @@ impl Apps {
         .map_err(|error| format!("Couldn't save installed apps: {error}"))?;
         self.inventory.replace(installed_apps);
         self.search_paths = Some(index_search_paths(&self.config));
+        self.icons.clear();
+        let _ = self.load_icons();
         self.load_installed_icons();
         Ok(())
     }
@@ -2092,6 +2157,131 @@ impl Apps {
                 .set_installed_apps(std::rc::Rc::new(slint::VecModel::from(installed_apps)).into());
             launcher.set_installed_apps_match(has_match);
         });
+    }
+
+    fn compute_search_results(&self) -> Vec<Tile> {
+        let mut results = Vec::new();
+        if self.query.is_empty() {
+            return results;
+        }
+        let all: Vec<_> = self
+            .config
+            .pages
+            .iter()
+            .enumerate()
+            .flat_map(|(page, contents)| {
+                contents
+                    .items
+                    .iter()
+                    .enumerate()
+                    .map(move |(index, item)| (page, index, item))
+            })
+            .collect();
+        let mut seen = HashSet::new();
+        for (index, (_, name, _)) in ACTIONS.iter().enumerate() {
+            if name.to_lowercase().contains(&self.query) {
+                seen.insert(name.trim().to_lowercase());
+                results.push(Tile {
+                    name: (*name).into(),
+                    page: -1,
+                    index: index as i32,
+                    artwork: "action".into(),
+                    app: true,
+                    ..Tile::default()
+                });
+            }
+        }
+        for (page, index, item) in &all {
+            let mut push = |tile: Tile| {
+                let key = tile.name.trim().to_lowercase();
+                if let Some(existing) = results
+                    .iter_mut()
+                    .find(|t| t.name.trim().eq_ignore_ascii_case(&key))
+                {
+                    if !existing.pinned && tile.pinned {
+                        *existing = tile;
+                    }
+                } else {
+                    seen.insert(key);
+                    results.push(tile);
+                }
+            };
+            match item {
+                Item::Folder { apps, .. } => {
+                    for app in apps {
+                        if app.name.to_lowercase().contains(&self.query)
+                            && let Some(tile) = self.dock_tile(&app.id)
+                        {
+                            push(tile);
+                        }
+                    }
+                }
+                Item::Widget { .. } => {}
+                _ if item.name().to_lowercase().contains(&self.query) => {
+                    push(self.tile(item, *page, *index));
+                }
+                _ => {}
+            }
+        }
+        let mut seen_commands = HashSet::new();
+        for (index, app) in self.inventory.apps().iter().enumerate() {
+            let name = app.name.trim().to_lowercase();
+            let cmd = app.command.trim();
+            if app.name.to_lowercase().contains(&self.query)
+                && seen.insert(name)
+                && (cmd.is_empty() || seen_commands.insert(cmd))
+            {
+                results.push(Tile {
+                    id: app.id.clone(),
+                    name: app.name.clone(),
+                    icon: self.icons.get(&app.id).cloned(),
+                    page: -2,
+                    index: index as i32,
+                    command: Some(app.command.clone()),
+                    app: true,
+                    ..Tile::default()
+                });
+            }
+        }
+        for (index, path) in self.search_paths.iter().flatten().enumerate() {
+            if path.name.to_lowercase().contains(&self.query)
+                && !all.iter().any(|(_, _, item)| match item {
+                    Item::File { path: p, .. } | Item::Directory { path: p, .. } => p == &path.path,
+                    _ => false,
+                })
+            {
+                results.push(Tile {
+                    name: path.name.clone(),
+                    path: path.path.clone(),
+                    page: if path.directory { -4 } else { -3 },
+                    index: index as i32,
+                    file: !path.directory,
+                    directory: path.directory,
+                    ..Tile::default()
+                });
+            }
+        }
+        results
+    }
+
+    fn update_search_results(&self, weak: &slint::Weak<Launcher>) {
+        let results = self.compute_search_results();
+        let apply = move |launcher: Launcher| {
+            launcher.set_search_results(
+                std::rc::Rc::new(slint::VecModel::from(
+                    results
+                        .into_iter()
+                        .map(Tile::into_slint)
+                        .collect::<Vec<_>>(),
+                ))
+                .into(),
+            );
+        };
+        if let Some(launcher) = weak.upgrade() {
+            apply(launcher);
+        } else {
+            let _ = weak.upgrade_in_event_loop(apply);
+        }
     }
 
     fn save(
@@ -2561,19 +2751,6 @@ impl Apps {
             });
             return;
         }
-        let all: Vec<_> = self
-            .config
-            .pages
-            .iter()
-            .enumerate()
-            .flat_map(|(page, contents)| {
-                contents
-                    .items
-                    .iter()
-                    .enumerate()
-                    .map(move |(index, item)| (page, index, item))
-            })
-            .collect();
         let dock: Vec<_> = self
             .config
             .pinned
@@ -2589,78 +2766,7 @@ impl Apps {
             .filter(|tile| !tile.folder)
             .take(RECENT_DOCK_LIMIT)
             .collect();
-        let mut created_items = Vec::new();
-        if !self.query.is_empty() {
-            for (page, index, item) in &all {
-                match item {
-                    Item::Folder { apps, .. } => {
-                        for app in apps {
-                            if app.name.to_lowercase().contains(&self.query)
-                                && let Some(tile) = self.dock_tile(&app.id)
-                            {
-                                created_items.push(tile);
-                            }
-                        }
-                    }
-                    Item::Widget { .. } => {}
-                    _ if item.name().to_lowercase().contains(&self.query) => {
-                        created_items.push(self.tile(item, *page, *index));
-                    }
-                    _ => {}
-                }
-            }
-        }
-        let mut results = Vec::new();
-        if !self.query.is_empty() {
-            results.extend(
-                ACTIONS
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, (_, name, _))| name.to_lowercase().contains(&self.query))
-                    .map(|(index, (_, name, _))| Tile {
-                        name: (*name).into(),
-                        page: -1,
-                        index: index as i32,
-                        artwork: "action".into(),
-                        app: true,
-                        ..Tile::default()
-                    }),
-            );
-            results.extend(
-                self.inventory
-                    .apps()
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, app)| app.name.to_lowercase().contains(&self.query))
-                    .map(|(index, app)| Tile {
-                        id: app.id.clone(),
-                        name: app.name.clone(),
-                        icon: self.icons.get(&app.id).cloned(),
-                        page: -2,
-                        index: index as i32,
-                        command: Some(app.command.clone()),
-                        app: true,
-                        ..Tile::default()
-                    }),
-            );
-            results.extend(
-                self.search_paths
-                    .iter()
-                    .flatten()
-                    .enumerate()
-                    .filter(|(_, path)| path.name.to_lowercase().contains(&self.query))
-                    .map(|(index, path)| Tile {
-                        name: path.name.clone(),
-                        path: path.path.clone(),
-                        page: if path.directory { -4 } else { -3 },
-                        index: index as i32,
-                        file: !path.directory,
-                        directory: path.directory,
-                        ..Tile::default()
-                    }),
-            );
-            results.extend(created_items);
-        }
+        let results = self.compute_search_results();
         let installed_apps: Vec<_> = self
             .inventory
             .apps()
@@ -2787,7 +2893,10 @@ impl Apps {
                     .collect::<Vec<_>>(),
             ))
         });
-        let _ = weak.upgrade_in_event_loop(move |launcher| {
+        let background_folder = self.config.background_folder.clone();
+        let background_image =
+            read_background_image(PathBuf::from(&self.config.background_image).as_path());
+        let apply = move |launcher: Launcher| {
             let installed_apps: Vec<_> = installed_apps
                 .into_iter()
                 .map(|(id, name, command, icon)| {
@@ -2846,6 +2955,13 @@ impl Apps {
             launcher.set_page_margin(margin);
             launcher.set_item_size(size);
             launcher.set_grid_gap(gap);
+            launcher.set_background_folder_input(background_folder.into());
+            if let Some(image) = background_image {
+                launcher.set_background_image(slint::Image::from_rgba8(image));
+                launcher.set_background_image_active(true);
+            } else {
+                launcher.set_background_image_active(false);
+            }
             launcher.set_search_engine_names(
                 std::rc::Rc::new(slint::VecModel::from(
                     Config::search_engine_names()
@@ -2934,7 +3050,12 @@ impl Apps {
             } else {
                 launcher.set_folder_open(false);
             }
-        });
+        };
+        if let Some(launcher) = weak.upgrade() {
+            apply(launcher);
+        } else {
+            let _ = weak.upgrade_in_event_loop(apply);
+        }
     }
 }
 
@@ -3037,6 +3158,33 @@ pub(crate) fn decode_icon(
         .ok_or_else(|| "Couldn't read website icon".into())
 }
 
+fn read_background_image(path: &std::path::Path) -> Option<SharedPixelBuffer<Rgba8Pixel>> {
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(PathBuf, Option<SharedPixelBuffer<Rgba8Pixel>>)>> =
+        Mutex::new(None);
+    if let Ok(guard) = CACHE.lock()
+        && let Some((cached_path, cached_img)) = &*guard
+        && cached_path == path
+    {
+        return cached_img.clone();
+    }
+    let data = std::fs::read(path).ok()?;
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    let image = if extension == "svg" {
+        slint::Image::load_from_svg_data(&data).ok()?
+    } else {
+        slint::Image::load_from_data(&data, Some(&extension)).ok()?
+    };
+    let buf = image.to_rgba8();
+    if let Ok(mut guard) = CACHE.lock() {
+        *guard = Some((path.to_path_buf(), buf.clone()));
+    }
+    buf
+}
+
 fn success_message(action: &Action) -> Option<&'static str> {
     match action {
         Action::SaveDefaultSearchEngine(..) => Some("Search engine saved"),
@@ -3077,6 +3225,8 @@ fn success_message(action: &Action) -> Option<&'static str> {
         Action::DeleteSearchPath(..) => Some("Search path removed"),
         Action::SaveShortcut(..) => Some("Shortcut saved"),
         Action::SaveAppearance(..) => Some("Appearance saved"),
+        Action::SaveBackgroundFolder(..) => Some("Background image folder saved"),
+        Action::ChangeBackground => Some("Background changed"),
         _ => None,
     }
 }
@@ -4186,6 +4336,92 @@ mod tests {
         );
         assert_eq!(created.title, title);
         assert_eq!(created.project_id, inbox.id);
+    }
+
+    #[test]
+    fn search_results_do_not_duplicate_pinned_or_saved_apps() {
+        use slint::Model;
+        init_ui_for_test();
+        let launcher = Launcher::new().unwrap();
+
+        let mut config = Config::default();
+        config.pages[0].items.push(Item::App(App {
+            id: "whatsapp-saved".into(),
+            name: "WhatsApp Personal".into(),
+            icon: Icon::Letter,
+            launch: Launch::Installed("whatsapp-personal.desktop".into()),
+        }));
+        config.pinned.push("whatsapp-saved".into());
+
+        let mut inventory = Inventory::default();
+        inventory.replace(vec![
+            crate::config::InstalledApp {
+                id: "whatsapp-personal.desktop".into(),
+                name: "WhatsApp Personal".into(),
+                command: "whatsapp-for-linux".into(),
+                icon: Icon::Letter,
+            },
+            crate::config::InstalledApp {
+                id: "telegram.desktop".into(),
+                name: "Telegram Desktop".into(),
+                command: "telegram-desktop".into(),
+                icon: Icon::Letter,
+            },
+            crate::config::InstalledApp {
+                id: "dup1.desktop".into(),
+                name: "Duplicate App".into(),
+                command: "dup-command".into(),
+                icon: Icon::Letter,
+            },
+            crate::config::InstalledApp {
+                id: "dup2.desktop".into(),
+                name: "Duplicate App".into(),
+                command: "dup-command".into(),
+                icon: Icon::Letter,
+            },
+        ]);
+
+        let mut apps = Apps {
+            config,
+            page: 0,
+            icons: HashMap::new(),
+            open_folder: None,
+            inventory,
+            installed_filter: String::new(),
+            query: "whatsapp".into(),
+            search_paths: None,
+            recent: recent::Recent::default(),
+        };
+
+        apps.update(&launcher.as_weak(), false);
+        let results = launcher.get_search_results();
+        assert_eq!(
+            results.row_count(),
+            1,
+            "WhatsApp Personal must not be duplicated"
+        );
+        assert!(
+            results.row_data(0).unwrap().pinned,
+            "The pinned shortcut must be preserved"
+        );
+
+        apps.query = "telegram".into();
+        apps.update(&launcher.as_weak(), false);
+        let results = launcher.get_search_results();
+        assert_eq!(results.row_count(), 1, "Telegram Desktop must appear once");
+        assert_eq!(
+            results.row_data(0).unwrap().page,
+            -2,
+            "Must be an installed app result"
+        );
+
+        apps.query = "duplicate".into();
+        apps.update(&launcher.as_weak(), false);
+        assert_eq!(
+            launcher.get_search_results().row_count(),
+            1,
+            "Duplicate App in inventory must appear once"
+        );
     }
 }
 

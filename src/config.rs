@@ -23,6 +23,12 @@ pub struct Config {
     pub item_size: i32,
     #[serde(default = "default_grid_gap")]
     pub grid_gap: i32,
+    #[serde(default)]
+    pub background_color: String,
+    #[serde(default)]
+    pub background_image: String,
+    #[serde(default = "default_background_folder")]
+    pub background_folder: String,
     #[serde(default = "default_search_engine")]
     pub default_search_engine: String,
     #[serde(default = "default_smooth_cursor")]
@@ -385,6 +391,9 @@ impl Default for Config {
             page_margin: default_page_margin(),
             item_size: default_item_size(),
             grid_gap: default_grid_gap(),
+            background_color: String::new(),
+            background_image: String::new(),
+            background_folder: "/home/sebaq/Pictures/aesthetic-wallpapers/images".into(),
             default_search_engine: default_search_engine(),
             smooth_cursor: true,
             english_assistance: Default::default(),
@@ -403,6 +412,10 @@ impl Default for Config {
             search_completion_shortcut_initialized: true,
         }
     }
+}
+
+fn default_background_folder() -> String {
+    "/home/sebaq/Pictures/aesthetic-wallpapers/images".into()
 }
 
 fn builtin_actions() -> Vec<UserAction> {

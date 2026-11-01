@@ -44,6 +44,7 @@ Correct first, then simple, then minimal, then fast. The exception is the hot pa
 - Code that talks to the OS (socket, window, `.desktop` files, icon themes) lives in one small module, so another OS can be added later. No `#[cfg]` and no abstraction for other OSes now.
 - The interface is Slint with embedded Inter and the exact visual design in `doc/orbit-ui`; see SPEC section 10.
 - New and updated UI follows `doc/design-system.md`: use shared `Theme` tokens for repeated visual values and shared controls for repeated patterns. Keep Orbit's approved appearance and migrate existing UI as it is touched.
+- Follow Apple's Human Interface Guidelines for all new and updated UI: apply the relevant guidance for accessibility, contrast, hierarchy, layout, motion and materials through Orbit's existing Slint theme and controls. Preserve Orbit's behavior and approved visual identity; use translucent materials only when content remains legible over changing backgrounds.
 - No Apple or Mac-only apps in default content, examples, tests or docs. The look is Apple-style. The apps are not.
 - Orbit starts empty: no default pages, apps or folders.
 - Saved files are written atomically (write a temporary file, then rename it). A missing file starts empty without a banner. A damaged file is renamed to `<name>.bad`, Orbit starts empty and shows a banner. A damaged file never crashes Orbit and is never overwritten.

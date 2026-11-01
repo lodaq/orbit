@@ -23,10 +23,11 @@ pub struct View {
     pub done: bool,
     pub resource: String,
     pub rows: Vec<(Entry, bool)>,
+    pub usage: crate::internet_usage::Usage,
 }
 
 pub fn category(variant: i32) -> Option<i32> {
-    [0, 1, 2, 3, 4, 8, 5, 6, 7, 9, 10]
+    [0, 1, 2, 3, 4, 8, 5, 6, 7, 9, 10, 11]
         .get(variant.checked_sub(9)? as usize)
         .copied()
 }
@@ -37,6 +38,22 @@ pub fn views(
     force: &str,
     opened: &[String],
 ) -> Result<Vec<View>, String> {
+    views_with_usage(
+        db,
+        specs,
+        force,
+        opened,
+        &crate::internet_usage::Usage::default(),
+    )
+}
+
+pub fn views_with_usage(
+    db: &Connection,
+    specs: &[Spec],
+    force: &str,
+    opened: &[String],
+    usage: &crate::internet_usage::Usage,
+) -> Result<Vec<View>, String> {
     specs
         .iter()
         .map(|spec| {
@@ -44,12 +61,18 @@ pub fn views(
                 db,
                 spec,
                 spec.id == force || (opened.iter().any(|id| id == &spec.id) && spec.category == 4),
+                usage,
             )
         })
         .collect()
 }
 
-fn view(db: &Connection, spec: &Spec, force: bool) -> Result<View, String> {
+fn view(
+    db: &Connection,
+    spec: &Spec,
+    force: bool,
+    usage: &crate::internet_usage::Usage,
+) -> Result<View, String> {
     let today = Local::now().format("%Y-%m-%d").to_string();
     let mut view = View {
         id: spec.id.clone(),
@@ -67,6 +90,11 @@ fn view(db: &Connection, spec: &Spec, force: bool) -> Result<View, String> {
         done: false,
         resource: String::new(),
         rows: Vec::new(),
+        usage: if spec.category == 11 {
+            usage.clone()
+        } else {
+            Default::default()
+        },
     };
     if spec.category == 6 {
         crate::azan::view(db, &mut view, chrono::Utc::now())?;
@@ -74,6 +102,9 @@ fn view(db: &Connection, spec: &Spec, force: bool) -> Result<View, String> {
     }
     if matches!(spec.category, 9 | 10) {
         crate::adhkar::view(db, &mut view, &today)?;
+        return Ok(view);
+    }
+    if spec.category == 11 {
         return Ok(view);
     }
     if spec.category == 8 {
