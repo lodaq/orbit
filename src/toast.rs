@@ -15,6 +15,14 @@ enum Level {
     Error,
 }
 
+fn duration_for_level(level: Level) -> std::time::Duration {
+    match level {
+        Level::Error => std::time::Duration::from_millis(4500),
+        Level::Warning => std::time::Duration::from_millis(3500),
+        Level::Info | Level::Success => std::time::Duration::from_millis(2800),
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Message {
     id: i32,
@@ -30,10 +38,14 @@ struct State {
     held: VecDeque<Message>,
     next_id: i32,
     hidden: bool,
+    hover_count: usize,
+    hovered: bool,
 }
 
 thread_local! {
     static STATE: RefCell<State> = RefCell::new(State { hidden: true, ..State::default() });
+    static TIMER: RefCell<Option<slint::Timer>> = const { RefCell::new(None) };
+    static UNHOVER_TIMER: RefCell<Option<slint::Timer>> = const { RefCell::new(None) };
 }
 
 impl Default for State {
@@ -44,6 +56,8 @@ impl Default for State {
             held: VecDeque::new(),
             next_id: 0,
             hidden: true,
+            hover_count: 0,
+            hovered: false,
         }
     }
 }
@@ -68,6 +82,7 @@ impl State {
             && now.duration_since(message.created) <= DEDUPE_TIME
         {
             message.pulse += 1;
+            message.created = now;
             return;
         }
         if self
@@ -121,10 +136,24 @@ impl State {
         if let Some(index) = self.visible.iter().position(|message| message.id == id) {
             self.visible.remove(index);
         }
+        self.hover_count = 0;
         if !self.hidden
             && let Some(message) = self.queued.pop_front()
         {
             self.visible.push(message);
+        }
+        if let Some(front) = self.visible.last_mut() {
+            front.created = Instant::now();
+        }
+    }
+
+    fn set_hovered(&mut self, hovered: bool) {
+        if self.hovered == hovered {
+            return;
+        }
+        self.hovered = hovered;
+        if !hovered && let Some(front) = self.visible.last_mut() {
+            front.created = Instant::now();
         }
     }
 
@@ -136,6 +165,8 @@ impl State {
         if hidden {
             self.visible.clear();
             self.queued.clear();
+            self.hover_count = 0;
+            self.hovered = false;
         } else {
             let now = Instant::now();
             while let Some(message) = self.held.pop_front() {
@@ -168,12 +199,44 @@ fn publish(ui: &Launcher) {
     ui.set_toast_items(Rc::new(VecModel::from(model)).into());
 }
 
+fn sync_timer(weak: &Weak<Launcher>) {
+    let front = STATE.with(|state| {
+        let state = state.borrow();
+        if state.hidden || state.hovered {
+            None
+        } else {
+            state
+                .visible
+                .last()
+                .map(|m| (m.id, duration_for_level(m.level)))
+        }
+    });
+
+    TIMER.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if let Some((id, duration)) = front {
+            let weak = weak.clone();
+            let timer = slot.get_or_insert_with(slint::Timer::default);
+            timer.start(slint::TimerMode::SingleShot, duration, move || {
+                STATE.with(|state| state.borrow_mut().dismiss(id));
+                if let Some(ui) = weak.upgrade() {
+                    publish(&ui);
+                    sync_timer(&ui.as_weak());
+                }
+            });
+        } else if let Some(timer) = slot.as_ref() {
+            timer.stop();
+        }
+    });
+}
+
 fn request(weak: &Weak<Launcher>, level: Level, text: impl Into<String>) {
     let text = text.into();
     eprintln!("orbit notification: {text}");
     let _ = weak.upgrade_in_event_loop(move |ui| {
         STATE.with(|state| state.borrow_mut().add(level, text, Instant::now()));
         publish(&ui);
+        sync_timer(&ui.as_weak());
     });
 }
 
@@ -199,18 +262,79 @@ pub fn init(ui: &Launcher) {
         STATE.with(|state| state.borrow_mut().dismiss(id));
         if let Some(ui) = weak.upgrade() {
             publish(&ui);
+            sync_timer(&ui.as_weak());
+        }
+    });
+    let weak = ui.as_weak();
+    ui.on_toast_card_hovered(move |hovered| {
+        let (became_hovered, became_unhovered) = STATE.with(|state| {
+            let mut s = state.borrow_mut();
+            if hovered {
+                s.hover_count += 1;
+                let changed = !s.hovered;
+                s.hovered = true;
+                (changed, false)
+            } else {
+                s.hover_count = s.hover_count.saturating_sub(1);
+                (false, s.hover_count == 0 && s.hovered)
+            }
+        });
+
+        if became_hovered {
+            UNHOVER_TIMER.with(|cell| {
+                if let Some(timer) = cell.borrow_mut().as_ref() {
+                    timer.stop();
+                }
+            });
+            if let Some(ui) = weak.upgrade() {
+                ui.set_toasts_hovered(true);
+                sync_timer(&ui.as_weak());
+            }
+        } else if became_unhovered {
+            let weak = weak.clone();
+            UNHOVER_TIMER.with(|cell| {
+                let mut slot = cell.borrow_mut();
+                let timer = slot.get_or_insert_with(slint::Timer::default);
+                timer.start(
+                    slint::TimerMode::SingleShot,
+                    std::time::Duration::from_millis(150),
+                    move || {
+                        let should_unhover = STATE.with(|state| {
+                            let mut s = state.borrow_mut();
+                            if s.hover_count == 0 {
+                                s.set_hovered(false);
+                                true
+                            } else {
+                                false
+                            }
+                        });
+                        if should_unhover && let Some(ui) = weak.upgrade() {
+                            ui.set_toasts_hovered(false);
+                            sync_timer(&ui.as_weak());
+                        }
+                    },
+                );
+            });
         }
     });
 }
 
 pub fn on_window_hidden(ui: &Launcher) {
+    UNHOVER_TIMER.with(|cell| {
+        if let Some(timer) = cell.borrow_mut().as_ref() {
+            timer.stop();
+        }
+    });
+    ui.set_toasts_hovered(false);
     STATE.with(|state| state.borrow_mut().set_hidden(true));
     publish(ui);
+    sync_timer(&ui.as_weak());
 }
 
 pub fn on_window_shown(ui: &Launcher) {
     STATE.with(|state| state.borrow_mut().set_hidden(false));
     publish(ui);
+    sync_timer(&ui.as_weak());
 }
 
 #[cfg(test)]
@@ -269,5 +393,40 @@ mod tests {
         state.set_hidden(false);
         assert_eq!(state.visible.len(), 1);
         assert_eq!(state.visible[0].text, "check this");
+    }
+
+    #[test]
+    fn auto_dismiss_promotes_stacked_cards_sequentially() {
+        let now = Instant::now();
+        let mut state = state();
+        state.add(Level::Info, "first".into(), now);
+        state.add(Level::Error, "second".into(), now);
+        assert_eq!(state.visible.len(), 2);
+        assert_eq!(state.visible.last().unwrap().text, "second");
+
+        // Simulating the front card expiring:
+        let front_id = state.visible.last().unwrap().id;
+        state.dismiss(front_id);
+        assert_eq!(state.visible.len(), 1);
+        assert_eq!(state.visible.last().unwrap().text, "first");
+
+        let next_id = state.visible.last().unwrap().id;
+        state.dismiss(next_id);
+        assert!(state.visible.is_empty());
+    }
+
+    #[test]
+    fn hover_pauses_auto_dismiss_timer_and_resumes_on_unhover() {
+        let now = Instant::now();
+        let mut state = state();
+        state.add(Level::Info, "test message".into(), now);
+        assert_eq!(state.visible.len(), 1);
+
+        state.set_hovered(true);
+        assert!(state.hovered);
+
+        state.set_hovered(false);
+        assert!(!state.hovered);
+        assert!(state.visible[0].created >= now);
     }
 }

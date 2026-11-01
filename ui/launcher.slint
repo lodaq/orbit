@@ -120,59 +120,97 @@ component FocusTaskBody inherits Rectangle {
 component ToastCard inherits Rectangle {
     in property <ToastItem> item;
     in property <length> available-width;
+    in property <int> depth: 0;
+    in property <bool> expanded: false;
     callback dismissed(int);
-    in-out property <bool> appeared: false;
+    callback hover-changed(bool);
+
+    property <bool> is-front: depth == 0;
+    property <bool> interactive: expanded || is-front;
     property <color> status-color: item.level == 3 ? Theme.error : item.level == 2 ? Theme.warning : item.level == 1 ? Theme.success : Theme.focus;
-    init => { self.appeared = true; toast-timer.restart(); }
-    width: min(360px, available-width);
-    height: 88px;
-    background: Theme.widget-surface;
+
+    width: min(340px, available-width);
+    height: 44px;
+    background: Theme.widget-surface.with-alpha(0.94);
     border-width: Theme.border-width;
-    border-color: Theme.border;
-    border-radius: Theme.radius-sheet;
+    border-color: interactive ? Theme.border : Theme.separator;
+    border-radius: 14px;
     drop-shadow-color: Theme.surface-shadow;
-    drop-shadow-blur: 16px;
-    drop-shadow-offset-y: 4px;
-    opacity: appeared ? 1 : 0;
+    drop-shadow-blur: interactive ? 16px : 4px;
+    drop-shadow-offset-y: interactive ? 4px : 2px;
+    opacity: expanded ? 1.0 : is-front ? 1.0 : depth == 1 ? 0.82 : 0.60;
+    transform-scale-x: expanded ? 1.0 : is-front ? 1.0 : depth == 1 ? 0.94 : 0.88;
+    transform-scale-y: self.transform-scale-x;
+    transform-origin: { x: self.width / 2, y: self.height };
+
+    animate y { duration: 200ms; easing: ease-out; }
+    animate transform-scale-x { duration: 200ms; easing: ease-out; }
     animate opacity { duration: 180ms; easing: ease-out; }
-    callback close();
-    close => {
-        self.appeared = false;
-        toast-timer.stop();
-        dismiss-timer.restart();
-    }
-    changed item => { toast-timer.restart(); }
+
     Rectangle {
-        x: Theme.space-4; y: (parent.height - self.height) / 2;
-        width: Theme.space-6; height: Theme.space-6;
-        border-radius: self.width / 2;
-        background: root.status-color.with-alpha(0.12);
+        x: 12px;
+        y: (parent.height - self.height) / 2;
+        width: 22px;
+        height: 22px;
+        border-radius: 11px;
+        background: root.status-color.with-alpha(0.16);
+        border-width: 1px;
+        border-color: root.status-color.with-alpha(0.3);
         OrbitText {
             text: root.item.level == 1 ? "✓" : root.item.level == 0 ? "i" : "!";
-            color: root.status-color; font-size: Theme.type-body;
-            horizontal-alignment: center; vertical-alignment: center;
+            color: root.status-color;
+            font-size: 11px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
         }
     }
+
     OrbitText {
-        x: Theme.space-4 + Theme.space-6 + Theme.space-3;
-        y: Theme.space-2; width: parent.width - self.x - Theme.space-4;
-        height: parent.height - 2 * Theme.space-2;
-        text: root.item.message; color: Theme.text; font-size: Theme.type-body;
+        x: 42px;
+        y: 0px;
+        width: parent.width - 42px - (root.interactive ? 34px : 12px);
+        height: parent.height;
+        text: root.item.message;
+        color: Theme.text;
+        font-size: Theme.type-control;
+        font-weight: 500;
         horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left;
-        wrap: word-wrap; overflow: elide; vertical-alignment: center;
+        overflow: elide;
+        vertical-alignment: center;
     }
-    TouchArea {
-        clicked => { root.close(); }
+
+    card-touch := TouchArea {
+        y: root.expanded ? -8px : 0px;
+        height: root.expanded ? parent.height + 8px : parent.height;
+        mouse-cursor: pointer;
+        changed has-hover => { root.hover-changed(self.has-hover); }
+        clicked => { root.dismissed(root.item.id); }
     }
-    toast-timer := Timer {
-        interval: root.item.level == 3 ? 7000ms : root.item.level == 2 ? 5000ms : 3000ms;
-        running: true;
-        triggered => { root.close(); }
-    }
-    dismiss-timer := Timer {
-        running: false;
-        interval: 180ms;
-        triggered => { root.dismissed(root.item.id); }
+
+    if root.interactive: Rectangle {
+        x: parent.width - self.width - 8px;
+        y: (parent.height - self.height) / 2;
+        width: 22px;
+        height: 22px;
+        border-radius: 11px;
+        background: close-touch.has-hover ? #FFFFFF18 : transparent;
+        animate background { duration: 100ms; easing: ease-out; }
+
+        OrbitText {
+            text: "×";
+            color: close-touch.has-hover ? Theme.text : Theme.secondary;
+            font-size: 14px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        close-touch := TouchArea {
+            mouse-cursor: pointer;
+            changed has-hover => { root.hover-changed(self.has-hover); }
+            clicked => { root.dismissed(root.item.id); }
+        }
     }
 }
 
@@ -1032,7 +1070,9 @@ export component Launcher inherits Window {
     private property <bool> ticktick-pulse;
     private property <int> ticktick-next-completion-sequence;
     in property <[ToastItem]> toast-items;
+    in-out property <bool> toasts-hovered: false;
     callback dismiss-toast(int);
+    callback toast-card-hovered(bool);
     Timer { interval: 400ms; running: root.ticktick-loading; triggered => { root.ticktick-pulse = !root.ticktick-pulse; } }
     callback reset-ticktick-scroll();
     reset-ticktick-scroll => { root.ticktick-scroll-offset = 0px; }
@@ -4239,11 +4279,13 @@ export component Launcher inherits Window {
         }
     }
     for toast[row] in root.toast-items: ToastCard {
-        x: Theme.space-4 - (self.appeared ? 0px : 16px);
-        y: root.height - Theme.space-4 - self.height - (root.toast-items.length - row - 1) * (self.height + Theme.space-2);
+        depth: root.toast-items.length - row - 1;
+        expanded: root.toasts-hovered;
+        x: Theme.space-4;
+        y: root.height - Theme.space-4 - self.height - (root.toasts-hovered ? (self.depth * 52px) : (self.depth == 0 ? 0px : self.depth == 1 ? 10px : 18px));
         available-width: root.width - 2 * Theme.space-4;
-        animate x { duration: 180ms; easing: ease-out; }
         item: toast;
+        hover-changed(hovered) => { root.toast-card-hovered(hovered); }
         dismissed(id) => { root.dismiss-toast(id); }
     }
     if (root.dragging || root.snapping) && !root.resizing: Rectangle {
