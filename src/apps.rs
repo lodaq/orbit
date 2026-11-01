@@ -2164,7 +2164,7 @@ impl Apps {
         if self.query.is_empty() {
             return results;
         }
-        let all: Vec<_> = self
+        let all = self
             .config
             .pages
             .iter()
@@ -2175,8 +2175,7 @@ impl Apps {
                     .iter()
                     .enumerate()
                     .map(move |(index, item)| (page, index, item))
-            })
-            .collect();
+            });
         let mut seen = HashSet::new();
         for (index, (_, name, _)) in ACTIONS.iter().enumerate() {
             if name.to_lowercase().contains(&self.query) {
@@ -2191,7 +2190,7 @@ impl Apps {
                 });
             }
         }
-        for (page, index, item) in &all {
+        for (page, index, item) in all.clone() {
             let mut push = |tile: Tile| {
                 let key = tile.name.trim().to_lowercase();
                 if let Some(existing) = results
@@ -2218,7 +2217,7 @@ impl Apps {
                 }
                 Item::Widget { .. } => {}
                 _ if item.name().to_lowercase().contains(&self.query) => {
-                    push(self.tile(item, *page, *index));
+                    push(self.tile(item, page, index));
                 }
                 _ => {}
             }
@@ -2245,7 +2244,7 @@ impl Apps {
         }
         for (index, path) in self.search_paths.iter().flatten().enumerate() {
             if path.name.to_lowercase().contains(&self.query)
-                && !all.iter().any(|(_, _, item)| match item {
+                && !all.clone().any(|(_, _, item)| match item {
                     Item::File { path: p, .. } | Item::Directory { path: p, .. } => p == &path.path,
                     _ => false,
                 })

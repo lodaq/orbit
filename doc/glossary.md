@@ -229,3 +229,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Azan settings** | Per-widget city, country and named time zone, with explicit Fetch times and a schedule preview accepted by Save. |
 | **City**, **Country**, **Time zone** | Location fields used to request and interpret an Azan schedule. |
 | **Fetch times** | Request today's prayer times for review without saving them until Save. |
+
+| **Remembrances (Adhkar)** | One automatic widget that selects Morning Remembrances or Evening Remembrances using the first Azan Reminder's saved prayer times and time zone. |
+| **Recommended window** | Fajr to Sunrise for morning, or Asr to Maghrib for evening. |
+| **Permissible window** | The rest of the active morning or evening period. |

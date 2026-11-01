@@ -305,8 +305,8 @@ pub const WIDGETS: [&str; 21] = [
     "Quran Player",
     "Azan Reminder",
     "Habit Tracker",
-    "Morning Remembrances",
-    "Evening Remembrances",
+    "Remembrances",
+    "Remembrances",
     "Internet Usage",
 ];
 pub const WIDGET_SPANS: [(usize, usize); 21] = [

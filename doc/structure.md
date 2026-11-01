@@ -76,13 +76,13 @@ Search locations in `ui/launcher.slint` groups all search paths and file exclusi
 
 Search-result saving in `src/apps.rs` resolves cached results to shortcuts; `src/item-drop.rs` validates atomic page placement, existing-item extraction and exclusive dock ownership. `ui/launcher.slint` provides result context actions and a search drag mode that reveals Pages while preserving the source result.
 
-- `src/adhkar.rs`: Morning and Evening Remembrances starter import, daily per-instance SQLite progress, repetition counting, navigation, completion rules and daily Achievements recording.
+- `src/adhkar.rs`: combined Remembrances prayer-time selection, legacy pair progress migration, Morning and Evening starter import, per-mode SQLite progress, repetition counting, navigation, completion rules and daily Achievements recording.
 - `data/morning-adhkar.json`: the 25 Arabic remembrances supplied by the user, preserved with their source details.
 - `data/evening-adhkar.json`: the 25 supplied evening remembrances, preserving their wording, repetition counts, source details and notes.
 - `ui/fonts/amiri.ttf` and `AMIRI-OFL.txt`: embedded Amiri Arabic reading font and its SIL OFL license.
 - `ui/assets/adhkar-complete.wav` and `adhkar-all-complete.wav`: distinct generated chimes for one remembrance and the full collection.
 
-- `src/azan.rs`: per-widget prayer locations, named time-zone validation, explicit Aladhan schedule requests, accepted schedule references and zone-aware countdowns.
+- `src/azan.rs`: per-widget prayer locations, named time-zone validation, explicit Aladhan schedule requests, accepted shared schedule references (including sunrise) and zone-aware countdowns.
 - `ui/azan-settings.slint`: Azan settings state and the location/preview sheet; the Azan reading card remains in `ui/local-widget.slint`.
 
 `ui/controls.slint` owns `OrbitText` and the `TextDirection` callbacks for content-aware text alignment throughout the interface.

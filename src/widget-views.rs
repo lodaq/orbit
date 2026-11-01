@@ -22,6 +22,7 @@ pub struct View {
     pub entry_id: String,
     pub done: bool,
     pub resource: String,
+    pub recommended: bool,
     pub rows: Vec<(Entry, bool)>,
     pub usage: crate::internet_usage::Usage,
 }
@@ -62,6 +63,10 @@ pub fn views_with_usage(
                 spec,
                 spec.id == force || (opened.iter().any(|id| id == &spec.id) && spec.category == 4),
                 usage,
+                specs
+                    .iter()
+                    .find(|spec| spec.category == 6)
+                    .map(|spec| spec.id.as_str()),
             )
         })
         .collect()
@@ -72,6 +77,7 @@ fn view(
     spec: &Spec,
     force: bool,
     usage: &crate::internet_usage::Usage,
+    azan_id: Option<&str>,
 ) -> Result<View, String> {
     let today = Local::now().format("%Y-%m-%d").to_string();
     let mut view = View {
@@ -89,6 +95,7 @@ fn view(
         entry_id: String::new(),
         done: false,
         resource: String::new(),
+        recommended: false,
         rows: Vec::new(),
         usage: if spec.category == 11 {
             usage.clone()
@@ -101,7 +108,7 @@ fn view(
         return Ok(view);
     }
     if matches!(spec.category, 9 | 10) {
-        crate::adhkar::view(db, &mut view, &today)?;
+        crate::adhkar::automatic_view(db, &mut view, azan_id, chrono::Utc::now())?;
         return Ok(view);
     }
     if spec.category == 11 {

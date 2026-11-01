@@ -85,12 +85,24 @@ pub fn connect(ui: &Launcher) -> slint::Timer {
                 let database = db.as_mut().expect("opened database");
                 let reply = match &work {
                     Work::Adhkar(id, expected, action) => {
-                        let spec = specs
+                        if !specs
                             .iter()
-                            .find(|s| s.id == *id && matches!(s.category, 9 | 10))
-                            .ok_or("Widget no longer exists")?;
-                        let sound =
-                            crate::adhkar::action(database, id, spec.category, expected, action)?;
+                            .any(|s| s.id == *id && matches!(s.category, 9 | 10))
+                        {
+                            return Err("Widget no longer exists".into());
+                        }
+                        let azan_id = specs
+                            .iter()
+                            .find(|s| s.category == 6)
+                            .map(|s| s.id.as_str());
+                        let sound = crate::adhkar::automatic_action(
+                            database,
+                            id,
+                            azan_id,
+                            expected,
+                            action,
+                            chrono::Utc::now(),
+                        )?;
                         if sound != 0 {
                             std::thread::spawn(move || {
                                 crate::platform::play_adhkar_sound(sound == 2)
@@ -265,6 +277,7 @@ fn view_model(view: widgets::View) -> WidgetView {
         done: view.done,
         completed,
         resource: view.resource.into(),
+        recommended: view.recommended,
         rows: model(rows),
         total_value: view.usage.total_value.into(),
         total_unit: view.usage.total_unit.into(),

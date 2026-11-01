@@ -38,7 +38,7 @@ Compare the real launcher against the supplied gallery: readable text on every p
 
 The Icon picker uses Letter, SVG, disabled URL and Choose icon tabs. Letter accepts one or two visible characters including emojis; SVG uses a labeled field; Choose icon opens the native file chooser. Save applies the draft, Cancel discards it. Custom command is the first and default App source. File and Directory sheets show Path, then Choose file or Choose directory, then a vertically centered Icon preview and Change icon control. Save is at the bottom right. Edit app also centers its Icon preview with Change icon.
 
-Toasts use compact raised cards with a small status icon, stacked at the bottom right with 24 px outer space and 8 px gaps. Confirmations and information dismiss after 3 seconds, warnings after 5 seconds and errors after 7 seconds, including while hovered. Clicking a Toast dismisses it immediately.
+Toasts use rounded 360 × 88 px raised cards with a small status icon, stacked at the bottom left with 16 px outer space and 8 px gaps. Cards slide and fade in and out over 180 ms. Confirmations and information dismiss after 3 seconds, warnings after 5 seconds and errors after 7 seconds, including while hovered. Clicking a Toast starts dismissal immediately.
 
 ## Search cursor
 

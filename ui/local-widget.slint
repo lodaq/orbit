@@ -6,7 +6,7 @@ import { AddOption } from "controls.slint";
 import { ScrollView } from "std-widgets.slint";
 
 export struct WidgetDataEntry { id: string, content: string, preview: string, attribution: string, resource: string, done: bool }
-export struct WidgetView { id: string, category: int, city: string, country: string, timezone: string, headline: string, content: string, details: string, entry-id: string, done: bool, completed: int, position: int, total: int, required: int, remaining: int, resource: string, rows: [WidgetDataEntry], total-value: string, total-unit: string, down-value: string, down-unit: string, up-value: string, up-unit: string, updated: string, down-ratio: float }
+export struct WidgetView { id: string, category: int, city: string, country: string, timezone: string, headline: string, content: string, details: string, entry-id: string, done: bool, completed: int, position: int, total: int, required: int, remaining: int, resource: string, recommended: bool, rows: [WidgetDataEntry], total-value: string, total-unit: string, down-value: string, down-unit: string, up-value: string, up-unit: string, updated: string, down-ratio: float }
 export global LocalWidgets {
     in-out property <[WidgetView]> views;
     pure callback lookup(string, [WidgetView]) -> WidgetView;
@@ -72,6 +72,10 @@ component AdhkarWidget inherits Rectangle {
         HorizontalLayout {
             OrbitText { text: root.view.position + " / " + root.view.total; color: Theme.secondary; font-size: Theme.type-hint; vertical-alignment: center; }
             OrbitText { text: root.view.category == 10 ? "أذكار المساء ☾" : "أذكار الصباح ☀"; horizontal-alignment: right; color: Theme.text; font-size: Theme.type-title; font-weight: 600; }
+        }
+        if root.view.resource != "": OrbitText {
+            text: root.view.resource; color: root.view.recommended ? Theme.adhkar-accent : Theme.secondary;
+            font-size: Theme.type-hint; wrap: word-wrap;
         }
         Rectangle {
             height: 5px; border-radius: 3px; background: Theme.separator;
@@ -161,7 +165,7 @@ component AdhkarWidget inherits Rectangle {
                 }
             }
         }
-        if root.view.done: WidgetAction { label: "إعادة الأذكار"; primary: true; option-width: parent.width; enabled: root.enabled; clicked => { LocalWidgets.adhkar(root.widget-id,"","restart"); } }
+        if root.view.done: WidgetAction { label: "إعادة الأذكار"; primary: true; option-width: parent.width; enabled: root.enabled; clicked => { LocalWidgets.adhkar(root.widget-id,root.view.entry-id,"restart"); } }
     }
 }
 

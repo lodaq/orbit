@@ -2,6 +2,73 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub struct Period {
+    pub category: i32,
+    pub date: String,
+    pub optimal: bool,
+    pub window: String,
+}
+
+pub fn period(
+    settings: &crate::azan::Settings,
+    schedule: &crate::azan::Schedule,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<Period, String> {
+    let zone = crate::azan::validate(settings)?;
+    let local = now.with_timezone(&zone);
+    let times = schedule
+        .content
+        .lines()
+        .map(crate::widget_data::prayer_time)
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let time = |name| {
+        times
+            .get(name)
+            .copied()
+            .ok_or_else(|| format!("Azan schedule is missing {name}."))
+    };
+    let fajr = time("Fajr")?;
+    let dhuhr = time("Dhuhr")?;
+    let asr = time("Asr")?;
+    let maghrib = time("Maghrib")?;
+    if !(fajr < dhuhr && dhuhr < asr && asr < maghrib) {
+        return Err("Azan prayer times must be in order.".into());
+    }
+    let morning = local.time() >= fajr && local.time() < dhuhr;
+    let optimal = if morning {
+        times
+            .get("Sunrise")
+            .is_some_and(|sunrise| local.time() < *sunrise)
+    } else {
+        local.time() >= asr && local.time() < maghrib
+    };
+    let date = if local.time() < fajr {
+        local
+            .date_naive()
+            .pred_opt()
+            .ok_or("Invalid prayer date.")?
+    } else {
+        local.date_naive()
+    };
+    let mut window = if optimal {
+        "Recommended window"
+    } else {
+        "Permissible window"
+    }
+    .to_string();
+    if schedule.date != local.format("%Y-%m-%d").to_string() {
+        window.push_str(" · Saved times are out of date; update Azan Reminder.");
+    } else if morning && !times.contains_key("Sunrise") {
+        window.push_str(" · Fetch Azan times to include sunrise.");
+    }
+    Ok(Period {
+        category: if morning { 9 } else { 10 },
+        date: date.to_string(),
+        optimal,
+        window,
+    })
+}
+
 #[derive(Default, Deserialize, Serialize)]
 struct Progress {
     current: usize,
@@ -154,6 +221,124 @@ fn load(db: &Connection, id: &str, date: &str) -> Result<Progress, String> {
         .unwrap_or_else(|| Ok(Progress::default()))
 }
 
+pub fn merge_progress(db: &Connection, keep: &str, removed: &str) -> Result<(), String> {
+    let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+    for category in [9, 10] {
+        let table = crate::widget_data::table(category)?;
+        let target = format!("{keep}/{table}");
+        let donor = format!("{removed}/{table}");
+        let mut statement = tx.prepare("SELECT date,progress FROM adhkar_progress WHERE id IN (?1,?2,?3,?4) ORDER BY date DESC").map_err(|e|e.to_string())?;
+        let saved = statement
+            .query_map(params![keep, removed, target, donor], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let mut date = String::new();
+        let mut combined = Progress::default();
+        for (day, json) in saved {
+            let progress: Progress = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+            if !progress
+                .counts
+                .keys()
+                .any(|id| id.starts_with(&format!("{table}:")))
+            {
+                continue;
+            }
+            if date.is_empty() {
+                date = day.clone();
+                combined.current = progress.current;
+            }
+            if day != date {
+                continue;
+            }
+            for (id, count) in progress.counts {
+                if id.starts_with(&format!("{table}:")) {
+                    let saved = combined.counts.entry(id).or_default();
+                    *saved = (*saved).max(count);
+                }
+            }
+        }
+        if !date.is_empty() {
+            let json = serde_json::to_string(&combined).map_err(|e| e.to_string())?;
+            tx.execute("INSERT INTO adhkar_progress VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET date=excluded.date,progress=excluded.progress", params![target,date,json]).map_err(|e|e.to_string())?;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+fn session(
+    db: &Connection,
+    id: &str,
+    azan_id: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(String, Period), String> {
+    let azan_id = azan_id.ok_or("Add an Azan Reminder and save its prayer times.")?;
+    let (settings, schedule) = crate::azan::saved_schedule(db, azan_id)?
+        .ok_or("Open Azan settings to Fetch and save prayer times.")?;
+    let period = period(&settings, &schedule, now)?;
+    let name = crate::widget_data::table(period.category)?;
+    let session_id = format!("{id}/{name}");
+    // Keep legacy rows intact while importing the matching collection once.
+    db.execute("INSERT OR IGNORE INTO adhkar_progress SELECT ?1,date,progress FROM adhkar_progress WHERE id=?2 AND date=?3 AND EXISTS(SELECT 1 FROM json_each(json_extract(progress,'$.counts')) WHERE key LIKE ?4)", params![session_id,id,period.date,format!("{name}:%")]).map_err(|e|e.to_string())?;
+    Ok((session_id, period))
+}
+
+pub fn automatic_view(
+    db: &Connection,
+    view: &mut crate::widget_views::View,
+    azan_id: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), String> {
+    let (session_id, period) = match session(db, &view.id, azan_id, now) {
+        Ok(value) => value,
+        Err(error) => {
+            view.content = error;
+            return Ok(());
+        }
+    };
+    view.category = period.category;
+    view.resource = period.window;
+    view.recommended = period.optimal;
+    let id = std::mem::replace(&mut view.id, session_id);
+    let result = self::view(db, view, &period.date);
+    view.id = id;
+    if view.done {
+        view.entry_id = format!("{}:complete", crate::widget_data::table(view.category)?);
+    }
+    result
+}
+
+pub fn automatic_action(
+    db: &Connection,
+    id: &str,
+    azan_id: Option<&str>,
+    expected: &str,
+    action: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<u8, String> {
+    let (session_id, period) = session(db, id, azan_id, now)?;
+    if !expected.starts_with(&format!("{}:", crate::widget_data::table(period.category)?)) {
+        return Ok(0);
+    }
+    action_on(
+        db,
+        &session_id,
+        period.category,
+        expected,
+        action,
+        &period.date,
+    )
+}
+
+fn widget_id(id: &str) -> &str {
+    id.strip_suffix("/morning_adhkar")
+        .or_else(|| id.strip_suffix("/evening_adhkar"))
+        .unwrap_or(id)
+}
+
+#[cfg(test)]
 pub fn action(
     db: &Connection,
     id: &str,
@@ -162,8 +347,19 @@ pub fn action(
     action: &str,
 ) -> Result<u8, String> {
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    action_on(db, id, category, expected, action, &date)
+}
+
+fn action_on(
+    db: &Connection,
+    id: &str,
+    category: i32,
+    expected: &str,
+    action: &str,
+    date: &str,
+) -> Result<u8, String> {
     let entries = entries(db, category)?;
-    let mut progress = load(db, id, &date)?;
+    let mut progress = load(db, id, date)?;
     if entries
         .iter()
         .any(|e| progress.counts.get(&e.id).copied().unwrap_or(0) < e.resource.parse().unwrap_or(1))
@@ -191,8 +387,8 @@ pub fn action(
     if sound == 2 {
         crate::widget_data::complete(
             &tx,
-            &date,
-            &format!("{}:{id}", crate::widget_data::table(category)?),
+            date,
+            &format!("{}:{}", crate::widget_data::table(category)?, widget_id(id)),
             true,
         )?;
     }
@@ -225,7 +421,7 @@ pub fn record_completed(db: &Connection, date: &str) -> Result<(), String> {
                 crate::widget_data::complete(
                     db,
                     date,
-                    &format!("{}:{id}", crate::widget_data::table(category)?),
+                    &format!("{}:{}", crate::widget_data::table(category)?, widget_id(id)),
                     true,
                 )?;
             }
@@ -272,6 +468,199 @@ pub fn view(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_sessions_preserve_modes_midnight_and_legacy_progress() {
+        use chrono::TimeZone;
+        let path = std::env::temp_dir()
+            .join(format!("orbit-automatic-{}", std::process::id()))
+            .join("widgets.db");
+        let db = crate::widget_data::open(&path).unwrap();
+        let settings = crate::azan::Settings {
+            timezone: "UTC".into(),
+            ..Default::default()
+        };
+        let schedule = crate::azan::Schedule {
+            date: "2026-11-01".into(),
+            content: "Fajr 04:30\nSunrise 06:00\nDhuhr 12:00\nAsr 15:30\nMaghrib 18:00\nIsha 19:00"
+                .into(),
+        };
+        crate::azan::save(&db, "azan", &settings, Some(&schedule)).unwrap();
+        let morning = chrono::Utc.with_ymd_and_hms(2026, 11, 1, 5, 0, 0).unwrap();
+        let evening = chrono::Utc.with_ymd_and_hms(2026, 11, 1, 16, 0, 0).unwrap();
+        let midnight = chrono::Utc.with_ymd_and_hms(2026, 11, 2, 0, 0, 0).unwrap();
+        assert_eq!(
+            automatic_action(&db, "one", None, "morning_adhkar:1", "count", morning).unwrap_err(),
+            "Add an Azan Reminder and save its prayer times."
+        );
+        assert_eq!(
+            automatic_action(
+                &db,
+                "one",
+                Some("azan"),
+                "morning_adhkar:1",
+                "count",
+                morning
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            automatic_action(
+                &db,
+                "one",
+                Some("azan"),
+                "morning_adhkar:2",
+                "count",
+                evening
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            automatic_action(
+                &db,
+                "one",
+                Some("azan"),
+                "evening_adhkar:1",
+                "count",
+                evening
+            )
+            .unwrap(),
+            1
+        );
+        automatic_action(
+            &db,
+            "one",
+            Some("azan"),
+            "evening_adhkar:2",
+            "count",
+            midnight,
+        )
+        .unwrap();
+        assert_eq!(
+            load(&db, "one/evening_adhkar", "2026-11-01")
+                .unwrap()
+                .counts["evening_adhkar:2"],
+            1
+        );
+        assert_eq!(
+            load(&db, "one/morning_adhkar", "2026-11-01")
+                .unwrap()
+                .current,
+            1
+        );
+        assert!(
+            load(&db, "other/evening_adhkar", "2026-11-01")
+                .unwrap()
+                .counts
+                .is_empty()
+        );
+        automatic_action(
+            &db,
+            "one",
+            Some("azan"),
+            "evening_adhkar:2",
+            "restart",
+            midnight,
+        )
+        .unwrap();
+        assert!(
+            load(&db, "one/evening_adhkar", "2026-11-01")
+                .unwrap()
+                .counts
+                .is_empty()
+        );
+        assert_eq!(
+            load(&db, "one/morning_adhkar", "2026-11-01")
+                .unwrap()
+                .current,
+            1
+        );
+        db.execute(
+            "INSERT INTO adhkar_progress VALUES('old-morning','2026-11-01',?1)",
+            [r#"{"current":1,"counts":{"morning_adhkar:1":1}}"#],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO adhkar_progress VALUES('old-evening','2026-11-01',?1)",
+            [r#"{"current":2,"counts":{"evening_adhkar:1":1,"evening_adhkar:2":2}}"#],
+        )
+        .unwrap();
+        merge_progress(&db, "old-morning", "old-evening").unwrap();
+        merge_progress(&db, "old-morning", "old-evening").unwrap();
+        assert_eq!(
+            load(&db, "old-morning/morning_adhkar", "2026-11-01")
+                .unwrap()
+                .counts["morning_adhkar:1"],
+            1
+        );
+        assert_eq!(
+            load(&db, "old-morning/evening_adhkar", "2026-11-01")
+                .unwrap()
+                .counts["evening_adhkar:2"],
+            2
+        );
+        drop(db);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn periods_use_azan_timezone_and_warn_about_stale_times() {
+        use chrono::TimeZone;
+        let settings = crate::azan::Settings::default();
+        let mut schedule = crate::azan::Schedule {
+            date: "2026-11-01".into(),
+            content: "Fajr 04:30\nSunrise 06:00\nDhuhr 12:00\nAsr 15:30\nMaghrib 18:00".into(),
+        };
+        let now = chrono::Utc.with_ymd_and_hms(2026, 11, 1, 10, 0, 0).unwrap();
+        assert_eq!(period(&settings, &schedule, now).unwrap().category, 10);
+        schedule.date = "2026-10-31".into();
+        assert!(
+            period(&settings, &schedule, now)
+                .unwrap()
+                .window
+                .contains("out of date")
+        );
+        schedule.content = "Fajr 04:30".into();
+        assert!(period(&settings, &schedule, now).is_err());
+        schedule.content = "Fajr 12:30\nDhuhr 12:00\nAsr 15:30\nMaghrib 18:00".into();
+        assert!(period(&settings, &schedule, now).is_err());
+    }
+
+    #[test]
+    fn prayer_boundaries_choose_mode_and_evening_date() {
+        use chrono::TimeZone;
+        let settings = crate::azan::Settings {
+            timezone: "UTC".into(),
+            ..Default::default()
+        };
+        let schedule = crate::azan::Schedule {
+            date: "2026-11-01".into(),
+            content: "Fajr 04:30\nSunrise 06:00\nDhuhr 12:00\nAsr 15:30\nMaghrib 18:00\nIsha 19:00"
+                .into(),
+        };
+        for (hour, minute, category, date, optimal) in [
+            (0, 0, 10, "2026-10-31", false),
+            (4, 29, 10, "2026-10-31", false),
+            (4, 30, 9, "2026-11-01", true),
+            (6, 0, 9, "2026-11-01", false),
+            (11, 59, 9, "2026-11-01", false),
+            (12, 0, 10, "2026-11-01", false),
+            (15, 30, 10, "2026-11-01", true),
+            (18, 0, 10, "2026-11-01", false),
+            (23, 59, 10, "2026-11-01", false),
+        ] {
+            let now = chrono::Utc
+                .with_ymd_and_hms(2026, 11, 1, hour, minute, 0)
+                .unwrap();
+            let period = period(&settings, &schedule, now).unwrap();
+            assert_eq!(
+                (period.category, period.date.as_str(), period.optimal),
+                (category, date, optimal)
+            );
+        }
+    }
 
     #[test]
     fn completed_collections_record_daily_achievements_and_restart_retains_them() {

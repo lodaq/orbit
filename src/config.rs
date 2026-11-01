@@ -874,6 +874,65 @@ pub fn load() -> (Config, String) {
     }
 }
 
+fn merge_remembrances(config: &mut Config) -> Result<bool, Box<dyn std::error::Error>> {
+    let mut pairs = Vec::new();
+    for page in &config.pages {
+        let morning: Vec<_> = page
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Widget {
+                    id, variant: 18, ..
+                } => Some(id.clone()),
+                _ => None,
+            })
+            .collect();
+        let evening = page.items.iter().filter_map(|item| match item {
+            Item::Widget {
+                id, variant: 19, ..
+            } => Some(id.clone()),
+            _ => None,
+        });
+        pairs.extend(morning.into_iter().zip(evening));
+    }
+    if !pairs.is_empty() {
+        let path = crate::storage::config_path()?.with_file_name("widgets.db");
+        let db = crate::widget_data::open(&path).map_err(std::io::Error::other)?;
+        for (keep, removed) in &pairs {
+            crate::adhkar::merge_progress(&db, keep, removed).map_err(std::io::Error::other)?;
+        }
+    }
+    let mut changed = !pairs.is_empty();
+    for page in &mut config.pages {
+        page.items
+            .retain(|item| !pairs.iter().any(|(_, removed)| removed == item.id()));
+        for item in &mut page.items {
+            if let Item::Widget { variant, name, .. } = item
+                && matches!(*variant, 18 | 19)
+            {
+                if *variant == 19 {
+                    *variant = 18;
+                    changed = true;
+                }
+                if matches!(
+                    name.as_str(),
+                    "Morning Remembrances" | "Evening Remembrances"
+                ) {
+                    *name = "Remembrances".into();
+                    changed = true;
+                }
+            }
+        }
+    }
+    config
+        .positions
+        .retain(|id, _| !pairs.iter().any(|(_, removed)| id == removed));
+    config
+        .pinned
+        .retain(|id| !pairs.iter().any(|(_, removed)| id == removed));
+    Ok(changed)
+}
+
 fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
     let mut banner = String::new();
     if let Some(text) = platform::read_config()? {
@@ -881,6 +940,7 @@ fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
             && config.valid()
         {
             let mut changed = config.initialize_ai();
+            changed |= merge_remembrances(&mut config)?;
             changed |= config.english_assistance.migrate_prompts();
             if config.version < 3 {
                 let pitch = crate::spatial::cell_pitch(config.item_size, config.grid_gap);

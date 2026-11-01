@@ -64,6 +64,19 @@ pub fn settings(db: &Connection, id: &str) -> Result<Settings, String> {
     .map_err(|e| e.to_string())
 }
 
+pub fn saved_schedule(db: &Connection, id: &str) -> Result<Option<(Settings, Schedule)>, String> {
+    let settings = settings(db, id)?;
+    let Some(key) = settings.schedule else {
+        return Ok(None);
+    };
+    let entry = data::entry(db, 6, key)?;
+    let schedule = Schedule {
+        date: entry.resource,
+        content: entry.content,
+    };
+    Ok(Some((settings, schedule)))
+}
+
 pub fn save(
     db: &Connection,
     id: &str,
@@ -152,7 +165,10 @@ pub fn parse_schedule(
         return Err("The response did not match the requested date and time zone.".into());
     }
     let mut lines = Vec::new();
-    for prayer in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"] {
+    for prayer in ["Fajr", "Sunrise", "Dhuhr", "Asr", "Maghrib", "Isha"] {
+        if prayer == "Sunrise" && data["timings"][prayer].is_null() {
+            continue;
+        }
         let time = data["timings"][prayer]
             .as_str()
             .ok_or("The response is missing a prayer time.")?;
@@ -200,6 +216,7 @@ pub fn view(db: &Connection, view: &mut View, now: DateTime<Utc>) -> Result<(), 
     let next = entry
         .content
         .lines()
+        .filter(|line| !line.starts_with("Sunrise "))
         .filter_map(|line| {
             remaining(&entry.resource, line, zone, now).map(|minutes| (line, minutes))
         })

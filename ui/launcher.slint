@@ -120,21 +120,28 @@ component FocusTaskBody inherits Rectangle {
 component ToastCard inherits Rectangle {
     in property <ToastItem> item;
     in property <length> available-width;
-    in property <int> pulse;
     callback dismissed(int);
     in-out property <bool> appeared: false;
     property <color> status-color: item.level == 3 ? Theme.error : item.level == 2 ? Theme.warning : item.level == 1 ? Theme.success : Theme.focus;
     init => { self.appeared = true; toast-timer.restart(); }
-    width: min(320px, available-width);
-    height: Theme.control-row-height;
-    background: Theme.raised;
+    width: min(360px, available-width);
+    height: 88px;
+    background: Theme.widget-surface;
     border-width: Theme.border-width;
     border-color: Theme.border;
-    border-radius: Theme.radius-control;
+    border-radius: Theme.radius-sheet;
+    drop-shadow-color: Theme.surface-shadow;
+    drop-shadow-blur: 16px;
+    drop-shadow-offset-y: 4px;
     opacity: appeared ? 1 : 0;
-    animate opacity { duration: 180ms; }
+    animate opacity { duration: 180ms; easing: ease-out; }
+    callback close();
+    close => {
+        self.appeared = false;
+        toast-timer.stop();
+        dismiss-timer.restart();
+    }
     changed item => { toast-timer.restart(); }
-    changed pulse => { toast-timer.restart(); }
     Rectangle {
         x: Theme.space-4; y: (parent.height - self.height) / 2;
         width: Theme.space-6; height: Theme.space-6;
@@ -150,15 +157,21 @@ component ToastCard inherits Rectangle {
         x: Theme.space-4 + Theme.space-6 + Theme.space-3;
         y: Theme.space-2; width: parent.width - self.x - Theme.space-4;
         height: parent.height - 2 * Theme.space-2;
-        text: root.item.message; color: Theme.text; font-size: Theme.type-control;
+        text: root.item.message; color: Theme.text; font-size: Theme.type-body;
+        horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left;
         wrap: word-wrap; overflow: elide; vertical-alignment: center;
     }
     TouchArea {
-        clicked => { root.dismissed(root.item.id); }
+        clicked => { root.close(); }
     }
     toast-timer := Timer {
         interval: root.item.level == 3 ? 7000ms : root.item.level == 2 ? 5000ms : 3000ms;
         running: true;
+        triggered => { root.close(); }
+    }
+    dismiss-timer := Timer {
+        running: false;
+        interval: 180ms;
         triggered => { root.dismissed(root.item.id); }
     }
 }
@@ -3920,8 +3933,8 @@ export component Launcher inherits Window {
                                 width: root.sheet-content-width;
                                 property <int> columns: self.width >= 440px ? 2 : 1;
                                 property <length> card-width: (self.width - (self.columns - 1) * Theme.space-3) / self.columns;
-                                height: ceil(14 / self.columns) * (236px + Theme.space-3) - Theme.space-3;
-                                for name[index] in ["TickTick Tasks", "TickTick Focus Task", "Random Quote", "Random Fact", "Motivation", "Affirmation", "Vocabulary Builder", "Achievements", "Quran Player", "Azan Reminder", "Habit Tracker", "Morning Remembrances", "Evening Remembrances", "Internet Usage"]: Rectangle {
+                                height: ceil(13 / self.columns) * (236px + Theme.space-3) - Theme.space-3;
+                                for name[index] in ["TickTick Tasks", "TickTick Focus Task", "Random Quote", "Random Fact", "Motivation", "Affirmation", "Vocabulary Builder", "Achievements", "Quran Player", "Azan Reminder", "Habit Tracker", "Remembrances", "Internet Usage"]: Rectangle {
                                     x: mod(index, gallery.columns) * (gallery.card-width + Theme.space-3);
                                     y: floor(index / gallery.columns) * (236px + Theme.space-3);
                                     width: gallery.card-width; height: 236px;
@@ -3933,7 +3946,7 @@ export component Launcher inherits Window {
                                     }
                                     OrbitText {
                                         x: Theme.space-3; y: 48px; width: parent.width - 2 * Theme.space-3; height: 32px;
-                                        text: index == 13 ? "Live vnStat · updates every minute" : index >= 2 ? "Local content · Settings → Data" : index == 0 ? "2 × 2 · choose a list" : "4 × 2 · focus task";
+                                        text: index == 12 ? "Live vnStat · updates every minute" : index == 11 ? "Morning and evening · follows Azan Reminder" : index >= 2 ? "Local content · Settings → Data" : index == 0 ? "2 × 2 · choose a list" : "4 × 2 · focus task";
                                         color: Theme.secondary; font-size: Theme.type-hint; wrap: word-wrap;
                                     }
                                     Rectangle {
@@ -3943,7 +3956,7 @@ export component Launcher inherits Window {
                                         border-color: Theme.separator; border-radius: Theme.radius-control;
                                         OrbitText {
                                             x: Theme.space-2; y: Theme.space-2; width: parent.width - 2 * Theme.space-2; height: parent.height - 2 * Theme.space-2;
-                                            text: index == 0 ? "Tasks\n☐ Task" : index == 1 ? "Focus task\n☐ Task" : index == 2 ? "“\nMake room" : index == 3 ? "360°\nA full circle" : index == 4 ? "One small\nstep" : index == 5 ? "I can take\nthis step" : index == 6 ? "curious\nفضولي" : index == 7 ? "Today\n✓ Finished" : index == 8 ? "بِسْمِ اللَّهِ\nQuran 1:1" : index == 9 ? "Next prayer\nSaved times" : index == 10 ? "☐ Read\n☐ Learn" : index == 11 ? "أذكار الصباح\n1 / 25" : index == 12 ? "أذكار المساء\n1 / 25" : "910.12 MiB\n428.61 MiB";
+                                            text: index == 0 ? "Tasks\n☐ Task" : index == 1 ? "Focus task\n☐ Task" : index == 2 ? "“\nMake room" : index == 3 ? "360°\nA full circle" : index == 4 ? "One small\nstep" : index == 5 ? "I can take\nthis step" : index == 6 ? "curious\nفضولي" : index == 7 ? "Today\n✓ Finished" : index == 8 ? "بِسْمِ اللَّهِ\nQuran 1:1" : index == 9 ? "Next prayer\nSaved times" : index == 10 ? "☐ Read\n☐ Learn" : index == 11 ? "أذكار الصباح\n1 / 25" : "910.12 MiB\n428.61 MiB";
                                             color: Theme.secondary; font-size: Theme.type-hint; wrap: word-wrap; vertical-alignment: center;
                                         }
                                     }
@@ -3951,15 +3964,15 @@ export component Launcher inherits Window {
                                         x: Theme.space-3; y: 184px; option-width: (parent.width - 2 * Theme.space-3 - Theme.space-2) / 2;
                                         label: "Auto"; primary: true; accessible-label: "Add " + name + " automatically";
                                         enabled: !root.busy && !root.layout-locked;
-                                        clicked => { root.busy = true; root.add-widget(7 + index,-1); root.sheet = false; }
+                                        clicked => { root.busy = true; root.add-widget(index == 12 ? 20 : 7 + index,-1); root.sheet = false; }
                                     }
                                     AddOption {
                                         x: (parent.width + Theme.space-2) / 2; y: 184px; option-width: (parent.width - 2 * Theme.space-3 - Theme.space-2) / 2;
                                         label: "Place"; accessible-label: "Place " + name; enabled: !root.busy && !root.layout-locked;
                                         clicked => {
-                                            root.placing-widget = 7 + index;
+                                            root.placing-widget = index == 12 ? 20 : 7 + index;
                                             root.placing-width = (index == 1 ? 4 : index == 8 || index >= 11 ? 3 : 2) * root.item-size + (index == 1 ? 3 : index == 8 || index >= 11 ? 2 : 1) * root.grid-gap;
-                                            root.placing-height = (index == 11 || index == 12 ? 5 : 2) * root.item-size + (index == 11 || index == 12 ? 4 : 1) * root.grid-gap;
+                                            root.placing-height = (index == 11 ? 5 : 2) * root.item-size + (index == 11 ? 4 : 1) * root.grid-gap;
                                             root.widget-placement-target = -1; root.sheet = false;
                                         }
                                     }
@@ -4226,10 +4239,10 @@ export component Launcher inherits Window {
         }
     }
     for toast[row] in root.toast-items: ToastCard {
-        x: root.width - self.width - Theme.space-6;
-        y: root.height - Theme.space-6 - self.height - (root.toast-items.length - row - 1) * (self.height + Theme.space-2);
-        available-width: root.width - 2 * Theme.space-6;
-        pulse: toast.pulse;
+        x: Theme.space-4 - (self.appeared ? 0px : 16px);
+        y: root.height - Theme.space-4 - self.height - (root.toast-items.length - row - 1) * (self.height + Theme.space-2);
+        available-width: root.width - 2 * Theme.space-4;
+        animate x { duration: 180ms; easing: ease-out; }
         item: toast;
         dismissed(id) => { root.dismiss-toast(id); }
     }
