@@ -270,7 +270,7 @@ fn horizontal_touchpad_scroll_changes_one_page_per_swipe() {
             });
     };
     advance(0);
-    scroll(0., -120.);
+    scroll(0., -1.);
     scroll(-10., 1.);
     assert_eq!(launcher.get_current_page(), 1);
     scroll(-35., 1.);

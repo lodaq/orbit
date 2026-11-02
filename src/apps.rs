@@ -40,6 +40,7 @@ const RECENT_DOCK_LIMIT: usize = 5;
 type UrlOpener<'a> = dyn Fn(&str) -> Result<(), Box<dyn std::error::Error>> + 'a;
 
 enum Action {
+    Canvas(crate::canvas::Mutation),
     Move(String, usize),
     ReorderPage(i32),
     Geometry(usize, usize),
@@ -163,12 +164,27 @@ pub fn connect(launcher: &Launcher) {
     let (send, receive) = mpsc::channel();
     let requests = Arc::new(RequestSequence::default());
     crate::spatial::connect(launcher);
+    let canvas_sender = send.clone();
+    crate::canvas::connect(launcher, move |change| {
+        let _ = canvas_sender.send(Action::Canvas(change));
+    });
     callbacks(launcher, send, requests.clone());
     crate::icons::connect(launcher);
     crate::ticktick_ui::connect(launcher);
     let weak = launcher.as_weak();
     std::thread::spawn(move || {
-        let (config, banner) = config::load();
+        let (mut config, banner) = config::load();
+        let mut next = config.clone();
+        let canvas_warning = crate::canvas::prepare(&mut next)
+            .and_then(|changed| {
+                if changed {
+                    next.save()
+                        .map_err(|error| format!("Couldn't save canvas: {error}"))?;
+                    config = next;
+                }
+                Ok(())
+            })
+            .err();
         let (recent, recent_banner) = recent::Recent::load();
         let (inventory, inventory_banner) = Inventory::load();
         let mut apps = Apps {
@@ -195,7 +211,30 @@ pub fn connect(launcher: &Launcher) {
         };
         apps.update(&weak, false);
         finish(&weak, banner, false, false, None, true);
+        if let Some(message) = canvas_warning {
+            let _ = weak
+                .upgrade_in_event_loop(move |ui| crate::toast::warning(&ui.as_weak(), &message));
+        }
         for action in receive {
+            if let Action::Canvas(change) = action {
+                let adding = matches!(change, crate::canvas::Mutation::Add(..));
+                let result = crate::canvas::apply(&mut apps.config, change);
+                let canvas = apps.config.canvas.clone();
+                let _ = weak.upgrade_in_event_loop(move |launcher| {
+                    let error = result.err().unwrap_or_default();
+                    crate::canvas::sync(&launcher, &canvas, !error.is_empty());
+                    let state = launcher.global::<crate::CanvasState>();
+                    state.set_saving(false);
+                    state.set_error(error.clone().into());
+                    if adding && error.is_empty() {
+                        launcher.set_sheet(false);
+                    }
+                    if !adding && !error.is_empty() {
+                        crate::toast::error(&launcher.as_weak(), &error);
+                    }
+                });
+                continue;
+            }
             let request = action.request_id();
             if request.is_some_and(|request| !requests.is_current(request)) {
                 continue;
@@ -856,7 +895,23 @@ impl Apps {
         if self.config.layout_locked && action.changes_layout() {
             return Err("Unlock layout to make changes".into());
         }
+        if crate::canvas::is_page(&self.config, self.page)
+            && matches!(
+                &action,
+                Action::Widget(..)
+                    | Action::DuplicateWidget(..)
+                    | Action::Save(-1, ..)
+                    | Action::SaveWebsite(-1, ..)
+                    | Action::SavePath(-1, ..)
+                    | Action::SaveFolder(-1, ..)
+                    | Action::AddPredefined(..)
+                    | Action::AddInstalledApp(..)
+            )
+        {
+            return Err("Use Add box on the Canvas".into());
+        }
         match action {
+            Action::Canvas(change) => crate::canvas::apply(&mut self.config, change),
             Action::SaveLayoutLocked(locked) => {
                 if self.config.layout_locked != locked {
                     let mut config = self.config.clone();
@@ -1126,6 +1181,14 @@ impl Apps {
             }
             Action::SaveSearchResult(source, index, child, page, target, pin) => {
                 let item = self.search_result_item(source, index, child)?;
+                let page = if !pin
+                    && self.page < self.config.horizontal_pages()
+                    && page == self.config.horizontal_pages()
+                {
+                    self.config.pages.len()
+                } else {
+                    page
+                };
                 let mut config = self.config.clone();
                 if !crate::item_drop::place_search_result(&mut config, item, page, target, pin)? {
                     return Ok(());
@@ -1231,7 +1294,25 @@ impl Apps {
                     self.launch_folder_app(page, index, folder_app as usize)
                 }
             }
-            Action::Page(index) => {
+            Action::Page(mut index) => {
+                if index == self.config.horizontal_pages() && !self.config.canvas.enabled {
+                    let mut next = self.config.clone();
+                    match crate::canvas::prepare(&mut next) {
+                        Ok(_) => {
+                            next.save().map_err(|error| error.to_string())?;
+                            self.config = next;
+                            index = self.config.horizontal_pages();
+                        }
+                        Err(message) => {
+                            let _ = weak.upgrade_in_event_loop(move |ui| {
+                                crate::toast::warning(&ui.as_weak(), &message)
+                            });
+                        }
+                    }
+                }
+                if index < self.config.horizontal_pages() + 2 {
+                    self.config.ensure_vertical_pages();
+                }
                 if index < self.config.pages.len() && index != self.page {
                     self.page = index;
                     self.config.active_page = index;
@@ -1281,6 +1362,11 @@ impl Apps {
             Action::AddPage => self.add_page(),
             Action::DeletePage => self.delete_page(),
             Action::Move(id, page) => {
+                let page = if page == self.config.horizontal_pages() {
+                    self.config.pages.len()
+                } else {
+                    page
+                };
                 let rect =
                     self.config
                         .positions
@@ -1314,7 +1400,10 @@ impl Apps {
             }
             Action::ReorderPage(direction) => {
                 let destination = self.page as i32 + direction;
-                if destination < 0 || destination as usize >= self.config.pages.len() {
+                if self.page >= self.config.horizontal_pages()
+                    || destination < 0
+                    || destination as usize >= self.config.horizontal_pages()
+                {
                     return Ok(());
                 }
                 let mut config = self.config.clone();
@@ -1332,7 +1421,9 @@ impl Apps {
                 let mut config = self.config.clone();
                 config.columns = columns.max(1);
                 config.rows = rows.max(1);
+                config.active_page = self.page;
                 crate::spatial::reconcile(&mut config)?;
+                self.page = config.active_page;
                 self.config = config;
                 Ok(())
             }
@@ -1363,6 +1454,11 @@ impl Apps {
                 } else {
                     (self.page..config.pages.len())
                         .chain(0..self.page)
+                        .filter(|page| {
+                            *page == self.page
+                                || (self.page < config.horizontal_pages()
+                                    && *page < config.horizontal_pages())
+                        })
                         .find_map(|page| {
                             crate::spatial::find_first_fit(
                                 &crate::spatial::occupied(&config, page),
@@ -1375,7 +1471,7 @@ impl Apps {
                         })
                 }
                 .or_else(|| {
-                    if config.pages.len() >= 9 {
+                    if self.page >= config.horizontal_pages() || config.horizontal_pages() >= 9 {
                         return None;
                     }
                     let rect = crate::spatial::find_first_fit(
@@ -1385,11 +1481,8 @@ impl Apps {
                         config.columns,
                         config.rows,
                     )?;
-                    config.pages.push(crate::config::Page {
-                        id: crate::config::new_page_id(),
-                        items: Vec::new(),
-                    });
-                    Some((config.pages.len() - 1, rect))
+                    let new_page = config.insert_page();
+                    Some((new_page, rect))
                 })
                 .ok_or("Not enough free space")?;
                 let (destination_page, rect) = destination;
@@ -1460,6 +1553,12 @@ impl Apps {
                     .unwrap_or(self.page);
                 let mut destination = None;
                 for page in source_page..config.pages.len() {
+                    if page != source_page
+                        && (source_page >= config.horizontal_pages()
+                            || page >= config.horizontal_pages())
+                    {
+                        continue;
+                    }
                     let occupied = crate::spatial::occupied(&config, page);
                     if let Some(rect) = crate::spatial::find_first_fit(
                         &occupied,
@@ -1472,11 +1571,11 @@ impl Apps {
                         break;
                     }
                 }
-                if destination.is_none() && config.pages.len() < 9 {
-                    config.pages.push(crate::config::Page {
-                        id: crate::config::new_page_id(),
-                        items: Vec::new(),
-                    });
+                if destination.is_none()
+                    && source_page < config.horizontal_pages()
+                    && config.horizontal_pages() < 9
+                {
+                    let new_page = config.insert_page();
                     destination = crate::spatial::find_first_fit(
                         &Default::default(),
                         source_rect.width,
@@ -1484,7 +1583,7 @@ impl Apps {
                         config.columns,
                         config.rows,
                     )
-                    .map(|rect| (config.pages.len() - 1, rect));
+                    .map(|rect| (new_page, rect));
                 }
                 let (page, rect) = destination.ok_or("Not enough free space")?;
                 config.positions.insert(new_id.clone(), rect);
@@ -1729,6 +1828,18 @@ impl Apps {
                 let mut result = platform::transfer_data(import);
                 if import && matches!(&result, Ok(Some(_))) {
                     self.config = config::load().0;
+                    let mut next = self.config.clone();
+                    match crate::canvas::prepare(&mut next) {
+                        Ok(true) => match next.save() {
+                            Ok(()) => self.config = next,
+                            Err(error) => result = Err(error.to_string()),
+                        },
+                        Ok(false) => {}
+                        Err(error) => result = Err(error),
+                    }
+                    let canvas = self.config.canvas.clone();
+                    let _ = weak
+                        .upgrade_in_event_loop(move |ui| crate::canvas::sync(&ui, &canvas, true));
                     self.recent = recent::Recent::load().0;
                     self.inventory = Inventory::load().0;
                     self.page = 0;
@@ -2576,6 +2687,7 @@ impl Apps {
         let Some(destination) = config.remove_page(self.page) else {
             return Ok(());
         };
+        config.active_page = destination;
         config
             .save()
             .map_err(|error| format!("Couldn't save config.json: {error}"))?;
@@ -2608,19 +2720,17 @@ impl Apps {
     }
 
     fn add_page(&mut self) -> Result<(), String> {
-        if self.config.pages.len() >= 9 {
+        if self.page >= self.config.horizontal_pages() || self.config.horizontal_pages() >= 9 {
             return Ok(());
         }
         let mut config = self.config.clone();
-        config.pages.push(crate::config::Page {
-            id: crate::config::new_page_id(),
-            items: Vec::new(),
-        });
+        let page = config.insert_page();
+        config.active_page = page;
         config
             .save()
             .map_err(|error| format!("Couldn't save config.json: {error}"))?;
         self.config = config;
-        self.page = self.config.pages.len() - 1;
+        self.page = page;
         Ok(())
     }
 
@@ -2631,6 +2741,19 @@ impl Apps {
         target: usize,
         into: &str,
     ) -> Result<(), String> {
+        let page = if page == self.config.horizontal_pages()
+            && self.page < self.config.horizontal_pages()
+            && into != "@dock"
+        {
+            self.config.pages.len()
+        } else {
+            page
+        };
+        let final_page = if page == self.config.pages.len() {
+            self.config.horizontal_pages()
+        } else {
+            page
+        };
         let keep_open = self
             .open_folder
             .and_then(|index| self.config.pages[self.page].items.get(index))
@@ -2639,14 +2762,14 @@ impl Apps {
         if !crate::item_drop::apply(&mut config, id, page, target, into, new_id()?) {
             return Ok(());
         }
-        config.active_page = page.min(config.pages.len() - 1);
+        config.active_page = final_page.min(config.pages.len() - 1);
         config
             .save()
             .map_err(|error| format!("Couldn't save config.json: {error}"))?;
         self.config = config;
-        self.page = page.min(self.config.pages.len() - 1);
+        self.page = final_page.min(self.config.pages.len() - 1);
         self.config.active_page = self.page;
-        self.open_folder = self.config.pages[page]
+        self.open_folder = self.config.pages[self.page]
             .items
             .iter()
             .position(|item| item.id() == into && matches!(item, Item::Folder { .. }))
@@ -2704,6 +2827,9 @@ impl Apps {
     }
 
     fn update(&self, weak: &slint::Weak<Launcher>, page_only: bool) {
+        let canvas = self.config.canvas.clone();
+        let _ = weak
+            .upgrade_in_event_loop(move |launcher| crate::canvas::sync(&launcher, &canvas, false));
         let page_items = |page: usize| {
             self.config
                 .pages
@@ -2729,10 +2855,21 @@ impl Apps {
         let saved_columns = self.config.columns as i32;
         let saved_rows = self.config.rows as i32;
         let items = page_items(self.page);
-        let previous = self.page.checked_sub(1).map(page_items).unwrap_or_default();
-        let next = page_items(self.page + 1);
+        let horizontal = self.config.horizontal_pages();
+        let previous = self
+            .page
+            .checked_sub(1)
+            .filter(|_| self.page < horizontal)
+            .map(page_items)
+            .unwrap_or_default();
+        let next = if self.page + 1 < horizontal {
+            page_items(self.page + 1)
+        } else {
+            Vec::new()
+        };
+        let vertical = (page_items(horizontal), page_items(horizontal + 1));
         let page = self.page as i32;
-        let count = self.config.pages.len() as i32;
+        let count = horizontal as i32;
         let app_search_paths = self
             .config
             .app_search_paths
@@ -2759,7 +2896,7 @@ impl Apps {
             .collect::<Vec<slint::SharedString>>();
         if page_only {
             let _ = weak.upgrade_in_event_loop(move |launcher| {
-                set_page_items(&launcher, items, previous, next, page, count);
+                set_page_items(&launcher, items, previous, next, vertical, page, count);
             });
             return;
         }
@@ -2928,7 +3065,7 @@ impl Apps {
                     }
                 })
                 .collect();
-            set_page_items(&launcher, items, previous, next, page, count);
+            set_page_items(&launcher, items, previous, next, vertical, page, count);
             launcher.set_dock_items(
                 std::rc::Rc::new(slint::VecModel::from(
                     dock.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
@@ -3076,6 +3213,7 @@ fn set_page_items(
     items: Vec<Tile>,
     previous: Vec<Tile>,
     next: Vec<Tile>,
+    vertical: (Vec<Tile>, Vec<Tile>),
     page: i32,
     count: i32,
 ) {
@@ -3088,6 +3226,8 @@ fn set_page_items(
     launcher.set_items(model(items));
     launcher.set_previous_items(model(previous));
     launcher.set_next_items(model(next));
+    launcher.set_top_items(model(vertical.0));
+    launcher.set_bottom_items(model(vertical.1));
     launcher.set_current_page(page);
     launcher.set_page_names(slint::ModelRc::new(slint::VecModel::from(
         (0..count)
@@ -3979,6 +4119,83 @@ mod tests {
         assert!(activated.badge_width > 52);
         assert!(match_prefix(&config.prefixes, "youtube cats").is_none());
         assert!(match_prefix(&config.prefixes, "yout cats").is_none());
+    }
+
+    #[test]
+    fn touchpad_page_swipes_use_the_dominant_axis_after_initial_drift() {
+        init_ui_for_test();
+        for (first, movement, expected) in [
+            ((0.0, 0.0), (-65.0, 0.0), 1),
+            ((0.0, 1.0), (-65.0, 2.0), 1),
+            ((0.0, -1.0), (65.0, -2.0), 0),
+            ((1.0, 0.0), (2.0, 65.0), 2),
+            ((-1.0, 0.0), (-2.0, -65.0), 3),
+        ] {
+            let ui = Launcher::new().unwrap();
+            ui.set_page_count(2);
+            ui.set_current_page(if expected == 0 { 1 } else { 0 });
+            let opened = std::rc::Rc::new(std::cell::Cell::new(-1));
+            let result = opened.clone();
+            ui.on_open_page(move |page| result.set(page));
+            ui.show().unwrap();
+            ui.set_launcher_visible(true);
+            for (delta_x, delta_y) in [first, movement] {
+                ui.window()
+                    .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                        position: slint::LogicalPosition::new(400.0, 300.0),
+                        delta_x,
+                        delta_y,
+                    });
+            }
+            assert_eq!(opened.get(), expected);
+        }
+    }
+
+    #[test]
+    fn fresh_touchpad_swipes_do_not_wait_for_the_previous_momentum_timeout() {
+        init_ui_for_test();
+        let ui = Launcher::new().unwrap();
+        ui.set_page_count(4);
+        let weak = ui.as_weak();
+        ui.on_open_page(move |page| {
+            let ui = weak.upgrade().unwrap();
+            ui.set_current_page(page);
+            ui.set_busy(false);
+            ui.invoke_finish_drag();
+        });
+        ui.show().unwrap();
+        ui.set_launcher_visible(true);
+        let scroll = |delta_x| {
+            ui.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                    position: slint::LogicalPosition::new(400.0, 300.0),
+                    delta_x,
+                    delta_y: 0.0,
+                })
+        };
+        let advance = |milliseconds| {
+            for _ in 0..milliseconds / 10 {
+                i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(10));
+            }
+        };
+        ui.invoke_start_page_scroll();
+        scroll(-65.0);
+        assert_eq!(ui.get_current_page(), 1);
+        advance(250);
+        scroll(-65.0);
+        assert_eq!(ui.get_current_page(), 1);
+        ui.invoke_start_page_scroll();
+        scroll(-65.0);
+        assert_eq!(ui.get_current_page(), 2);
+        advance(50);
+        scroll(-65.0);
+        assert_eq!(ui.get_current_page(), 2);
+        ui.invoke_start_page_scroll();
+        scroll(65.0);
+        assert_eq!(ui.get_current_page(), 1);
+        advance(400);
+        scroll(-65.0);
+        assert_eq!(ui.get_current_page(), 2);
     }
 
     #[test]

@@ -1,4 +1,6 @@
-use crate::config::{Config, Item, Page};
+#[cfg(test)]
+use crate::config::Page;
+use crate::config::{Config, Item};
 
 pub fn apply(
     config: &mut Config,
@@ -8,10 +10,21 @@ pub fn apply(
     into: &str,
     folder_id: String,
 ) -> bool {
+    if crate::canvas::is_page(config, page) && into != "@dock" {
+        return false;
+    }
     let mut next = config.clone();
     if crate::spatial::reconcile(&mut next).is_err() {
         return false;
     }
+    let page = if page == next.pages.len() && into != "@dock" {
+        if next.horizontal_pages() >= 9 {
+            return false;
+        }
+        next.insert_page()
+    } else {
+        page
+    };
     let Some(source) = find(&next, id) else {
         return false;
     };
@@ -30,7 +43,7 @@ pub fn apply(
         next.pinned.retain(|pin| pin != id);
         next.pinned.insert(target.min(next.pinned.len()), id.into());
     } else if into.is_empty() {
-        if page > next.pages.len() || page >= 9 {
+        if page > next.pages.len() || (page == next.pages.len() && next.horizontal_pages() >= 9) {
             return false;
         }
         let mut rect = next
@@ -70,12 +83,6 @@ pub fn apply(
         {
             positions.insert(remaining.id().into(), rect);
         }
-        if page == next.pages.len() {
-            next.pages.push(Page {
-                id: crate::config::new_page_id(),
-                items: Vec::new(),
-            });
-        }
         next.pages[page].items.push(item);
         next.positions.extend(positions);
         next.pinned.retain(|pin| pin != id);
@@ -104,10 +111,13 @@ pub fn place_search_result(
     target: i32,
     pin: bool,
 ) -> Result<bool, String> {
+    if !pin && crate::canvas::is_page(config, page) {
+        return Err("Use Add box on the Canvas".into());
+    }
     if config.layout_locked {
         return Err("Unlock layout to make changes".into());
     }
-    if page > config.pages.len() || page >= 9 {
+    if page > config.pages.len() || (page == config.pages.len() && config.horizontal_pages() >= 9) {
         return Err("Page is missing".into());
     }
     if pin
@@ -120,6 +130,11 @@ pub fn place_search_result(
         return Ok(false);
     }
     let mut next = config.clone();
+    let page = if page == next.pages.len() {
+        next.insert_page()
+    } else {
+        page
+    };
     let source = find(&next, item.id());
     if !pin
         && target < 0
@@ -135,12 +150,6 @@ pub fn place_search_result(
     };
     let id = item.id().to_owned();
     let item = source.map(|source| take(&mut next, source)).unwrap_or(item);
-    if page == next.pages.len() {
-        next.pages.push(Page {
-            id: crate::config::new_page_id(),
-            items: Vec::new(),
-        });
-    }
     next.pages[page].items.push(item);
     next.pinned.retain(|pinned| pinned != &id);
     if let Some(rect) = rect {
@@ -190,9 +199,17 @@ fn apply_ordered(
     into: &str,
     folder_id: String,
 ) -> bool {
-    if page > config.pages.len() || page >= 9 || id == into {
+    if page > config.pages.len()
+        || (page == config.pages.len() && config.horizontal_pages() >= 9)
+        || id == into
+    {
         return false;
     }
+    let page = if page == config.pages.len() {
+        config.insert_page()
+    } else {
+        page
+    };
     let Some(source) = find(config, id) else {
         return false;
     };
@@ -218,12 +235,6 @@ fn apply_ordered(
         let app = apps.remove(index);
         apps.insert(target, app);
         return true;
-    }
-    if page == config.pages.len() {
-        config.pages.push(Page {
-            id: crate::config::new_page_id(),
-            items: Vec::new(),
-        });
     }
     let item = take(config, source);
     let items = &mut config.pages[page].items;
@@ -377,14 +388,17 @@ mod tests {
         let mut config = Config::default();
         config.pages = vec![
             Page {
+                vertical: 0,
                 id: crate::config::new_page_id(),
                 items: vec![app("a"), app("b"), app("c")],
             },
             Page {
+                vertical: 0,
                 id: crate::config::new_page_id(),
                 items: vec![],
             },
             Page {
+                vertical: 0,
                 id: crate::config::new_page_id(),
                 items: vec![app("d")],
             },
@@ -496,6 +510,7 @@ mod tests {
         assert_eq!(ids(&c, 3), ["a"]);
         while c.pages.len() < 9 {
             c.pages.push(Page {
+                vertical: 0,
                 id: crate::config::new_page_id(),
                 items: vec![],
             });

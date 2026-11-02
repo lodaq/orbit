@@ -87,3 +87,6 @@ Search-result saving in `src/apps.rs` resolves cached results to shortcuts; `src
 
 `ui/controls.slint` owns `OrbitText` and the `TextDirection` callbacks for content-aware text alignment throughout the interface.
 - `src/text-direction.rs`: shared Unicode first-strong direction detection for Arabic, English and mixed text.
+
+- `src/canvas.rs`: separate saved Box and view state, signed canvas coordinates, pointer-centered zoom, atomic top-page migration, layout rules and Slint callbacks using the existing config worker.
+- `ui/canvas.slint`: viewport-culled solid Boxes with Arabic/English text, pan/zoom input, Back/Add box controls, and the Name/Description sheet.

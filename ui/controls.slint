@@ -144,6 +144,7 @@ export component AddField inherits VerticalLayout {
     in-out property <string> text;
     in property <bool> enabled: true;
     in property <bool> multiline;
+    in property <bool> accept-newlines;
     in property <length> multiline-height: Theme.field-multiline-height;
     in property <bool> secret;
     callback accepted;
@@ -207,7 +208,7 @@ export component AddField inherits VerticalLayout {
                 selection-foreground-color: (root.add-style ? Theme.add-text : root.settings-style ? Theme.settings-text : Theme.text);
                 edited => { root.edited(); }
                 key-pressed(event) => {
-                    if root.multiline && event.text == "\n" {
+                    if root.multiline && !root.accept-newlines && event.text == "\n" {
                         root.accepted();
                         return accept;
                     }

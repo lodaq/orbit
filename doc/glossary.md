@@ -58,8 +58,8 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **File search path** | A folder searched recursively for files by Search anything. |
 | **Directory search path** | A folder whose immediate directories appear in Search anything. |
 | **Folder** | Holds launchable shortcuts: Apps, Websites, Files and Directories. Opens like an iOS folder. Cannot contain other folders. Its tile shows a small preview of its apps. |
-| **Page** | One screen of items, like a phone home screen page. Pages have no names. Maximum 9. Leaving an empty page does not remove it. |
-| **Page swipe** | Dragging an empty area of a page left or right to open the previous or next page. |
+| **Page** | One screen of items, like a phone home screen page. Pages have no names. Maximum 9 horizontal pages, plus one fixed page above and one below. Leaving an empty page does not remove it. |
+| **Page swipe** | Dragging an empty area of a page horizontally or vertically to open the neighboring page. |
 | **Grid** | The rows and columns of tiles on a page or inside an open folder. |
 | **Tile** | The rounded square that shows one item (an app, website, file, directory or folder). |
 | **Page dots** | The row of dots that shows which page is open, with a + control to add a page. |
@@ -234,3 +234,15 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Remembrances (Adhkar)** | One automatic widget that selects Morning Remembrances or Evening Remembrances using the first Azan Reminder's saved prayer times and time zone. |
 | **Recommended window** | Fajr to Sunrise for morning, or Asr to Maghrib for evening. |
 | **Permissible window** | The rest of the active morning or evening period. |
+
+## Canvas
+
+| Term | Meaning |
+|---|---|
+| **Canvas** | The top fixed page’s freely pannable and zoomable space for Boxes. |
+| **Box** | A solid 280 × 180 rectangle with a required Name and optional Description, stored separately from launcher Items. |
+| **Add box** | Opens the Name and Description sheet; Add places the Box at the visible canvas center. |
+| **Description** | Optional multiline Box text, displayed with content-aware direction and scrollable when long. |
+| **Pan** | Move the canvas view by dragging empty space. |
+| **Zoom** | Change the canvas scale around the pointer, from 25% to 200%. |
+| **Back** | On the Canvas, return to the horizontal page previously visited. |

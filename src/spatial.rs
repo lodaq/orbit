@@ -1,4 +1,4 @@
-use crate::config::{Config, Item, Page};
+use crate::config::{Config, Item};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
@@ -179,6 +179,7 @@ pub fn reconcile(config: &mut Config) -> Result<(), String> {
     config
         .pinned
         .retain(|id| ids.contains(id) && seen.insert(id.clone()));
+    let original_horizontal = config.horizontal_pages();
     let mut pending = Vec::new();
     let mut occupancy = vec![BTreeMap::new(); config.pages.len()];
     for (page_index, page) in config.pages.iter_mut().enumerate() {
@@ -214,7 +215,13 @@ pub fn reconcile(config: &mut Config) -> Result<(), String> {
     }
     pending
         .sort_by(|a, b| (a.0, a.1.row, a.1.col, a.2.id()).cmp(&(b.0, b.1.row, b.1.col, b.2.id())));
+    let mut added_pages = 0;
     for (origin, mut rect, item) in pending {
+        let origin = if origin >= original_horizontal {
+            origin + added_pages
+        } else {
+            origin
+        };
         if let Item::Widget { variant, .. } = &item {
             let (min_width, min_height) = WIDGET_MIN_SPANS[*variant];
             rect.width = rect
@@ -230,26 +237,31 @@ pub fn reconcile(config: &mut Config) -> Result<(), String> {
             rect.width = rect.width.max(1).min(config.columns);
             rect.height = rect.height.max(1).min(config.rows);
         }
-        let mut page = origin;
-        loop {
-            if page == config.pages.len() {
-                if page >= 9 {
-                    return Err("Layout is full. Choose a smaller Grid Cell Size.".into());
-                }
-                config.pages.push(Page {
-                    id: crate::config::new_page_id(),
-                    items: Vec::new(),
-                });
-                occupancy.push(BTreeMap::new());
+        let horizontal = config.horizontal_pages();
+        let mut candidates = if origin < horizontal {
+            origin..horizontal
+        } else {
+            origin..origin + 1
+        };
+        let destination = candidates.find_map(|page| {
+            free(&occupancy[page], rect, config.columns, config.rows).map(|rect| (page, rect))
+        });
+        let (page, rect) = if let Some(destination) = destination {
+            destination
+        } else {
+            if origin >= horizontal || horizontal >= 9 {
+                return Err("Layout is full. Choose a smaller Grid Cell Size.".into());
             }
-            if let Some(rect) = free(&occupancy[page], rect, config.columns, config.rows) {
-                occupancy[page].insert(item.id().into(), rect);
-                config.positions.insert(item.id().into(), rect);
-                config.pages[page].items.push(item);
-                break;
-            }
-            page += 1;
-        }
+            let page = config.insert_page();
+            occupancy.insert(page, BTreeMap::new());
+            added_pages += 1;
+            let rect = free(&occupancy[page], rect, config.columns, config.rows)
+                .ok_or("Layout is full. Choose a smaller Grid Cell Size.")?;
+            (page, rect)
+        };
+        occupancy[page].insert(item.id().into(), rect);
+        config.positions.insert(item.id().into(), rect);
+        config.pages[page].items.push(item);
     }
     config.active_page = config.active_page.min(config.pages.len() - 1);
     Ok(())

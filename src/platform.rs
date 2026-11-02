@@ -646,6 +646,12 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
                 focus_after_show(&launcher);
             }
             match event {
+                WindowEvent::MouseWheel {
+                    phase: winit::event::TouchPhase::Started,
+                    ..
+                } => {
+                    launcher.invoke_start_page_scroll();
+                }
                 WindowEvent::ModifiersChanged(state) => {
                     modifiers = state.state();
                 }

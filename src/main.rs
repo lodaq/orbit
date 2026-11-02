@@ -4,6 +4,7 @@ mod adhkar;
 mod ai;
 mod apps;
 mod azan;
+mod canvas;
 mod config;
 mod daemon;
 #[path = "english-assistance.rs"]

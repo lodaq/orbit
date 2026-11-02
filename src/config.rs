@@ -5,6 +5,8 @@ pub const PINNED_LIMIT: usize = 10;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Config {
+    #[serde(default)]
+    pub canvas: crate::canvas::Canvas,
     version: u32,
     #[serde(default)]
     pub positions: std::collections::BTreeMap<String, crate::spatial::Rect>,
@@ -90,8 +92,14 @@ pub struct Prefix {
     pub action_id: String,
 }
 
+fn is_horizontal(vertical: &i8) -> bool {
+    *vertical == 0
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Page {
+    #[serde(default, skip_serializing_if = "is_horizontal")]
+    pub vertical: i8,
     #[serde(default = "new_page_id")]
     pub id: String,
     pub items: Vec<Item>,
@@ -378,12 +386,14 @@ pub fn default_file_search_exclusions() -> Vec<String> {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            canvas: Default::default(),
             version: 5,
             positions: Default::default(),
             columns: default_columns(),
             rows: default_rows(),
             active_page: 0,
             pages: vec![Page {
+                vertical: 0,
                 id: crate::config::new_page_id(),
                 items: Vec::new(),
             }],
@@ -737,8 +747,43 @@ impl Config {
         changed
     }
 
+    pub fn horizontal_pages(&self) -> usize {
+        self.pages
+            .iter()
+            .take_while(|page| page.vertical == 0)
+            .count()
+    }
+
+    pub fn insert_page(&mut self) -> usize {
+        let index = self.horizontal_pages();
+        self.pages.insert(
+            index,
+            Page {
+                vertical: 0,
+                id: new_page_id(),
+                items: Vec::new(),
+            },
+        );
+        if self.active_page >= index {
+            self.active_page += 1;
+        }
+        index
+    }
+
+    pub fn ensure_vertical_pages(&mut self) {
+        if self.pages.iter().all(|page| page.vertical == 0) {
+            for vertical in [-1, 1] {
+                self.pages.push(Page {
+                    vertical,
+                    id: new_page_id(),
+                    items: Vec::new(),
+                });
+            }
+        }
+    }
+
     pub fn remove_page(&mut self, index: usize) -> Option<usize> {
-        if self.pages.len() <= 1 || index >= self.pages.len() {
+        if self.horizontal_pages() <= 1 || index >= self.horizontal_pages() {
             return None;
         }
         let removed = self.pages.remove(index);
@@ -850,10 +895,15 @@ impl Config {
         }) {
             return false;
         }
-        (1..=5).contains(&self.version)
+        self.canvas.valid()
+            && (1..=5).contains(&self.version)
             && (1..=limit).contains(&self.columns)
             && (1..=limit).contains(&self.rows)
-            && (1..=9).contains(&self.pages.len())
+            && (1..=9).contains(&self.horizontal_pages())
+            && (self.pages.len() == self.horizontal_pages()
+                || (self.pages.len() == self.horizontal_pages() + 2
+                    && self.pages[self.horizontal_pages()].vertical == -1
+                    && self.pages[self.horizontal_pages() + 1].vertical == 1))
             && crate::shortcuts::valid(&self.shortcuts)
             && (0..=64).contains(&self.page_margin)
             && (80..=240).contains(&self.item_size)
@@ -1286,6 +1336,7 @@ mod tests {
                 version: 3,
                 pages: (0..count)
                     .map(|_| Page {
+                        vertical: 0,
                         id: crate::config::new_page_id(),
                         items: Vec::new(),
                     })
@@ -1296,11 +1347,87 @@ mod tests {
         }
     }
     #[test]
+    fn vertical_pages_are_fixed_and_do_not_use_the_horizontal_limit() {
+        let mut config = Config::default();
+        config.pages = (0..9)
+            .map(|_| serde_json::from_value(serde_json::json!({"items": []})).unwrap())
+            .collect();
+        for vertical in [-1, 1] {
+            config.pages.push(
+                serde_json::from_value(serde_json::json!({
+                    "vertical": vertical, "items": []
+                }))
+                .unwrap(),
+            );
+        }
+        assert!(config.valid());
+        assert_eq!(config.remove_page(9), None);
+        assert_eq!(config.remove_page(10), None);
+        let saved = serde_json::to_value(&config).unwrap();
+        assert_eq!(saved["pages"][9]["vertical"], -1);
+        config.pages.push(
+            serde_json::from_value(serde_json::json!({
+                "vertical": -1, "items": []
+            }))
+            .unwrap(),
+        );
+        assert!(!config.valid());
+    }
+
+    #[test]
+    fn vertical_page_items_survive_horizontal_overflow_and_drops() {
+        let mut config = Config::default();
+        config.ensure_vertical_pages();
+        config.ensure_vertical_pages();
+        assert_eq!(config.pages.len(), 3);
+        config.columns = 144;
+        config.rows = 144;
+        let item = |id: &str| Item::Folder {
+            id: id.into(),
+            name: id.into(),
+            apps: Vec::new(),
+        };
+        config.pages[0].items = vec![item("a"), item("b")];
+        config.pages[1].items = vec![item("top")];
+        config.active_page = 1;
+        crate::spatial::reconcile(&mut config).unwrap();
+        assert_eq!(config.horizontal_pages(), 2);
+        assert_eq!(config.pages[2].vertical, -1);
+        assert_eq!(config.pages[2].items[0].id(), "top");
+        assert_eq!(config.active_page, 2);
+        assert!(config.valid());
+        let new_page = config.pages.len();
+        assert!(crate::item_drop::apply(
+            &mut config,
+            "top",
+            new_page,
+            0,
+            "",
+            "unused".into()
+        ));
+        assert_eq!(config.horizontal_pages(), 3);
+        assert_eq!(config.pages[2].items[0].id(), "top");
+        assert_eq!(config.pages[3].vertical, -1);
+        assert!(config.valid());
+        assert!(crate::item_drop::apply(
+            &mut config,
+            "top",
+            4,
+            0,
+            "",
+            "unused".into()
+        ));
+        assert_eq!(config.pages[4].items[0].id(), "top");
+        assert!(config.valid());
+    }
+
+    #[test]
     fn deleting_pages_keeps_items_and_the_last_page() {
         for index in 0..3 {
             let mut config = Config::default();
             config.pages = (0..3)
                 .map(|number| Page {
+                    vertical: 0,
                     id: crate::config::new_page_id(),
                     items: vec![Item::Folder {
                         id: number.to_string(),

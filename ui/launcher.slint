@@ -1,3 +1,5 @@
+export { CanvasState, CanvasBox } from "canvas.slint";
+import { CanvasState, CanvasView, CanvasSheet } from "canvas.slint";
 export { TextDirection } from "controls.slint";
 import { OrbitText, TextDirection } from "controls.slint";
 export { AzanSettings } from "azan-settings.slint";
@@ -680,7 +682,7 @@ export component Launcher inherits Window {
     }
 
     private property <int> dock-source-index: -1;
-    out property <bool> grid-navigation: !root.search-context && !root.ai-active && page-focus.has-focus && !root.page-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open;
+    out property <bool> grid-navigation: !root.canvas-active && !root.search-context && !root.ai-active && page-focus.has-focus && !root.page-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open;
     pure callback next-grid-item([AppTile],int,int) -> int;
     callback move-grid(int);
     move-grid(direction) => { root.keyboard-grid = true; root.focused-item = root.next-grid-item(root.items,root.focused-item,direction); }
@@ -995,7 +997,7 @@ export component Launcher inherits Window {
     private property <bool> page-delete-confirm;
     callback delete-page();
     callback confirm-delete-page();
-    confirm-delete-page => { if !root.layout-locked && root.page-count > 1 && !root.busy && !root.sheet && !root.folder-open { root.page-delete-confirm = true; } }
+    confirm-delete-page => { if root.current-page < root.page-count && !root.layout-locked && root.page-count > 1 && !root.busy && !root.sheet && !root.folder-open { root.page-delete-confirm = true; } }
     private property <int> search-selection;
     private property <int> search-hover: -1;
     private property <int> search-detail-index: search-hover >= 0 && search-hover < root.search-results.length ? search-hover : search-selection;
@@ -1173,9 +1175,11 @@ export component Launcher inherits Window {
     private property <bool> alert;
     in-out property <bool> picker;
     private property <int> context-index: -1;
+    private property <bool> canvas-active: CanvasState.enabled && root.current-page == root.page-count;
+    private property <int> transition-from: -1;
     private property <bool> page-context;
     changed current-page => { root.page-context = false; }
-    changed launcher-visible => { if root.launcher-visible { root.load-local-widgets(root.items,root.page-previews,true); } if !root.launcher-visible { root.page-context = false; root.clear-ai(); root.ai-key-draft = ""; } }
+    changed launcher-visible => { if root.launcher-visible { root.load-local-widgets(root.items,root.page-previews,true); } if !root.launcher-visible { canvas-view.cancel(); canvas-view.flush(); root.page-context = false; root.clear-ai(); root.ai-key-draft = ""; } }
     private property <string> dock-context;
     private property <string> context-id;
     private property <int> editing: -1;
@@ -1203,13 +1207,26 @@ export component Launcher inherits Window {
     private property <bool> page-dragging;
     private property <bool> page-swipe-pressed;
     private property <length> page-swipe-start;
+    private property <length> page-swipe-start-y;
+    private property <bool> page-vertical;
+    private property <int> horizontal-page;
+    in property <[AppTile]> top-items;
+    in property <[AppTile]> bottom-items;
     private property <length> page-scroll-distance;
+    private property <length> page-scroll-distance-y;
     private property <bool> page-scroll-changed;
+    callback start-page-scroll();
+    start-page-scroll => {
+        if root.transitioning && !root.busy { root.finish-page-transition(); }
+        root.page-scroll-distance = 0px;
+        root.page-scroll-distance-y = 0px;
+        root.page-scroll-changed = false;
+    }
     page-scroll-timer := Timer {
         interval: 350ms;
-        triggered => { root.page-scroll-distance = 0px; root.page-scroll-changed = false; }
+        triggered => { root.page-scroll-distance = 0px; root.page-scroll-distance-y = 0px; root.page-scroll-changed = false; }
     }
-    private property <length> page-span: page.width + 24px;
+    private property <length> page-span: (root.page-vertical ? page.height : page.width) + 24px;
     private property <[AppTile]> transition-items;
     private property <[AppTile]> transition-incoming-items;
     private property <bool> transitioning;
@@ -1272,7 +1289,7 @@ export component Launcher inherits Window {
     private property <int> merge-target: -1;
     private property <bool> merge-ready;
     private property <int> edge-direction;
-    private property <[AppTile]> drag-items: root.drag-page >= 0 && root.drag-page < root.page-previews.length ? root.page-previews[root.drag-page].items : [];
+    private property <[AppTile]> drag-items: root.drag-page >= 0 && root.drag-page < root.page-previews.length && !(root.current-page < root.page-count && root.drag-page == root.page-count) ? root.page-previews[root.drag-page].items : [];
     private property <bool> drag-on-page: root.dragging && !root.resizing && (!root.drag-from-folder || root.drag-outside-folder);
     callback save-app(int, string, string, string);
     callback add-system-action(string);
@@ -1322,22 +1339,23 @@ export component Launcher inherits Window {
     callback add-page();
     callback drop-item(string, int, int, string);
     callback cancel-pointer();
-    cancel-pointer => { root.cancel-drag(); }
+    cancel-pointer => { canvas-view.cancel(); root.cancel-drag(); }
     callback reset-launcher();
     callback finish-drag();
     callback close-top-layer();
     animate page-drag-offset { duration: root.page-dragging ? 0ms : 100ms; easing: ease-out; }
-    animate transition-progress { duration: root.transition-duration; easing: ease-out-sine; }
+    animate transition-progress { duration: root.transitioning ? root.transition-duration : 0ms; easing: ease-out-sine; }
+    function finish-page-transition() {
+        root.transitioning = false;
+        root.transition-progress = 0;
+        root.transition-items = [];
+        root.transition-incoming-items = [];
+        transition-timer.stop();
+    }
     transition-timer := Timer {
         running: false;
         interval: root.transition-duration + 34ms;
-        triggered => {
-            root.transitioning = false;
-            root.transition-progress = 0;
-            root.transition-items = [];
-            root.transition-incoming-items = [];
-            self.running = false;
-        }
+        triggered => { root.finish-page-transition(); }
     }
     merge-timer := Timer {
         interval: 500ms;
@@ -1351,7 +1369,7 @@ export component Launcher inherits Window {
         interval: 600ms;
         triggered => {
             let destination = root.drag-page + root.edge-direction;
-            if root.drag-on-page && destination >= 0 && destination <= min(root.page-count, 8) {
+            if root.current-page < root.page-count && root.drag-on-page && destination >= 0 && destination <= min(root.page-count, 8) {
                 root.drag-slide-animate = false; root.drag-slide-direction = root.edge-direction; root.drag-slide = 0; drag-slide-timer.start();
                 root.drag-page = destination;
                 page.content-y = 0px;
@@ -1418,7 +1436,9 @@ export component Launcher inherits Window {
         root.edge-direction = 0;
     }
     function begin-drag(index: int, folder: bool, x: length, y: length) {
+        if root.canvas-active && !folder && root.search-text == "" { return; }
         root.cancel-drag();
+        root.page-vertical = false;
         root.snapping = false; snap-timer.stop();
         root.drag-index = index;
         root.drag-origin = root.current-page;
@@ -1708,6 +1728,7 @@ export component Launcher inherits Window {
     page-focus := FocusScope { width: 0px; height: 0px; }
     finish-drag => { if root.drop-pending { root.cancel-drag(); } }
     reset-launcher => {
+        canvas-view.cancel(); canvas-view.flush();
         AzanSettings.close();
         root.clear-ai();
         root.search-context = false;
@@ -1754,6 +1775,7 @@ export component Launcher inherits Window {
         search-input.focus();
     }
     close-top-layer => {
+        if canvas-view.dragging { canvas-view.cancel(); return; }
         if AzanSettings.widget-id != "" { AzanSettings.close(); return; }
         if root.search-context { root.search-context = false; return; }
         if root.page-context { root.page-context = false; return; }
@@ -1944,11 +1966,35 @@ export component Launcher inherits Window {
     callback open-page(int);
     callback hide-launcher();
     function change-page(index: int) {
+        if root.transitioning { return; }
+        root.page-vertical = false;
+        if root.current-page >= root.page-count || index < 0 || index >= root.page-count { root.page-drag-offset = 0px; return; }
+        root.start-page-change(index, index > root.current-page ? 1 : -1,
+            index > root.current-page ? root.next-items : root.previous-items);
+    }
+    function vertical-page(direction: int) -> int {
+        if root.current-page < root.page-count { return root.page-count + (direction > 0 ? 1 : 0); }
+        if (root.current-page == root.page-count && direction > 0)
+            || (root.current-page == root.page-count + 1 && direction < 0) { return root.horizontal-page; }
+        return -1;
+    }
+    function change-vertical-page(direction: int) {
+        if root.transitioning { return; }
+        let destination = root.vertical-page(direction);
+        let incoming = root.current-page < root.page-count
+            ? (direction > 0 ? root.bottom-items : root.top-items) : root.horizontal-items;
+        if root.current-page < root.page-count { root.horizontal-page = root.current-page; }
+        root.page-vertical = true;
+        root.start-page-change(destination, direction, incoming);
+    }
+    private property <[AppTile]> horizontal-items: root.horizontal-page < root.page-previews.length ? root.page-previews[root.horizontal-page].items : [];
+    function start-page-change(index: int, direction: int, incoming: [AppTile]) {
         root.page-context = false;
-        if !root.ai-active && !root.busy && !root.transitioning && index >= 0 && index < root.page-count && index != root.current-page {
+        if !root.ai-active && !root.busy && !root.transitioning && index >= 0 && index < root.page-count + 2 && index != root.current-page {
+            root.transition-from = root.current-page;
             root.transition-items = root.items;
-            root.transition-direction = index > root.current-page ? 1 : -1;
-            root.transition-incoming-items = root.transition-direction > 0 ? root.next-items : root.previous-items;
+            root.transition-direction = direction;
+            root.transition-incoming-items = incoming;
             root.transition-start = root.page-drag-offset;
             root.page-drag-offset = 0px;
             root.transition-progress = 0;
@@ -1962,31 +2008,39 @@ export component Launcher inherits Window {
             root.page-drag-offset = 0px;
         }
     }
-    function move-page-swipe(x: length) {
-        let dx = x - root.page-swipe-start;
-        if abs(dx) < 8px && !root.page-dragging { return; }
+    function move-page-swipe(x: length, y: length) {
+        let horizontal = x - root.page-swipe-start;
+        let vertical = y - root.page-swipe-start-y;
+        if max(abs(horizontal), abs(vertical)) < 8px && !root.page-dragging { return; }
+        if !root.page-dragging { root.page-vertical = abs(vertical) > abs(horizontal); }
+        let dx = root.page-vertical ? vertical : horizontal;
         root.page-dragging = true;
-        let boundary = (dx > 0px && root.current-page == 0)
-            || (dx < 0px && root.current-page == root.page-count - 1);
+        let boundary = root.page-vertical ? root.vertical-page(dx < 0px ? 1 : -1) < 0
+            : root.current-page >= root.page-count || (dx > 0px && root.current-page == 0)
+                || (dx < 0px && root.current-page == root.page-count - 1);
         let resistance = abs(dx) * 64px * 0.55 / (64px + 0.55 * abs(dx));
         root.page-drag-offset = boundary ? (dx < 0px ? -resistance : resistance) : min(root.page-span, max(-root.page-span, dx));
     }
     function end-page-swipe() {
         root.page-swipe-pressed = false;
         root.page-dragging = false;
-        if abs(root.page-drag-offset) > min(120px, page.width * 0.18) {
-            root.change-page(root.current-page + (root.page-drag-offset < 0px ? 1 : -1));
+        if abs(root.page-drag-offset) > min(120px, (root.page-vertical ? page.height : page.width) * 0.18) {
+            if root.page-vertical { root.change-vertical-page(root.page-drag-offset < 0px ? 1 : -1); }
+            else { root.change-page(root.current-page + (root.page-drag-offset < 0px ? 1 : -1)); }
         } else { root.page-drag-offset = 0px; }
     }
     function scroll-page(event: PointerScrollEvent) -> EventResult {
-        if !event.modifiers.shift && abs(event.delta-x) > abs(event.delta-y) {
-            // Slint omits gesture phases, so a quiet interval separates swipes and their momentum.
+        if !event.modifiers.shift && (event.delta-x != 0px || event.delta-y != 0px) {
+            // The native start signal resets touchpad swipes; the timer covers wheels without phases.
             page-scroll-timer.restart();
-            if !root.page-scroll-changed {
+            if !root.page-scroll-changed && !root.transitioning {
                 root.page-scroll-distance += event.delta-x;
-                if abs(root.page-scroll-distance) >= 40px {
+                root.page-scroll-distance-y += event.delta-y;
+                if max(abs(root.page-scroll-distance), abs(root.page-scroll-distance-y)) >= 40px {
+                    root.page-vertical = abs(root.page-scroll-distance-y) > abs(root.page-scroll-distance);
                     root.page-scroll-changed = true;
-                    root.change-page(root.current-page + (root.page-scroll-distance < 0px ? 1 : -1));
+                    if root.page-vertical { root.change-vertical-page(root.page-scroll-distance-y < 0px ? 1 : -1); }
+                    else { root.change-page(root.current-page + (root.page-scroll-distance < 0px ? 1 : -1)); }
                 }
             }
             return accept;
@@ -2165,14 +2219,18 @@ export component Launcher inherits Window {
             Rectangle {
                 x: 0px; y: 0px; width: page.width; height: page.height;
             preview := Rectangle {
-                visible: !root.dragging && (root.transitioning || root.page-count > 1);
+                visible: !root.dragging && (root.transitioning || root.page-vertical || root.page-count > 1);
                 opacity: root.transitioning ? 1 : min(1, abs(root.page-drag-offset) / 96px);
-                x: (page.width - self.width) / 2 + (root.transitioning
+                property <length> page-shift: (root.transitioning
                     ? root.transition-start + (-root.transition-direction * root.page-span - root.transition-start) * root.transition-progress
                     : root.page-drag-offset + (root.page-drag-offset < 0px ? root.page-span : -root.page-span));
-                y: root.page-margin * 1px;
+                x: (page.width - self.width) / 2 + (root.page-vertical ? 0px : self.page-shift);
+                y: root.page-margin * 1px + (root.page-vertical ? self.page-shift : 0px);
                 width: page.width - root.page-margin * 2px;
                 property <[AppTile]> preview-items: root.transitioning ? root.transition-items
+                    : root.page-vertical ? (root.current-page < root.page-count
+                        ? (root.page-drag-offset < 0px ? root.bottom-items : root.top-items)
+                        : root.vertical-page(root.page-drag-offset < 0px ? 1 : -1) >= 0 ? root.horizontal-items : [])
                     : (root.page-drag-offset < 0px ? root.next-items : root.previous-items);
                 property <int> columns: max(1, floor(self.width / 1px));
                 property <length> tile-size: 1px;
@@ -2230,10 +2288,12 @@ export component Launcher inherits Window {
                 }
             }
             grid := Rectangle {
-                x: (root.drag-on-page ? (1 - root.drag-slide) * root.drag-slide-direction * root.page-span : 0px) + (page.width - self.width) / 2 + (root.transitioning
+                visible: !root.canvas-active;
+                property <length> page-shift: (root.transitioning
                     ? root.transition-start + (-root.transition-direction * root.page-span - root.transition-start) * root.transition-progress + root.transition-direction * root.page-span
                     : root.page-drag-offset);
-                y: root.page-margin * 1px;
+                x: (root.drag-on-page ? (1 - root.drag-slide) * root.drag-slide-direction * root.page-span : 0px) + (page.width - self.width) / 2 + (root.page-vertical ? 0px : self.page-shift);
+                y: root.page-margin * 1px + (root.page-vertical ? self.page-shift : 0px);
                 width: page.width - root.page-margin * 2px;
                 property <[AppTile]> display-items: root.drag-on-page ? root.drag-items : root.transitioning ? root.transition-incoming-items : root.items;
                 property <int> columns: max(1, floor(self.width / 1px));
@@ -2314,7 +2374,7 @@ export component Launcher inherits Window {
             page-input := TouchArea {
                 y: -page.content-y;
                 width: page.width; height: page.height;
-                enabled: !root.busy && !root.transitioning && !root.folder-open && !root.sheet && !root.alert && !root.picker && !root.settings && !root.ticktick-open && root.ticktick-popup-widget-id == "";
+                enabled: !root.canvas-active && !root.busy && !root.transitioning && !root.folder-open && !root.sheet && !root.alert && !root.picker && !root.settings && !root.ticktick-open && root.ticktick-popup-widget-id == "";
                 scroll-event(event) => {
                     if root.dragging { return accept; }
                     if !event.modifiers.shift && abs(event.delta-y) >= abs(event.delta-x) && root.scroll-ticktick(self.absolute-position.x + self.mouse-x,self.absolute-position.y + self.mouse-y,event.delta-y) { return accept; }
@@ -2364,6 +2424,7 @@ export component Launcher inherits Window {
                             }
                             root.page-swipe-pressed = index < 0;
                             root.page-swipe-start = x;
+                            root.page-swipe-start-y = y;
                             page-focus.focus();
                         }
                         if event.button == PointerEventButton.right && !root.dragging {
@@ -2380,7 +2441,7 @@ export component Launcher inherits Window {
                     if event.kind == PointerEventKind.move {
                         if root.placing-widget >= 0 { root.update-widget-placement(x,y); }
                         else if root.ticktick-scrollbar-dragging { root.set-ticktick-scrollbar(root.ticktick-scrollbar-index,y); }
-                        else if root.page-swipe-pressed { root.move-page-swipe(x); } else { root.move-drag(x, y); }
+                        else if root.page-swipe-pressed { root.move-page-swipe(x,y); } else { root.move-drag(x, y); }
                     }
                     if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
                         if root.placing-widget >= 0 {
@@ -2390,7 +2451,7 @@ export component Launcher inherits Window {
                         } else if root.ticktick-scrollbar-dragging {
                             root.set-ticktick-scrollbar(root.ticktick-scrollbar-index,y);
                             root.ticktick-scrollbar-dragging = false; root.ticktick-scrollbar-index = -1;
-                        } else if root.page-swipe-pressed { root.move-page-swipe(x); root.end-page-swipe(); }
+                        } else if root.page-swipe-pressed { root.move-page-swipe(x,y); root.end-page-swipe(); }
                         else { root.move-drag(x,y); root.end-drag(); }
                     }
                     if event.kind == PointerEventKind.cancel {
@@ -2426,7 +2487,7 @@ export component Launcher inherits Window {
         }
     }
     HorizontalLayout {
-        visible: !root.ai-active;
+        visible: !root.ai-active && root.current-page < root.page-count;
         x: (root.width - self.width) / 2; y: root.height - 158px;
         width: (root.page-count + (root.page-count < 9 ? 1 : 0)) * 24px; height: 24px; spacing: 0px;
         for index in root.page-count: Rectangle {
@@ -3690,10 +3751,10 @@ export component Launcher inherits Window {
             context-options := VerticalLayout {
                 padding: 8px; spacing: 4px;
                 if root.page-context: MenuOption { width: 184px; label: "Add item"; enabled: !root.layout-locked; clicked => { root.add-item("App"); } }
-                if root.page-context: MenuOption { width: 184px; label: "Add page"; enabled: !root.layout-locked && root.page-count < 9 && !root.busy; clicked => { root.page-context = false; root.busy = true; root.add-page(); } }
-                if root.page-context: MenuOption { width: 184px; label: "Move page left"; enabled: !root.layout-locked && root.current-page > 0 && !root.busy; clicked => { root.page-context = false; root.busy = true; root.reorder-page(-1); } }
-                if root.page-context: MenuOption { width: 184px; label: "Move page right"; enabled: !root.layout-locked && root.current-page + 1 < root.page-count && !root.busy; clicked => { root.page-context = false; root.busy = true; root.reorder-page(1); } }
-                if root.page-context: MenuOption { width: 184px; label: "Delete page"; destructive: true; enabled: !root.layout-locked && root.page-count > 1 && !root.busy; clicked => { root.page-context = false; root.confirm-delete-page(); } }
+                if root.page-context && root.current-page < root.page-count: MenuOption { width: 184px; label: "Add page"; enabled: !root.layout-locked && root.page-count < 9 && !root.busy; clicked => { root.page-context = false; root.busy = true; root.add-page(); } }
+                if root.page-context && root.current-page < root.page-count: MenuOption { width: 184px; label: "Move page left"; enabled: !root.layout-locked && root.current-page > 0 && !root.busy; clicked => { root.page-context = false; root.busy = true; root.reorder-page(-1); } }
+                if root.page-context && root.current-page < root.page-count: MenuOption { width: 184px; label: "Move page right"; enabled: !root.layout-locked && root.current-page + 1 < root.page-count && !root.busy; clicked => { root.page-context = false; root.busy = true; root.reorder-page(1); } }
+                if root.page-context && root.current-page < root.page-count: MenuOption { width: 184px; label: "Delete page"; destructive: true; enabled: !root.layout-locked && root.page-count > 1 && !root.busy; clicked => { root.page-context = false; root.confirm-delete-page(); } }
                 if root.context-index >= 0 && root.items[root.context-index].ticktick && !root.items[root.context-index].ticktick-next: MenuOption { width: 184px; label: "New task"; clicked => { root.open-ticktick-create(root.items[root.context-index].ticktick-project-id); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].widget: MenuOption { width: 184px; label: "Duplicate"; enabled: !root.layout-locked; clicked => { root.busy = true; root.duplicate-widget(root.items[root.context-index].id); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].widget: MenuOption { width: 184px; label: "Resize · wider";
@@ -3724,10 +3785,33 @@ export component Launcher inherits Window {
         }
     }
     if AzanSettings.widget-id != "": AzanSettingsSheet { width: root.width; height: root.height; }
+    Rectangle {
+        x: page.absolute-position.x; y: page.absolute-position.y;
+        width: page.width; height: page.height; clip: true;
+        visible: canvas-view.visible;
+        canvas-view := CanvasView {
+            private property <bool> previewing: root.page-dragging && root.page-vertical && root.current-page < root.page-count && root.page-drag-offset > 0px;
+            visible: root.home-visible && CanvasState.enabled && (root.canvas-active || self.previewing || (root.transitioning && root.transition-from == root.page-count));
+            opacity: self.previewing ? min(1,abs(root.page-drag-offset) / 96px) : 1;
+            x: 0px; y: (root.transitioning && root.page-vertical
+                ? root.transition-start + (-root.transition-direction * root.page-span - root.transition-start) * root.transition-progress
+                    + (root.canvas-active ? root.transition-direction * root.page-span : 0px) : self.previewing ? root.page-drag-offset - root.page-span : 0px);
+            width: parent.width; height: parent.height;
+            active: root.canvas-active && !root.busy && !CanvasState.saving && !root.transitioning && !root.sheet && !root.folder-open && !root.alert && !root.picker;
+            locked: root.layout-locked;
+            add-box => { root.item-type = "Box"; CanvasState.error = ""; root.sheet = true; }
+            back => { root.change-vertical-page(1); }
+        }
+    }
+    if root.sheet && root.item-type == "Box": CanvasSheet {
+        width: root.width; height: root.height;
+        center-x: page.width / 2px; center-y: page.height / 2px;
+        close => { root.sheet = false; page-focus.focus(); }
+    }
     // Keeping the sheet instantiated preserves field focus while editing.
     sheet-backdrop := Rectangle {
         width: root.width; height: root.height;
-        visible: root.sheet;
+        visible: root.sheet && root.item-type != "Box";
         opacity: root.sheet ? 1 : 0;
         animate opacity { duration: 120ms; easing: ease-out; }
         background: Theme.backdrop;

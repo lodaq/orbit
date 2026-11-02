@@ -1,0 +1,187 @@
+import { Theme } from "theme.slint";
+import { OrbitText, TextDirection, SettingsButton, AddField, Panel } from "controls.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export struct CanvasBox { id: string, name: string, description: string, x: float, y: float }
+export global CanvasState {
+    in-out property <bool> initialized;
+    in-out property <bool> enabled;
+    in-out property <[CanvasBox]> boxes;
+    in-out property <float> pan-x;
+    in-out property <float> pan-y;
+    in-out property <float> zoom: 1;
+    in-out property <bool> saving;
+    in-out property <string> error;
+    pure callback valid-name(string) -> bool;
+    callback add(string, string, float, float);
+    callback move(string, float, float);
+    callback save-view(float, float, float);
+    callback zoom-at(float, float, float);
+}
+
+export component CanvasView inherits Rectangle {
+    in property <bool> active;
+    in property <bool> locked;
+    callback add-box;
+    callback back;
+    out property <bool> dragging: root.panning || root.drag-id != "";
+    private property <bool> panning;
+    private property <string> drag-id;
+    private property <float> drag-x;
+    private property <float> drag-y;
+    private property <float> start-x;
+    private property <float> start-y;
+    private property <float> origin-x;
+    private property <float> origin-y;
+    private property <bool> view-dirty;
+    clip: true;
+
+    public function cancel() {
+        if root.panning { CanvasState.pan-x = root.origin-x; CanvasState.pan-y = root.origin-y; }
+        root.panning = false; root.drag-id = "";
+        root.flush();
+    }
+    public function flush() {
+        save-timer.stop();
+        if root.view-dirty {
+            root.view-dirty = false;
+            CanvasState.save-view(CanvasState.pan-x,CanvasState.pan-y,CanvasState.zoom);
+        }
+    }
+    function zoom(x: float, y: float, delta: float) {
+        if root.dragging { return; }
+        CanvasState.zoom-at(x,y,pow(1.0015,delta));
+        root.view-dirty = true;
+        save-timer.restart();
+    }
+    save-timer := Timer { interval: 300ms; triggered => { root.flush(); } }
+    background-hit := TouchArea {
+        enabled: root.active;
+        mouse-cursor: root.panning ? grabbing : grab;
+        scroll-event(event) => { root.zoom(self.mouse-x / 1px,self.mouse-y / 1px,event.delta-y / 1px); accept }
+        pointer-event(event) => {
+            if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                root.start-x = self.absolute-position.x / 1px + self.mouse-x / 1px;
+                root.start-y = self.absolute-position.y / 1px + self.mouse-y / 1px;
+                root.origin-x = CanvasState.pan-x; root.origin-y = CanvasState.pan-y;
+                root.panning = true;
+                save-timer.stop();
+            }
+            if event.kind == PointerEventKind.move && root.panning {
+                CanvasState.pan-x = root.origin-x + self.absolute-position.x / 1px + self.mouse-x / 1px - root.start-x;
+                CanvasState.pan-y = root.origin-y + self.absolute-position.y / 1px + self.mouse-y / 1px - root.start-y;
+            }
+            if event.button == PointerEventButton.left && event.kind == PointerEventKind.up && root.panning {
+                root.panning = false;
+                if CanvasState.pan-x != root.origin-x || CanvasState.pan-y != root.origin-y { root.view-dirty = true; }
+                root.flush();
+            }
+            if event.kind == PointerEventKind.cancel { root.cancel(); root.flush(); }
+        }
+    }
+    for box in CanvasState.boxes: Rectangle {
+        property <float> world-x: root.drag-id == box.id ? root.drag-x : box.x;
+        property <float> world-y: root.drag-id == box.id ? root.drag-y : box.y;
+        property <length> screen-x: (self.world-x * CanvasState.zoom + CanvasState.pan-x) * 1px;
+        property <length> screen-y: (self.world-y * CanvasState.zoom + CanvasState.pan-y) * 1px;
+        if root.drag-id == box.id || (self.screen-x < root.width && self.screen-x + 280px * CanvasState.zoom > 0px
+            && self.screen-y < root.height && self.screen-y + 180px * CanvasState.zoom > 0px): Rectangle {
+            x: parent.screen-x; y: parent.screen-y;
+            width: 280px * CanvasState.zoom; height: 180px * CanvasState.zoom;
+            background: Theme.widget-surface;
+            border-radius: Theme.radius-preview * CanvasState.zoom;
+            border-width: Theme.border-width; border-color: Theme.widget-border;
+            accessible-role: groupbox; accessible-label: box.name + ". " + box.description;
+            TouchArea {
+                enabled: root.active;
+                mouse-cursor: root.locked ? default : root.drag-id == box.id ? grabbing : grab;
+                scroll-event(event) => {
+                    root.zoom((self.absolute-position.x - root.absolute-position.x + self.mouse-x) / 1px,
+                        (self.absolute-position.y - root.absolute-position.y + self.mouse-y) / 1px,event.delta-y / 1px);
+                    accept
+                }
+                pointer-event(event) => {
+                    if !root.locked && event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                        root.drag-id = box.id;
+                        root.origin-x = box.x; root.origin-y = box.y;
+                        root.drag-x = box.x; root.drag-y = box.y;
+                        root.start-x = (self.absolute-position.x + self.mouse-x) / 1px;
+                        root.start-y = (self.absolute-position.y + self.mouse-y) / 1px;
+                    }
+                    if event.kind == PointerEventKind.move && root.drag-id == box.id {
+                        root.drag-x = root.origin-x + ((self.absolute-position.x + self.mouse-x) / 1px - root.start-x) / CanvasState.zoom;
+                        root.drag-y = root.origin-y + ((self.absolute-position.y + self.mouse-y) / 1px - root.start-y) / CanvasState.zoom;
+                    }
+                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.up && root.drag-id == box.id {
+                        if root.drag-x != box.x || root.drag-y != box.y { CanvasState.saving = true; CanvasState.move(box.id,root.drag-x,root.drag-y); }
+                        root.drag-id = "";
+                    }
+                    if event.kind == PointerEventKind.cancel { root.cancel(); }
+                }
+            }
+            OrbitText {
+                x: 16px * CanvasState.zoom; y: 12px * CanvasState.zoom;
+                width: parent.width - 32px * CanvasState.zoom; height: 28px * CanvasState.zoom;
+                text: box.name; color: Theme.text; font-weight: 600;
+                font-size: Theme.type-body * CanvasState.zoom; overflow: elide;
+            }
+            ScrollView {
+                x: 16px * CanvasState.zoom; y: 48px * CanvasState.zoom;
+                width: parent.width - 32px * CanvasState.zoom; height: parent.height - 64px * CanvasState.zoom;
+                enabled: root.active && root.drag-id == "";
+                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                content-width: self.visible-width;
+                content-height: max(self.visible-height, paragraphs.preferred-height);
+                paragraphs := VerticalLayout {
+                    width: parent.width; alignment: start; spacing: 0px;
+                    for line in TextDirection.lines(box.description): OrbitText {
+                        text: line; wrap: word-wrap; vertical-stretch: 0;
+                        vertical-alignment: top;
+                        color: Theme.secondary; font-size: Theme.type-control * CanvasState.zoom;
+                    }
+                }
+            }
+        }
+    }
+    HorizontalLayout {
+        x: 16px; y: 12px; height: 36px; spacing: Theme.space-3;
+        SettingsButton { label: "Back"; enabled: root.active; clicked => { root.flush(); root.back(); } }
+        SettingsButton { label: "Add box"; enabled: root.active && !root.locked; clicked => { root.flush(); root.add-box(); } }
+        OrbitText { text: round(CanvasState.zoom * 100) + "%"; color: Theme.secondary; vertical-alignment: center; }
+    }
+}
+
+export component CanvasSheet inherits Rectangle {
+    in property <float> center-x;
+    in property <float> center-y;
+    callback close;
+    private property <string> name;
+    private property <string> description;
+    function submit() {
+        if CanvasState.saving || !CanvasState.valid-name(root.name) { return; }
+        CanvasState.saving = true;
+        CanvasState.error = "";
+        CanvasState.add(root.name,root.description,root.center-x,root.center-y);
+    }
+    background: Theme.backdrop;
+    TouchArea { enabled: !CanvasState.saving; clicked => { root.close(); } }
+    panel := Panel {
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        width: min(480px,root.width - 48px); height: min(440px,root.height - 48px);
+        TouchArea { }
+        VerticalLayout {
+            padding: Theme.space-6; spacing: Theme.space-4;
+            OrbitText { text: "Add box"; color: Theme.text; font-size: Theme.type-title; font-weight: 600; }
+            name-field := AddField { label: "Name"; text <=> root.name; enabled: !CanvasState.saving; accepted => { root.submit(); } }
+            AddField { label: "Description"; text <=> root.description; multiline: true; accept-newlines: true; enabled: !CanvasState.saving; }
+            OrbitText { text: CanvasState.error; color: Theme.error; wrap: word-wrap; }
+            HorizontalLayout {
+                alignment: end; spacing: Theme.space-3;
+                SettingsButton { label: "Cancel"; enabled: !CanvasState.saving; clicked => { root.close(); } }
+                SettingsButton { label: CanvasState.saving ? "Adding…" : "Add"; enabled: !CanvasState.saving && CanvasState.valid-name(root.name); clicked => { root.submit(); } }
+            }
+        }
+    }
+    init => { name-field.focus(); }
+}

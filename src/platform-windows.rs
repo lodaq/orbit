@@ -105,6 +105,12 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
             return EventResult::Propagate;
         };
         match event {
+            winit::event::WindowEvent::MouseWheel {
+                phase: winit::event::TouchPhase::Started,
+                ..
+            } => {
+                launcher.invoke_start_page_scroll();
+            }
             winit::event::WindowEvent::ModifiersChanged(state) => modifiers = state.state(),
             winit::event::WindowEvent::KeyboardInput { event, .. }
                 if event.state == winit::event::ElementState::Pressed =>
