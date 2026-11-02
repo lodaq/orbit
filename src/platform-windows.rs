@@ -96,7 +96,7 @@ pub fn restore_after_chooser(launcher: &crate::Launcher) -> Result<(), Box<dyn s
     }
     Ok(())
 }
-pub fn float_data_chooser(_: &str) {}
+pub fn float_file_chooser(_: &str) {}
 pub fn hide_on_input(launcher: &crate::Launcher) {
     let weak = launcher.as_weak();
     let mut modifiers = winit::keyboard::ModifiersState::empty();

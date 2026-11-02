@@ -17,16 +17,15 @@ struct Backup {
 }
 
 pub fn transfer_data(import: bool) -> Result<Option<String>, String> {
-    let _chooser_guard =
-        crate::platform::float_data_chooser(if import { "Import data" } else { "Export data" });
-    let chooser = rfd::FileDialog::new().add_filter("Orbit backup", &["json"]);
+    let title = if import { "Import data" } else { "Export data" };
+    let _chooser_guard = crate::platform::float_file_chooser(title);
+    let chooser = rfd::FileDialog::new()
+        .set_title(title)
+        .add_filter("Orbit backup", &["json"]);
     let path = if import {
-        chooser.set_title("Import data").pick_file()
+        chooser.pick_file()
     } else {
-        chooser
-            .set_title("Export data")
-            .set_file_name("orbit-backup.json")
-            .save_file()
+        chooser.set_file_name("orbit-backup.json").save_file()
     };
     let Some(path) = path else { return Ok(None) };
     let result = if import {

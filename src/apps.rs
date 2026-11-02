@@ -50,6 +50,7 @@ enum Action {
     TransferData(bool),
     SaveAppearance(i32, i32, i32, usize, usize),
     SaveBackgroundFolder(String),
+    ChooseBackgroundImage,
     ChangeBackground,
     SaveDefaultSearchEngine(i32),
     SaveSmoothCursor(bool),
@@ -406,6 +407,10 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         let _ = sender.send(Action::ChangeBackground);
     });
     let sender = send.clone();
+    launcher.on_choose_background_image(move || {
+        let _ = sender.send(Action::ChooseBackgroundImage);
+    });
+    let sender = send.clone();
     let cursor_ui = launcher.as_weak();
     launcher.on_sync_native_search_cursor(move |hidden| {
         if let Some(ui) = cursor_ui.upgrade() {
@@ -622,16 +627,7 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     });
     let sender = send.clone();
     let requests_for_path = requests.clone();
-    let weak_for_path = launcher.as_weak();
     launcher.on_choose_path(move |directory| {
-        if let Some(launcher) = weak_for_path.upgrade()
-            && let Err(error) = platform::hide(&launcher)
-        {
-            launcher.set_sheet_status(error.to_string().into());
-            launcher.set_sheet_operation("".into());
-            launcher.set_busy(false);
-            return;
-        }
         let request = requests_for_path.issue();
         let _ = sender.send(Action::ChoosePath(directory, request));
     });
@@ -1663,6 +1659,23 @@ impl Apps {
                 config.background_color.clear();
                 config.save().map_err(|error| error.to_string())?;
                 self.config = config;
+                Ok(())
+            }
+            Action::ChooseBackgroundImage => {
+                if let Some(path) = platform::choose_background_image() {
+                    let (name, data) = platform::read_chosen_icon(&path.to_string_lossy())?;
+                    if read_background_image(&path).is_none() {
+                        return Err("Couldn't read background image".into());
+                    }
+                    let saved_path =
+                        platform::icon_path(&name).map_err(|error| error.to_string())?;
+                    platform::write_icon(&name, &data).map_err(|error| error.to_string())?;
+                    let mut config = self.config.clone();
+                    config.background_image = saved_path.to_string_lossy().into_owned();
+                    config.background_color.clear();
+                    config.save().map_err(|error| error.to_string())?;
+                    self.config = config;
+                }
                 Ok(())
             }
             Action::SaveShortcut(index, action, keys) => self.save_shortcut(index, action, keys),
@@ -3396,7 +3409,7 @@ fn finish(
             } else if !banner.is_empty() {
                 eprintln!("orbit: {banner}");
                 launcher.set_sheet_status(banner.into());
-            } else if operation == "choosing" {
+            } else if matches!(operation.as_str(), "choosing" | "choosing-background") {
                 launcher.set_sheet_status("".into());
             }
             launcher.set_sheet_operation("".into());
