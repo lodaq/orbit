@@ -565,7 +565,7 @@ fn update(ui: &Launcher, result: Result<Reply, String>, changed: bool) {
 }
 
 fn choose_audio(weak: &slint::Weak<Launcher>) {
-    let _guard = crate::platform::float_data_chooser("Choose Quran audio");
+    let _guard = crate::platform::float_file_chooser("Choose Quran audio");
     let path = rfd::FileDialog::new()
         .set_title("Choose Quran audio")
         .add_filter("Audio", &["mp3", "ogg", "wav", "flac", "m4a"])

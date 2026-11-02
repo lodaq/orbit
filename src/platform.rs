@@ -376,63 +376,50 @@ fn hyprland(command: &str) -> io::Result<String> {
     Ok(reply)
 }
 
-pub struct DataChooserGuard(std::sync::Arc<std::sync::atomic::AtomicBool>);
+pub struct FileChooserGuard {
+    lua: bool,
+}
 
-impl Drop for DataChooserGuard {
+impl Drop for FileChooserGuard {
     fn drop(&mut self) {
-        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        let command = if self.lua {
+            "eval hl.window_rule({name = \"orbit-file-chooser\", enabled = false})"
+        } else {
+            "keyword windowrule[orbit-file-chooser]:enable 0"
+        };
+        if let Err(error) = hyprland(command) {
+            eprintln!("orbit file chooser: {error}");
+        }
     }
 }
 
-pub fn float_data_chooser(title: &str) -> DataChooserGuard {
-    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let stopped = stop.clone();
-    let title = title.to_owned();
-    std::thread::spawn(move || {
-        let mut placed = String::new();
-        while !stopped.load(std::sync::atomic::Ordering::Relaxed) {
-            if let Ok(clients) = hyprland("j/clients")
-                && let Ok(clients) = serde_json::from_str::<Vec<serde_json::Value>>(&clients)
-            {
-                let fullscreen = clients.iter().any(|client| {
-                    client["pid"].as_u64() == Some(std::process::id().into())
-                        && client["fullscreen"].as_u64() == Some(2)
-                });
-                if let Some(client) = clients.iter().find(|client| {
-                    client["class"] == "xdg-desktop-portal-gtk" && client["title"] == title
-                }) && let Some(address) = client["address"].as_str()
-                {
-                    let window = format!("address:{address}");
-                    let new_window = placed != address;
-                    if new_window {
-                        let _ = hyprland(&format!(
-                            "dispatch hl.dsp.window.float({{action = \"set\", window = \"{window}\"}})"
-                        ));
-                        let _ = hyprland(&format!(
-                            "dispatch hl.dsp.window.resize({{x = 1100, y = 760, window = \"{window}\"}})"
-                        ));
-                        let _ = hyprland(&format!(
-                            "dispatch hl.dsp.window.center({{window = \"{window}\"}})"
-                        ));
-                        placed = address.to_owned();
-                    }
-                    // Portal mapping and focus changes can each clear fullscreen.
-                    if !fullscreen || new_window {
-                        let _ = fullscreen_launcher();
-                        let _ = hyprland(&format!(
-                            "dispatch hl.dsp.window.alter_zorder({{mode = \"top\", window = \"{window}\"}})"
-                        ));
-                        let _ =
-                            hyprland(&format!("dispatch hl.dsp.focus({{window = \"{window}\"}})"));
-                    }
-                } else if !fullscreen {
-                    let _ = fullscreen_launcher();
-                }
+pub fn float_file_chooser(title: &str) -> FileChooserGuard {
+    // Apply placement before mapping so the chooser never tiles or clears Orbit's fullscreen.
+    let title_match = serde_json::json!(format!("^{title}$")).to_string();
+    let command = format!(
+        "eval hl.window_rule({{name = \"orbit-file-chooser\", enabled = true, match = {{class = \"^xdg-desktop-portal-gtk$\", title = {title_match}}}, float = true, size = {{1100, 760}}, center = true, no_anim = true}})"
+    );
+    let lua = hyprland(&command).is_ok_and(|reply| reply.trim() == "ok");
+    if !lua {
+        for (field, value) in [
+            ("match:class", "^xdg-desktop-portal-gtk$".to_owned()),
+            ("match:title", format!("^{title}$")),
+            ("float", "1".to_owned()),
+            ("size", "1100 760".to_owned()),
+            ("center", "1".to_owned()),
+            ("no_anim", "1".to_owned()),
+            ("enable", "1".to_owned()),
+        ] {
+            match hyprland(&format!(
+                "keyword windowrule[orbit-file-chooser]:{field} {value}"
+            )) {
+                Ok(reply) if reply.trim() == "ok" => (),
+                Ok(reply) => eprintln!("orbit file chooser: {reply}"),
+                Err(error) => eprintln!("orbit file chooser: {error}"),
             }
-            std::thread::sleep(Duration::from_millis(50));
         }
-    });
-    DataChooserGuard(stop)
+    }
+    FileChooserGuard { lua }
 }
 
 fn cursor_monitor() -> Result<String, Box<dyn std::error::Error>> {
@@ -682,7 +669,10 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
                                 && launcher.get_launcher_visible()
                                 && !launcher.get_data_busy()
                                 && !launcher.get_icon_busy()
-                                && launcher.get_sheet_operation() != "choosing"
+                                && !matches!(
+                                    launcher.get_sheet_operation().as_str(),
+                                    "choosing" | "choosing-background"
+                                )
                                 && let Err(error) = self::hide(&launcher)
                             {
                                 eprintln!("orbit: {error}");

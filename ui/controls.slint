@@ -70,7 +70,7 @@ export component AddOption inherits Rectangle {
     border-color: root.add-style ? (focused || selected ? Theme.add-focus : Theme.add-border) : focused ? (root.settings-style ? Theme.settings-icon-accent : Theme.focus) : root.settings-style && root.destructive ? Theme.settings-danger-border : (selected ? (root.settings-style ? Theme.settings-border-control : Theme.primary) : (root.settings-style ? Theme.settings-border-control : Theme.border));
     opacity: enabled || settings-style || add-style ? 1 : 0.45;
     background: root.menu-style ? (root.selected ? Theme.selection : root.hovered ? Theme.raised : transparent) : root.add-style ? (root.source-tab ? transparent : !root.enabled ? Theme.settings-disabled-bg : root.primary ? Theme.add-primary : root.selected ? Theme.add-selected : root.hovered ? Theme.add-hover : Theme.add-field) : root.settings-style
-        ? !enabled ? Theme.settings-disabled-bg
+        ? !enabled && !root.navigation-style ? Theme.settings-disabled-bg
             : hit-area.pressed ? Theme.settings-bg-inset
             : destructive ? Theme.settings-danger-bg
             : primary ? Theme.settings-primary
@@ -94,7 +94,7 @@ export component AddOption inherits Rectangle {
         width: root.type-tile ? parent.width - 4px : max(0px, parent.width - self.x - (root.settings-style && root.width <= 40px ? 0px : root.trailing == "" ? Theme.space-3 : root.settings-style || root.menu-style ? 32px : 72px));
         height: root.type-tile ? 22px : parent.height;
         text: root.label;
-        color: root.add-style ? (!root.enabled ? Theme.add-secondary : root.selected || root.primary ? white : Theme.add-text) : root.settings-style && !root.enabled ? Theme.settings-disabled-text : root.dashed-style ? Theme.settings-text-accent : root.navigation-style && !root.selected ? Theme.settings-text-muted : root.destructive ? (root.settings-style ? Theme.settings-danger-text : Theme.error) : root.primary ? Theme.on-primary : (root.settings-style ? Theme.settings-text : Theme.text);
+        color: root.add-style ? (!root.enabled ? Theme.add-secondary : root.selected || root.primary ? white : Theme.add-text) : root.settings-style && !root.enabled && !root.navigation-style ? Theme.settings-disabled-text : root.dashed-style ? Theme.settings-text-accent : root.navigation-style && !root.selected ? Theme.settings-text-muted : root.destructive ? (root.settings-style ? Theme.settings-danger-text : Theme.error) : root.primary ? Theme.on-primary : (root.settings-style ? Theme.settings-text : Theme.text);
         font-size: (root.settings-style ? Theme.type-body : Theme.type-control);
         font-weight: root.selected || root.primary ? 600 : 500;
         horizontal-alignment: root.menu-style || root.full-width || root.trailing != "" ? (TextDirection.is-rtl(self.text) ? right : left) : center;

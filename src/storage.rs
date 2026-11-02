@@ -302,7 +302,13 @@ fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
 }
 
 pub fn choose_path(directory: bool) -> Option<PathBuf> {
-    let dialog = rfd::FileDialog::new();
+    let title = if directory {
+        "Choose directory"
+    } else {
+        "Choose file"
+    };
+    let _guard = crate::platform::float_file_chooser(title);
+    let dialog = rfd::FileDialog::new().set_title(title);
     if directory {
         dialog.pick_folder()
     } else {
@@ -332,9 +338,18 @@ fn is_icon(data: &[u8], extension: &str) -> bool {
 }
 
 pub fn choose_icon() -> Option<PathBuf> {
+    let _guard = crate::platform::float_file_chooser("Choose icon");
     rfd::FileDialog::new()
         .set_title("Choose icon")
         .add_filter("Icon", &["png", "jpg", "jpeg", "svg", "ico"])
+        .pick_file()
+}
+
+pub fn choose_background_image() -> Option<PathBuf> {
+    let _guard = crate::platform::float_file_chooser("Choose background image");
+    rfd::FileDialog::new()
+        .set_title("Choose background image")
+        .add_filter("Image", &["png", "jpg", "jpeg", "svg"])
         .pick_file()
 }
 

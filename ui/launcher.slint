@@ -3115,7 +3115,7 @@ export component Launcher inherits Window {
                     SettingsField { label: "Background color (hex)"; placeholder: "#RRGGBB"; text <=> root.background-color-input; enabled: !root.busy; }
                     HorizontalLayout { spacing: 10px;
                         SettingsButton { label: "Save color"; option-width: 120px; primary: true; enabled: !root.busy; clicked => { root.busy = true; root.save-background-color(root.background-color-input); } }
-                        SettingsButton { label: "Choose image"; option-width: 136px; enabled: !root.busy; clicked => { root.busy = true; root.sheet-operation = "choosing"; root.choose-background-image(); } }
+                        SettingsButton { label: "Choose image"; option-width: 136px; enabled: !root.busy; clicked => { root.busy = true; root.sheet-operation = "choosing-background"; root.choose-background-image(); } }
                         Rectangle { horizontal-stretch: 1; }
                     }
                     SettingsButton { label: "Reset background"; option-width: 156px; enabled: !root.busy; clicked => { root.busy = true; root.reset-background(); } }
