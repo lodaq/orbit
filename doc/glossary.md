@@ -4,7 +4,25 @@ The user approved `Orbit_Desktop_Launcher_UX_Spec_v2.md` on 2026-10-20 as author
 
 # Orbit glossary
 
-For v2 desktop layout terms, including Item Size, Item Gap, Grid Position, Widget Gallery, widget footprints, placement preview, insertion edge, folder center, Move to Page and Remove from Home, follow `Orbit_Desktop_Launcher_UX_Spec_v2.md`. These terms are approved alongside the terms below.
+## Robots
+
+| Term | Meaning |
+|---|---|
+| **Robot** | A persistent agent with a selected project, model, reusable Role, Skills and enabled MCP tools. First release permits one executing Robot at a time. |
+| **Role** | Named reusable instructions, copied into a conversation when it starts. |
+| **Project** | The local directory where a Robot works; it is a working directory, not a security boundary. |
+| **Workbench** | The Robot's layer over the Canvas, containing project context, conversations, progress, tool activity and results. |
+| **Conversation** | Persistent commands, replies and tool activity, with the starting model and Role instructions retained when resumed. |
+| **Rating** | Optional one-to-five-star feedback saved for a conversation. |
+| **Command queue** | Accepted commands waiting for the single Robot execution worker, in submission order. |
+| **Interrupted** | A saved command that was queued or running when the worker stopped; it requires a new explicit command and is never replayed automatically. |
+| **Skill** | An installed Codex `SKILL.md` workflow selected for a Robot to follow using Orbit's tools. |
+| **MCP server** | A configured local stdio process exposing tools; explicitly enabled tools run automatically. |
+| **Tool activity** | The saved record of a tool request, its outcome and any approval decision. A historical approval does not authorize execution. |
+| **Team** | A later feature combining a lead and specialist Robots working sequentially in one project. |
+
+
+For v2 desktop layout terms, including Item Size, Item Gap, Widget Gallery, widget footprints, placement preview, insertion edge, folder center and Remove from Home, follow `Orbit_Desktop_Launcher_UX_Spec_v2.md`. Compatible terms are approved alongside the definitions below; the single Canvas amendment in spec.md supersedes page terminology.
 
 One word for one thing. If a word is not in this file, do not use it in the UI, the code or the docs.
 
@@ -13,12 +31,12 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | Term | Meaning |
 |---|---|
 | **Orbit** | The application. |
-| **Launcher** | The fullscreen view with pages and the dock. Shown by `orbit toggle`. Hidden by launching an app, pressing Esc, toggling again, losing focus, or the Close button. It always opens with all folders closed. |
+| **Launcher** | The fullscreen view with the Canvas and the dock. Shown by `orbit toggle`. Hidden by launching an app, pressing Esc, toggling again, losing focus, or the Close button. It always opens with all folders closed. |
 | **Daemon** | The background process that starts at login and keeps Orbit ready, so showing the launcher is instant. |
 | **Settings** | The dark panel with General, Appearance, Shortcuts, Search bar and Back. The Back button or Esc returns to the launcher. |
-| **Background** | The color or image behind the pages. Reset restores the supplied radial background. |
+| **Background** | The color or image behind the Canvas. Reset restores the supplied radial background. |
 | **Background color** | A solid Home Screen background entered as a six-digit hex value. |
-| **Background image** | A PNG, JPEG or SVG shown behind the Home Screen pages. |
+| **Background image** | A PNG, JPEG or SVG shown behind the Canvas. |
 | **Background images folder** | The folder used by the Home Screen image-change button. |
 | **Top bar** | The row at the top of the launcher: the Orbit logo and name on the left, the Settings and Close icons on the right. |
 
@@ -26,8 +44,8 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | Term | Meaning |
 |---|---|
-| **Item** | An app, website, file, directory or folder. Anything that can sit on a page. |
-| **Item type** | The kind of item: App, Website, File, Directory or Folder. |
+| **Item** | An App, Website, File, Directory, Folder or Widget that can be arranged on the Canvas. |
+| **Item type** | The kind of item: App, Website, File, Directory, Folder or Widget. |
 | **App** | A tile that starts something. Has a **name**, an **icon** and a **launch**. It has no color. |
 | **Launch** | How an app starts: a **custom command**, an **installed app** or a **System action**. |
 | **App source** | One of the choices for adding an App: Actions, Installed apps or Custom command. |
@@ -58,12 +76,9 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **File search path** | A folder searched recursively for files by Search anything. |
 | **Directory search path** | A folder whose immediate directories appear in Search anything. |
 | **Folder** | Holds launchable shortcuts: Apps, Websites, Files and Directories. Opens like an iOS folder. Cannot contain other folders. Its tile shows a small preview of its apps. |
-| **Page** | One screen of items, like a phone home screen page. Pages have no names. Maximum 9 horizontal pages, plus one fixed page above and one below. Leaving an empty page does not remove it. |
-| **Page swipe** | Dragging an empty area of a page horizontally or vertically to open the neighboring page. |
-| **Grid** | The rows and columns of tiles on a page or inside an open folder. |
+| **Grid** | The rows and columns of tiles inside an open Folder. |
 | **Tile** | The rounded square that shows one item (an app, website, file, directory or folder). |
-| **Page dots** | The row of dots that shows which page is open, with a + control to add a page. |
-| **Add item** | The command in the empty-page-space Context menu that opens the Add item sheet. New items use automatic free-space placement. |
+| **Add item** | The command in the empty-Canvas-space Context menu that opens the Add item sheet. New items use automatic free-space placement. |
 
 ## The dock
 
@@ -71,7 +86,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 |---|---|
 | **Dock** | The semi-transparent horizontal bar at the bottom. It shows 48 px icons without names, Recent and Pinned sections, and scrolls horizontally when its contents overflow. Hovering magnifies the icon under the pointer and its neighbours and slides them apart. |
 | **Recent** | Successfully opened items, newest first. Up to five newest unpinned Apps, Websites, Files or Directories appear on the left side of the dock; folders are excluded. |
-| **Pinned** | Up to ten items you chose to show in the dock. Pinning is a flag: the item also stays on its page. Displayed in saved pin order. |
+| **Pinned** | Up to ten items you chose to show in the dock. Pinning gives the Dock exclusive ownership of the item’s placement. Displayed in saved pin order. |
 | **Separator** | The thin vertical line between Recent and Pinned when both are present. |
 
 ## Icons
@@ -89,7 +104,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | Term | Meaning |
 |---|---|
-| **Context menu** | The small menu that appears when you right-click an item or empty page space. Empty space offers Add item, Add page and Delete page; items offer their own actions, including Delete. |
+| **Context menu** | The small menu that appears when you right-click an item or empty Canvas space. Empty Canvas space offers Add item and Show all items; items offer their own actions, including Delete. |
 | **Sheet** | A form that appears over the launcher with a dimmed backdrop behind it: Add item, Edit app, Edit website, Edit file, Edit directory or Edit folder. (Developers also call these *modals*. In Orbit they are always called sheets.) |
 | **Alert** | A small confirmation box with two buttons. Used for Delete. |
 | **Panel** | The rounded box that holds the content of a sheet, an alert, the Icon picker or an open folder. |
@@ -99,7 +114,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Stepper** | A pair of minus and plus buttons that change a number, such as the font size in Settings. |
 | **Focus ring** | The outline drawn around the item the keyboard is on. |
 | **Tooltip** | The name shown when you hover or focus a dock icon. |
-| **Filter box** | The small text field at the top of the Icon picker and of the Installed apps list. It narrows the list as you type. Search anything searches page items, System actions, the cached Installed apps list and configured file and directory search paths. |
+| **Filter box** | The small text field at the top of the Icon picker and of the Installed apps list. It narrows the list as you type. Search anything searches Canvas items, System actions, the cached Installed apps list and configured file and directory search paths. |
 | **Banner** | A short inline error, for example when a launch fails. The launcher stays open. |
 | **Toast** | A short floating message that confirms an action or reports a problem, then closes automatically. |
 
@@ -115,7 +130,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | Old word | Use instead |
 |---|---|
-| Slide, slice | Page |
+| Slide, slice, page | Canvas |
 | Group | Folder |
 | Keybinding, key binding, hotkey | Shortcut |
 | Modal, model, dialog, popup | Sheet (forms), Alert (confirmations), Context menu (right-click) |
@@ -130,7 +145,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | Term | Meaning |
 |---|---|
-| **Search anything** | Searches saved page items, System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Ctrl+K focuses the field. |
+| **Search anything** | Searches saved Canvas items, System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Ctrl+K focuses the field. |
 | **Search engine** | The website used for a web search when no local items match Search anything. Choose it in Settings → Search bar → General. |
 | **Prefix** | A named Search anything rule with a Token and selected Action. Tab or Space activates a matching Token; Enter sends the remaining search text to its Action. |
 | **Token** | The text that activates a Prefix in Search anything. |
@@ -142,8 +157,6 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Prefixes** | Settings tab for creating, editing and selecting Prefix Actions. |
 | **Actions** | Settings tab for creating and editing reusable Actions. |
 | **Default search engine** | The search engine used when Enter is pressed with no local matches; the select beside Search anything opens the engine list. |
-| **Add page** | Creates an empty page from the empty-space Context menu or the + beside the page dots. |
-| **Switch pages** | Footer hint for Left and Right. |
 | **Back to desktop** | Footer hint for Esc. |
 
 | **Choose icon** | Opens the native file chooser for a saved icon image. |
@@ -167,11 +180,9 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Motivation** | Local collection of motivational content. |
 | **Affirmations** | Local collection used by Affirmation. |
 | **Vocabulary** | Local collection of words and their details. |
-| **Delete page** | Remove the current page after confirmation and keep its items on a neighboring page. |
 
-| **Page margin** | Equal space around each side of a page, adjustable in Settings. |
-| **Item size** | The square page tile width and height in pixels, adjustable in Settings. |
-| **Item Gap** | The spacing between page and folder tiles in pixels, adjustable from 0 to 64 in Settings. |
+| **Item size** | The square Canvas tile width and height in pixels, adjustable in Settings. |
+| **Item Gap** | The spacing between Canvas and Folder tiles in pixels, adjustable from 0 to 64 in Settings. |
 
 | **Search bar** | Settings tab containing General search settings, Prefixes and Actions. |
 
@@ -183,7 +194,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | **Excluded from file search** | Names or patterns skipped when indexing files under File search paths. Matching directory names also stop recursive descent; Directory search paths and saved items are unaffected. |
 
-| **Lock layout** | The top-bar padlock that prevents changes to page, folder and pinned dock arrangement, additions, deletions and sizing. Its state is saved for all pages. |
+| **Lock layout** | The top-bar padlock that prevents changes to Canvas, Folder and pinned dock arrangement, additions, deletions and sizing. Its state is saved for the whole Canvas. |
 | **Unlock layout** | The same padlock action that permits layout changes again. |
 
 | **Automatic** | Website icon option that fetches and previews the URL's icon before Save. |
@@ -239,10 +250,18 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | Term | Meaning |
 |---|---|
-| **Canvas** | The top fixed page’s freely pannable and zoomable space for Boxes. |
-| **Box** | A solid 280 × 180 rectangle with a required Name and optional Description, stored separately from launcher Items. |
-| **Add box** | Opens the Name and Description sheet; Add places the Box at the visible canvas center. |
-| **Description** | Optional multiline Box text, displayed with content-aware direction and scrollable when long. |
+| **Canvas** | The single freely pannable and zoomable space holding launcher Items and Widgets. |
 | **Pan** | Move the canvas view by dragging empty space. |
 | **Zoom** | Change the canvas scale around the pointer, from 25% to 200%. |
-| **Back** | On the Canvas, return to the horizontal page previously visited. |
+| **Canvas speed** | The Settings → General multiplier for Pan and Zoom sensitivity, from 1× to 10×; defaults to 5×. |
+
+| **Widget** | An Orbit tool arranged on the Canvas, with its own content and actions. Widgets cannot be placed in a Folder or the Dock. |
+| **Show all items** | Fits every arranged Canvas Item within the visible area. |
+
+Canvas replaces the retired page layout. Boxes and their Add box command are removed. Their former text is retained only in the original migration backup.
+
+| **Profile** | A Robot's saved project, provider/model, Role, Skills and MCP configuration. |
+| **Queue command** | Submit a command for the selected Robot; acceptance appears after it is saved. |
+| **Approve once** | Authorize only the displayed local action for its owning conversation. |
+| **Cancel work** | Stop pending work for the selected conversation; an already executing operation can finish or time out. |
+| **Credential reference** | A name pointing to a secret in the system credential store; the value is excluded from backups. |

@@ -3,7 +3,7 @@ mod search_cursor;
 use slint::ComponentHandle;
 use std::{path::Path, time::Duration};
 slint::slint! {
-    export { Launcher, PrefixMatch } from "../ui/launcher.slint";
+    export { Launcher, PrefixMatch, CanvasState } from "../ui/launcher.slint";
     import { SmoothCaret } from "../ui/controls.slint";
     import { Theme } from "../ui/theme.slint";
     export component NativeCaretProbe inherits Window {
@@ -244,47 +244,84 @@ fn cursor_captures_and_search_wiring() {
 }
 
 #[test]
-fn horizontal_touchpad_scroll_changes_one_page_per_swipe() {
+fn canvas_context_anchor_uses_world_coordinates_after_pan_and_zoom() {
+    use std::{cell::Cell, rc::Rc};
     i_slint_backend_testing::init_no_event_loop();
     let launcher = Launcher::new().unwrap();
     launcher
         .window()
         .set_size(slint::LogicalSize::new(1600., 1000.));
-    launcher.set_page_count(3);
-    launcher.set_current_page(1);
     launcher.set_launcher_visible(true);
-    let weak = launcher.as_weak();
-    launcher.on_open_page(move |index| {
-        let ui = weak.upgrade().unwrap();
-        ui.set_current_page(index);
-        ui.set_busy(false);
-    });
+    let view = launcher.global::<CanvasState>();
+    view.set_pan_x(120.);
+    view.set_pan_y(-60.);
+    view.set_zoom(0.5);
+    let anchor = Rc::new(Cell::new(None));
+    let recorded = anchor.clone();
+    launcher.on_set_add_position(move |x, y| recorded.set(Some((x, y))));
     launcher.show().unwrap();
-    let scroll = |x, y| {
+    advance(0);
+    let position = slint::LogicalPosition::new(1000., 500.);
+    for event in [
+        slint::platform::WindowEvent::PointerPressed {
+            position,
+            button: slint::platform::PointerEventButton::Right,
+        },
+        slint::platform::WindowEvent::PointerReleased {
+            position,
+            button: slint::platform::PointerEventButton::Right,
+        },
+    ] {
+        launcher.window().dispatch_event(event);
+    }
+    assert_eq!(anchor.get(), Some((1760., 1120.)));
+}
+
+#[test]
+fn escape_cancels_empty_space_pan_while_locked_or_unlocked() {
+    use std::{cell::Cell, rc::Rc};
+    i_slint_backend_testing::init_no_event_loop();
+    let launcher = Launcher::new().unwrap();
+    launcher.set_canvas_speed(1);
+    launcher
+        .window()
+        .set_size(slint::LogicalSize::new(1600., 1000.));
+    launcher.set_launcher_visible(true);
+    let saves = Rc::new(Cell::new(0));
+    let recorded = saves.clone();
+    let view = launcher.global::<CanvasState>();
+    view.on_save_view(move |_, _, _| recorded.set(recorded.get() + 1));
+    launcher.show().unwrap();
+    for locked in [false, true] {
+        launcher.set_layout_locked(locked);
+        view.set_pan_x(120.);
+        view.set_pan_y(-60.);
+        view.set_zoom(0.5);
+        advance(0);
         launcher
             .window()
-            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
-                position: slint::LogicalPosition::new(800., 400.),
-                delta_x: x,
-                delta_y: y,
+            .dispatch_event(slint::platform::WindowEvent::PointerPressed {
+                position: slint::LogicalPosition::new(800., 450.),
+                button: slint::platform::PointerEventButton::Left,
             });
-    };
-    advance(0);
-    scroll(0., -1.);
-    scroll(-10., 1.);
-    assert_eq!(launcher.get_current_page(), 1);
-    scroll(-35., 1.);
-    assert_eq!(launcher.get_current_page(), 2);
-    advance(240);
-    scroll(-120., 0.);
-    assert_eq!(launcher.get_current_page(), 2);
-    advance(400);
-    scroll(60., 0.);
-    assert_eq!(launcher.get_current_page(), 1);
-    advance(400);
-    scroll(60., 0.);
-    assert_eq!(launcher.get_current_page(), 0);
-    advance(400);
-    scroll(60., 0.);
-    assert_eq!(launcher.get_current_page(), 0);
+        launcher
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(600., 550.),
+            });
+        assert_eq!((view.get_pan_x(), view.get_pan_y()), (-80., 40.));
+        launcher.invoke_close_top_layer();
+        launcher
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::PointerReleased {
+                position: slint::LogicalPosition::new(600., 550.),
+                button: slint::platform::PointerEventButton::Left,
+            });
+        advance(400);
+        assert_eq!(
+            (view.get_pan_x(), view.get_pan_y(), view.get_zoom()),
+            (120., -60., 0.5)
+        );
+        assert_eq!(saves.get(), 0, "a cancelled pan must not save");
+    }
 }

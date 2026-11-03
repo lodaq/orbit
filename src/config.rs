@@ -1,30 +1,38 @@
 use crate::platform;
 use serde::{Deserialize, Serialize};
 
-pub const PINNED_LIMIT: usize = 10;
+pub const PINNED_LIMIT: usize = 15;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Config {
+    #[serde(skip)]
+    save_blocked: bool,
+    #[serde(skip)]
+    migration_original: Option<Vec<u8>>,
     #[serde(default)]
     pub canvas: crate::canvas::Canvas,
+    #[serde(default = "legacy_version")]
     version: u32,
     #[serde(default)]
     pub positions: std::collections::BTreeMap<String, crate::spatial::Rect>,
-    #[serde(default = "default_columns")]
-    pub columns: usize,
-    #[serde(default = "default_rows")]
-    pub rows: usize,
     #[serde(default)]
-    pub active_page: usize,
-    pub pages: Vec<Page>,
+    pub items: Vec<Item>,
+    #[serde(default, rename = "pages", skip_serializing)]
+    legacy_pages: Vec<LegacyPage>,
+    #[serde(default = "default_columns", rename = "columns", skip_serializing)]
+    legacy_columns: usize,
+    #[serde(default = "default_rows", rename = "rows", skip_serializing)]
+    legacy_rows: usize,
+    #[serde(default, rename = "active_page", skip_serializing)]
+    legacy_active_page: usize,
     #[serde(default)]
     pub pinned: Vec<String>,
-    #[serde(default = "default_page_margin")]
-    pub page_margin: i32,
     #[serde(default = "default_item_size")]
     pub item_size: i32,
     #[serde(default = "default_grid_gap")]
     pub grid_gap: i32,
+    #[serde(default = "default_canvas_speed")]
+    pub canvas_speed: i32,
     #[serde(default)]
     pub background_color: String,
     #[serde(default)]
@@ -92,21 +100,24 @@ pub struct Prefix {
     pub action_id: String,
 }
 
-fn is_horizontal(vertical: &i8) -> bool {
-    *vertical == 0
+#[derive(Clone, Deserialize, Serialize)]
+struct LegacyPage {
+    #[serde(default)]
+    vertical: i8,
+    items: Vec<Item>,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
-pub struct Page {
-    #[serde(default, skip_serializing_if = "is_horizontal")]
-    pub vertical: i8,
-    #[serde(default = "new_page_id")]
-    pub id: String,
-    pub items: Vec<Item>,
+fn legacy_version() -> u32 {
+    1
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub enum Item {
+    Robot {
+        id: String,
+        name: String,
+        profile: String,
+    },
     Widget {
         id: String,
         name: String,
@@ -234,7 +245,7 @@ impl Item {
                 icon,
                 path,
             } => (id, name, icon, Launch::Directory(path.clone())),
-            Self::Folder { .. } | Self::Widget { .. } => return None,
+            Self::Folder { .. } | Self::Widget { .. } | Self::Robot { .. } => return None,
         };
         Some(App {
             id: id.clone(),
@@ -277,7 +288,8 @@ impl Item {
             | Self::File { name, .. }
             | Self::Directory { name, .. }
             | Self::Folder { name, .. }
-            | Self::Widget { name, .. } => name,
+            | Self::Widget { name, .. }
+            | Self::Robot { name, .. } => name,
         }
     }
 
@@ -288,7 +300,8 @@ impl Item {
             | Self::File { id, .. }
             | Self::Directory { id, .. }
             | Self::Folder { id, .. }
-            | Self::Widget { id, .. } => id,
+            | Self::Widget { id, .. }
+            | Self::Robot { id, .. } => id,
         }
     }
 }
@@ -300,14 +313,14 @@ fn default_rows() -> usize {
     1080
 }
 
-fn default_page_margin() -> i32 {
-    10
-}
 fn default_item_size() -> i32 {
     128
 }
 fn default_grid_gap() -> i32 {
     16
+}
+fn default_canvas_speed() -> i32 {
+    5
 }
 
 fn default_search_engine() -> String {
@@ -386,21 +399,20 @@ pub fn default_file_search_exclusions() -> Vec<String> {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            save_blocked: false,
+            migration_original: None,
             canvas: Default::default(),
             version: 5,
             positions: Default::default(),
-            columns: default_columns(),
-            rows: default_rows(),
-            active_page: 0,
-            pages: vec![Page {
-                vertical: 0,
-                id: crate::config::new_page_id(),
-                items: Vec::new(),
-            }],
+            items: Vec::new(),
+            legacy_pages: Vec::new(),
+            legacy_columns: default_columns(),
+            legacy_rows: default_rows(),
+            legacy_active_page: 0,
             pinned: Vec::new(),
-            page_margin: default_page_margin(),
             item_size: default_item_size(),
             grid_gap: default_grid_gap(),
+            canvas_speed: default_canvas_speed(),
             background_color: String::new(),
             background_image: String::new(),
             background_folder: "/home/sebaq/Pictures/aesthetic-wallpapers/images".into(),
@@ -747,57 +759,26 @@ impl Config {
         changed
     }
 
-    pub fn horizontal_pages(&self) -> usize {
-        self.pages
-            .iter()
-            .take_while(|page| page.vertical == 0)
-            .count()
-    }
-
-    pub fn insert_page(&mut self) -> usize {
-        let index = self.horizontal_pages();
-        self.pages.insert(
-            index,
-            Page {
-                vertical: 0,
-                id: new_page_id(),
-                items: Vec::new(),
-            },
-        );
-        if self.active_page >= index {
-            self.active_page += 1;
-        }
-        index
-    }
-
-    pub fn ensure_vertical_pages(&mut self) {
-        if self.pages.iter().all(|page| page.vertical == 0) {
-            for vertical in [-1, 1] {
-                self.pages.push(Page {
-                    vertical,
-                    id: new_page_id(),
-                    items: Vec::new(),
-                });
-            }
-        }
-    }
-
-    pub fn remove_page(&mut self, index: usize) -> Option<usize> {
-        if self.horizontal_pages() <= 1 || index >= self.horizontal_pages() {
-            return None;
-        }
-        let removed = self.pages.remove(index);
-        let destination = index.saturating_sub(1);
-        self.pages[destination].items.extend(removed.items);
-        Some(destination)
-    }
-
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut saved = self.clone();
-        saved.version = 4;
-        crate::spatial::reconcile(&mut saved).map_err(std::io::Error::other)?;
-        platform::write_config(&serde_json::to_vec_pretty(&saved)?)?;
+        platform::write_config(&self.saved_bytes(&crate::storage::config_path()?)?)?;
         Ok(())
+    }
+
+    fn saved_bytes(&self, path: &std::path::Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        if self.save_blocked {
+            return Err("Couldn't load config.json; restart Orbit before saving changes".into());
+        }
+        let mut saved = self.clone();
+        saved.version = 5;
+        crate::spatial::reconcile(&mut saved).map_err(std::io::Error::other)?;
+        if !saved.valid() {
+            return Err("Invalid Canvas configuration".into());
+        }
+        let data = serde_json::to_vec_pretty(&saved)?;
+        if let Some(original) = &self.migration_original {
+            migration_backup(path, original)?;
+        }
+        Ok(data)
     }
 
     pub fn valid(&self) -> bool {
@@ -828,7 +809,11 @@ impl Config {
             return false;
         }
         let mut ids = std::collections::HashSet::new();
-        for item in self.pages.iter().flat_map(|page| &page.items) {
+        for item in self
+            .items
+            .iter()
+            .chain(self.legacy_pages.iter().flat_map(|page| &page.items))
+        {
             if item.id().is_empty() || !ids.insert(item.id()) {
                 return false;
             }
@@ -886,28 +871,31 @@ impl Config {
                 }
             }
         }
-        let limit = if self.version >= 3 { 32768 } else { 128 };
-        if self.positions.values().any(|rect| {
-            rect.row > limit
-                || rect.col > limit
-                || !(1..=limit).contains(&rect.width)
-                || !(1..=limit).contains(&rect.height)
-        }) {
+        if self.positions.values().any(|rect| !rect.valid()) {
             return false;
         }
         self.canvas.valid()
             && (1..=5).contains(&self.version)
-            && (1..=limit).contains(&self.columns)
-            && (1..=limit).contains(&self.rows)
-            && (1..=9).contains(&self.horizontal_pages())
-            && (self.pages.len() == self.horizontal_pages()
-                || (self.pages.len() == self.horizontal_pages() + 2
-                    && self.pages[self.horizontal_pages()].vertical == -1
-                    && self.pages[self.horizontal_pages() + 1].vertical == 1))
-            && crate::shortcuts::valid(&self.shortcuts)
-            && (0..=64).contains(&self.page_margin)
+            && (self.legacy_pages.is_empty() || self.items.is_empty())
+            && (self.version >= 5
+                || (!self.legacy_pages.is_empty()
+                    && self.legacy_columns > 0
+                    && self.legacy_rows > 0))
+            && self
+                .legacy_pages
+                .iter()
+                .all(|page| (-1..=1).contains(&page.vertical))
+            && crate::shortcuts::valid(
+                &self
+                    .shortcuts
+                    .iter()
+                    .filter(|entry| !matches!(entry.action, 10 | 11))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
             && (80..=240).contains(&self.item_size)
             && (0..=64).contains(&self.grid_gap)
+            && (1..=10).contains(&self.canvas_speed)
             && SEARCH_ENGINES
                 .iter()
                 .any(|(id, _)| *id == self.default_search_engine)
@@ -917,16 +905,23 @@ impl Config {
 pub fn load() -> (Config, String) {
     match read() {
         Ok(result) => result,
+        // An unreadable or unmigratable original must never be replaced by the empty fallback.
         Err(error) => (
-            Config::default(),
+            Config {
+                save_blocked: true,
+                ..Default::default()
+            },
             format!("Couldn't read or save config.json: {error}"),
         ),
     }
 }
 
-fn merge_remembrances(config: &mut Config) -> Result<bool, Box<dyn std::error::Error>> {
+fn merge_remembrances(
+    config: &mut Config,
+    progress: Option<&std::path::Path>,
+) -> Result<bool, Box<dyn std::error::Error>> {
     let mut pairs = Vec::new();
-    for page in &config.pages {
+    for page in &config.legacy_pages {
         let morning: Vec<_> = page
             .items
             .iter()
@@ -945,15 +940,16 @@ fn merge_remembrances(config: &mut Config) -> Result<bool, Box<dyn std::error::E
         });
         pairs.extend(morning.into_iter().zip(evening));
     }
-    if !pairs.is_empty() {
-        let path = crate::storage::config_path()?.with_file_name("widgets.db");
-        let db = crate::widget_data::open(&path).map_err(std::io::Error::other)?;
+    if !pairs.is_empty()
+        && let Some(path) = progress
+    {
+        let db = crate::widget_data::open(path).map_err(std::io::Error::other)?;
         for (keep, removed) in &pairs {
             crate::adhkar::merge_progress(&db, keep, removed).map_err(std::io::Error::other)?;
         }
     }
     let mut changed = !pairs.is_empty();
-    for page in &mut config.pages {
+    for page in &mut config.legacy_pages {
         page.items
             .retain(|item| !pairs.iter().any(|(_, removed)| removed == item.id()));
         for item in &mut page.items {
@@ -983,98 +979,235 @@ fn merge_remembrances(config: &mut Config) -> Result<bool, Box<dyn std::error::E
     Ok(changed)
 }
 
-fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
-    let mut banner = String::new();
-    if let Some(text) = platform::read_config()? {
-        if let Ok(mut config) = serde_json::from_slice::<Config>(&text)
-            && config.valid()
-        {
-            let mut changed = config.initialize_ai();
-            changed |= merge_remembrances(&mut config)?;
-            changed |= config.english_assistance.migrate_prompts();
-            if config.version < 3 {
-                let pitch = crate::spatial::cell_pitch(config.item_size, config.grid_gap);
-                for rect in config.positions.values_mut() {
-                    rect.row *= pitch;
-                    rect.col *= pitch;
-                    rect.width *= pitch;
-                    rect.height *= pitch;
-                }
-                config.columns *= pitch;
-                config.rows *= pitch;
-                config.version = 3;
-                changed = true;
-            }
-            if config.version < 4 {
-                let pitch = crate::spatial::cell_pitch(config.item_size, config.grid_gap);
-                let widgets: Vec<_> = config
-                    .pages
-                    .iter()
-                    .flat_map(|page| &page.items)
-                    .filter_map(|item| match item {
-                        Item::Widget { id, .. } => Some(id.clone()),
-                        _ => None,
-                    })
-                    .collect();
-                for id in widgets {
-                    if let Some(rect) = config.positions.get_mut(&id) {
-                        let width = (rect.width / pitch).max(1);
-                        let height = (rect.height / pitch).max(1);
-                        rect.width =
-                            crate::spatial::widget_span(width, config.item_size, config.grid_gap);
-                        rect.height =
-                            crate::spatial::widget_span(height, config.item_size, config.grid_gap);
-                    }
-                }
-                config.version = 4;
-                changed = true;
-            }
-            if config.version < 5 {
-                config.version = 5;
-                changed = true;
-            }
-            if !config.search_completion_shortcut_initialized {
-                config.add_search_completion_shortcut();
-                changed = true;
-            }
-            if !config.search_word_shortcut_initialized {
-                config.add_search_word_shortcut();
-                changed = true;
-            }
-            if !config.site_searches_initialized {
-                config.add_default_search_prefixes();
-                config.site_searches_initialized = true;
-                changed = true;
-            }
-            // Retired widget kinds are removed; shortcut and TickTick IDs remain intact.
-            let mut removed = Vec::new();
-            for page in &mut config.pages {
-                page.items.retain(|item| {
-                    let keep =
-                        !matches!(item, Item::Widget { variant, .. } if !(7..crate::spatial::WIDGETS.len()).contains(variant));
-                    if !keep {
-                        removed.push(item.id().to_owned());
-                    }
-                    keep
-                });
-            }
-            config.positions.retain(|id, _| !removed.contains(id));
-            config.pinned.retain(|id| !removed.contains(id));
-            crate::spatial::reconcile(&mut config).map_err(std::io::Error::other)?;
-            if !removed.is_empty() {
-                changed = true;
-            }
-            if changed {
-                config.save()?;
-            }
-            return Ok((config, banner));
-        }
-        platform::backup_config()?;
-        banner = "Couldn't read config.json. Saved as config.json.bad; Orbit starts empty.".into();
+pub fn decode(data: &[u8]) -> Result<Config, Box<dyn std::error::Error>> {
+    let mut config: Config = serde_json::from_slice(data)?;
+    if !config.valid() {
+        return Err("Invalid Canvas configuration".into());
     }
-    let config = Config::default();
-    platform::write_config(&serde_json::to_vec_pretty(&config)?)?;
-    Ok((config, banner))
+    migrate(&mut config, None)?;
+    Ok(config)
+}
+
+fn migrate(
+    config: &mut Config,
+    progress: Option<&std::path::Path>,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let legacy = config.version < 5 || !config.legacy_pages.is_empty();
+    let mut changed = config.initialize_ai();
+    changed |= merge_remembrances(config, progress)?;
+    changed |= config.english_assistance.migrate_prompts();
+    if config.version < 3 {
+        let pitch = crate::spatial::cell_pitch(config.item_size, config.grid_gap);
+        for rect in config.positions.values_mut() {
+            rect.row = rect
+                .row
+                .checked_mul(pitch as i32)
+                .ok_or("Canvas coordinate overflow")?;
+            rect.col = rect
+                .col
+                .checked_mul(pitch as i32)
+                .ok_or("Canvas coordinate overflow")?;
+            rect.width = rect
+                .width
+                .checked_mul(pitch)
+                .ok_or("Canvas size overflow")?;
+            rect.height = rect
+                .height
+                .checked_mul(pitch)
+                .ok_or("Canvas size overflow")?;
+        }
+        config.legacy_columns = config
+            .legacy_columns
+            .checked_mul(pitch)
+            .ok_or("Canvas size overflow")?;
+        config.legacy_rows = config
+            .legacy_rows
+            .checked_mul(pitch)
+            .ok_or("Canvas size overflow")?;
+        config.version = 3;
+    }
+    if config.version < 4 {
+        for item in config.legacy_pages.iter().flat_map(|page| &page.items) {
+            if matches!(item, Item::Widget { .. })
+                && let Some(rect) = config.positions.get_mut(item.id())
+            {
+                let pitch = crate::spatial::cell_pitch(config.item_size, config.grid_gap);
+                rect.width = crate::spatial::widget_span(
+                    (rect.width / pitch).max(1),
+                    config.item_size,
+                    config.grid_gap,
+                );
+                rect.height = crate::spatial::widget_span(
+                    (rect.height / pitch).max(1),
+                    config.item_size,
+                    config.grid_gap,
+                );
+            }
+        }
+    }
+    if legacy {
+        flatten(config)?;
+        config.version = 5;
+        changed = true;
+    }
+    if !config.search_completion_shortcut_initialized {
+        config.add_search_completion_shortcut();
+        changed = true;
+    }
+    if !config.search_word_shortcut_initialized {
+        config.add_search_word_shortcut();
+        changed = true;
+    }
+    if !config.site_searches_initialized {
+        config.add_default_search_prefixes();
+        config.site_searches_initialized = true;
+        changed = true;
+    }
+    let previous_shortcuts = config.shortcuts.len();
+    config
+        .shortcuts
+        .retain(|entry| !matches!(entry.action, 10 | 11));
+    changed |= config.shortcuts.len() != previous_shortcuts;
+    let before = config.positions.clone();
+    crate::spatial::reconcile(config).map_err(std::io::Error::other)?;
+    changed |= before != config.positions;
+    if !config.valid() {
+        return Err("Invalid migrated Canvas configuration".into());
+    }
+    Ok(changed)
+}
+
+fn flatten(config: &mut Config) -> Result<(), String> {
+    let pitch = crate::spatial::cell_pitch(config.item_size, config.grid_gap);
+    let mut offset = 0i64;
+    for (index, page) in std::mem::take(&mut config.legacy_pages)
+        .into_iter()
+        .enumerate()
+    {
+        let mut local = std::collections::BTreeMap::new();
+        for (slot, item) in page.items.iter().enumerate() {
+            let rect = config.positions.get(item.id()).copied().unwrap_or_else(|| {
+                let (width, height) = if let Item::Widget { variant, .. } = item {
+                    let (w, h) = crate::spatial::WIDGET_SPANS[*variant];
+                    (
+                        crate::spatial::widget_span(w, config.item_size, config.grid_gap),
+                        crate::spatial::widget_span(h, config.item_size, config.grid_gap),
+                    )
+                } else {
+                    (pitch, pitch)
+                };
+                let columns = (config.legacy_columns / pitch).max(1);
+                crate::spatial::Rect {
+                    col: ((slot % columns) * pitch) as i32,
+                    row: ((slot / columns) * pitch) as i32,
+                    width,
+                    height,
+                }
+            });
+            local.insert(item.id().to_owned(), rect);
+        }
+        let left = local
+            .values()
+            .map(|r| i64::from(r.col))
+            .min()
+            .unwrap_or(0)
+            .min(0);
+        let right = local
+            .values()
+            .map(|r| i64::from(r.col) + r.width as i64)
+            .max()
+            .unwrap_or(0)
+            .max(config.legacy_columns as i64);
+        let translation = offset - left;
+        if index == config.legacy_active_page {
+            config.canvas.view = crate::canvas::View {
+                x: -(translation as f32) + 24.0,
+                y: 110.0,
+                zoom: 1.0,
+            };
+        }
+        for (id, mut rect) in local {
+            rect.col = i32::try_from(i64::from(rect.col) + translation)
+                .map_err(|_| "Canvas coordinate overflow")?;
+            config.positions.insert(id, rect);
+        }
+        offset += right - left + pitch as i64;
+        config.items.extend(page.items);
+    }
+    Ok(())
+}
+
+fn migration_backup(
+    path: &std::path::Path,
+    original: &[u8],
+) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(std::io::Error::other)?
+        .as_nanos();
+    let backup = path.with_file_name(format!("config-before-canvas-{stamp}.json"));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&backup)?;
+    file.write_all(original)?;
+    file.sync_all()?;
+    Ok(backup)
+}
+
+fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
+    let Some(text) = platform::read_config()? else {
+        let config = Config::default();
+        config.save()?;
+        return Ok((config, String::new()));
+    };
+    let Ok(mut config) = serde_json::from_slice::<Config>(&text) else {
+        platform::backup_config()?;
+        return Ok((
+            Config::default(),
+            "Couldn't read config.json. Saved as config.json.bad; Orbit starts empty.".into(),
+        ));
+    };
+    if !config.valid() {
+        platform::backup_config()?;
+        return Ok((
+            Config::default(),
+            "Couldn't read config.json. Saved as config.json.bad; Orbit starts empty.".into(),
+        ));
+    }
+    let original = config.clone();
+    let path = crate::storage::config_path()?;
+    let legacy = config.version < 5 || !config.legacy_pages.is_empty();
+    // Keep the exact legacy bytes before progress or layout migration changes saved data.
+    if legacy && let Err(error) = migration_backup(&path, &text) {
+        migrate(&mut config, None)?;
+        config.migration_original = Some(text.clone());
+        return Ok((
+            config,
+            format!("Couldn't back up config.json; migration was not saved: {error}"),
+        ));
+    }
+    match migrate(&mut config, Some(&path.with_file_name("widgets.db"))) {
+        Ok(changed) => {
+            if changed && let Err(error) = config.save() {
+                return Ok((
+                    config,
+                    format!("Couldn't save migrated config.json; original retained: {error}"),
+                ));
+            }
+            Ok((config, String::new()))
+        }
+        Err(error) => {
+            let mut usable = original;
+            migrate(&mut usable, None)?;
+            usable.migration_original = Some(text.clone());
+            Ok((
+                usable,
+                format!("Couldn't migrate config.json; original retained: {error}"),
+            ))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1189,11 +1322,10 @@ mod tests {
     }
 
     #[test]
-    fn first_run_has_one_empty_page() {
+    fn first_run_has_an_empty_canvas() {
         let config = Config::default();
         assert!(config.valid());
-        assert_eq!(config.pages.len(), 1);
-        assert!(config.pages[0].items.is_empty());
+        assert!(config.items.is_empty());
     }
 
     #[test]
@@ -1330,138 +1462,84 @@ mod tests {
     }
 
     #[test]
-    fn saved_page_count_is_between_one_and_nine() {
-        for count in 0..=10 {
-            let config = Config {
-                version: 3,
-                pages: (0..count)
-                    .map(|_| Page {
-                        vertical: 0,
-                        id: crate::config::new_page_id(),
-                        items: Vec::new(),
-                    })
-                    .collect(),
-                ..Config::default()
+    fn legacy_regions_preserve_all_items_ids_sizes_and_active_view_once() {
+        for version in 1..=4 {
+            let mut value = serde_json::to_value(Config::default()).unwrap();
+            value["version"] = version.into();
+            value.as_object_mut().unwrap().remove("items");
+            value["columns"] = if version < 3 { 8 } else { 1152 }.into();
+            value["rows"] = if version < 3 { 6 } else { 864 }.into();
+            value["active_page"] = 2.into();
+            value["pages"] = serde_json::json!([
+                {"items":[{"Website":{"id":"a","name":"Site","url":"https://example.com","icon":"Letter"}}]},
+                {"vertical":-1,"items":[{"Folder":{"id":"folder","name":"Folder","apps":[{"id":"child","name":"Child","icon":"Letter","launch":{"File":"/tmp/saved"}}]}}]},
+                {"vertical":1,"items":[{"Widget":{"id":"widget","name":"Quote","text":"Saved state","variant":9,"min_number":1,"max_number":7}}]}
+            ]);
+            value["positions"] = if version < 3 {
+                serde_json::json!({"a":{"col":2,"row":1,"width":1,"height":1},"widget":{"col":1,"row":2,"width":2,"height":2}})
+            } else {
+                serde_json::json!({"a":{"col":288,"row":144,"width":144,"height":144},"widget":{"col":144,"row":288,"width":288,"height":288}})
             };
-            assert_eq!(config.valid(), (1..=9).contains(&count));
-        }
-    }
-    #[test]
-    fn vertical_pages_are_fixed_and_do_not_use_the_horizontal_limit() {
-        let mut config = Config::default();
-        config.pages = (0..9)
-            .map(|_| serde_json::from_value(serde_json::json!({"items": []})).unwrap())
-            .collect();
-        for vertical in [-1, 1] {
-            config.pages.push(
-                serde_json::from_value(serde_json::json!({
-                    "vertical": vertical, "items": []
-                }))
-                .unwrap(),
+            value["pinned"] = serde_json::json!(["child"]);
+            value["canvas"] = serde_json::json!({"enabled":false,"boxes":[{"id":"discard","name":"Box","x":0,"y":0}]});
+            let config = decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+            assert_eq!(config.version, 5);
+            assert_eq!(config.items.len(), 4);
+            assert_eq!(config.pinned, ["child"]);
+            assert_eq!(config.positions["a"].row, 144);
+            assert_eq!(
+                config.positions["widget"].height,
+                if version < 4 { 272 } else { 288 }
             );
+            assert!(config.canvas.view.x < -2000.0);
+            assert!(config.items.iter().any(
+                |item| matches!(item,Item::File {id,path,..} if id=="child" && path=="/tmp/saved")
+            ));
+            let saved = serde_json::to_vec(&config).unwrap();
+            let saved_value: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+            for retired in ["pages", "columns", "rows", "active_page", "page_margin"] {
+                assert!(saved_value.get(retired).is_none());
+            }
+            assert!(saved_value["canvas"].get("boxes").is_none());
+            let again = decode(&saved).unwrap();
+            assert_eq!(config.positions, again.positions);
+            assert_eq!(config.canvas, again.canvas);
         }
-        assert!(config.valid());
-        assert_eq!(config.remove_page(9), None);
-        assert_eq!(config.remove_page(10), None);
-        let saved = serde_json::to_value(&config).unwrap();
-        assert_eq!(saved["pages"][9]["vertical"], -1);
-        config.pages.push(
-            serde_json::from_value(serde_json::json!({
-                "vertical": -1, "items": []
-            }))
-            .unwrap(),
-        );
-        assert!(!config.valid());
     }
-
     #[test]
-    fn vertical_page_items_survive_horizontal_overflow_and_drops() {
+    fn failed_migration_backup_blocks_subsequent_saves() {
         let mut config = Config::default();
-        config.ensure_vertical_pages();
-        config.ensure_vertical_pages();
-        assert_eq!(config.pages.len(), 3);
-        config.columns = 144;
-        config.rows = 144;
-        let item = |id: &str| Item::Folder {
-            id: id.into(),
-            name: id.into(),
-            apps: Vec::new(),
-        };
-        config.pages[0].items = vec![item("a"), item("b")];
-        config.pages[1].items = vec![item("top")];
-        config.active_page = 1;
-        crate::spatial::reconcile(&mut config).unwrap();
-        assert_eq!(config.horizontal_pages(), 2);
-        assert_eq!(config.pages[2].vertical, -1);
-        assert_eq!(config.pages[2].items[0].id(), "top");
-        assert_eq!(config.active_page, 2);
-        assert!(config.valid());
-        let new_page = config.pages.len();
-        assert!(crate::item_drop::apply(
-            &mut config,
-            "top",
-            new_page,
-            0,
-            "",
-            "unused".into()
-        ));
-        assert_eq!(config.horizontal_pages(), 3);
-        assert_eq!(config.pages[2].items[0].id(), "top");
-        assert_eq!(config.pages[3].vertical, -1);
-        assert!(config.valid());
-        assert!(crate::item_drop::apply(
-            &mut config,
-            "top",
-            4,
-            0,
-            "",
-            "unused".into()
-        ));
-        assert_eq!(config.pages[4].items[0].id(), "top");
-        assert!(config.valid());
+        config.migration_original = Some(b"original".to_vec());
+        config.canvas.view.x = 500.0;
+        let root =
+            std::env::temp_dir().join(format!("orbit-blocked-migration-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let original = root.join("config.json");
+        std::fs::write(&original, b"original").unwrap();
+        // A non-directory parent deterministically prevents backup creation on every platform.
+        let blocked = original.join("config.json");
+        assert!(config.saved_bytes(&blocked).is_err());
+        assert_eq!(std::fs::read(&original).unwrap(), b"original");
+        assert!(config.saved_bytes(&blocked).is_err());
+        assert_eq!(std::fs::read(&original).unwrap(), b"original");
+        assert!(config.saved_bytes(&original).is_ok());
+        assert_eq!(std::fs::read(&original).unwrap(), b"original");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn deleting_pages_keeps_items_and_the_last_page() {
-        for index in 0..3 {
-            let mut config = Config::default();
-            config.pages = (0..3)
-                .map(|number| Page {
-                    vertical: 0,
-                    id: crate::config::new_page_id(),
-                    items: vec![Item::Folder {
-                        id: number.to_string(),
-                        name: number.to_string(),
-                        apps: Vec::new(),
-                    }],
-                })
-                .collect();
-            assert_eq!(config.remove_page(index), Some(index.saturating_sub(1)));
-            assert_eq!(config.pages.len(), 2);
-            let mut ids: Vec<_> = config
-                .pages
-                .iter()
-                .flat_map(|page| page.items.iter().map(Item::id))
-                .collect();
-            ids.sort();
-            assert_eq!(ids, ["0", "1", "2"]);
-            config.remove_page(0);
-            assert_eq!(config.remove_page(0), None);
-            assert_eq!(config.pages[0].items.len(), 3);
-        }
+    fn backup_failure_does_not_change_the_original_file() {
+        let root =
+            std::env::temp_dir().join(format!("orbit-migration-test-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("config.json");
+        std::fs::write(&path, b"original").unwrap();
+        assert!(migration_backup(&root.join("missing/config.json"), b"original").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"original");
+        let backup = migration_backup(&path, b"original").unwrap();
+        assert_eq!(std::fs::read(backup).unwrap(), b"original");
+        std::fs::remove_dir_all(root).unwrap();
     }
-}
-
-pub fn new_page_id() -> String {
-    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    format!(
-        "page-{}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos(),
-        SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    )
 }
 
 #[cfg(test)]
@@ -1558,6 +1636,6 @@ mod exclusion_persistence_tests {
         assert_eq!(loaded.file_search_exclusions, ["*.tmp", "Build"]);
         assert_eq!(loaded.file_search_paths, config.file_search_paths);
         assert_eq!(loaded.directory_search_paths, config.directory_search_paths);
-        assert_eq!(loaded.pages.len(), config.pages.len());
+        assert_eq!(loaded.items.len(), config.items.len());
     }
 }

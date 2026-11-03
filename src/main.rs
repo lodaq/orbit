@@ -20,6 +20,16 @@ mod platform;
 #[path = "platform-windows.rs"]
 mod platform;
 mod recent;
+#[path = "robot-data.rs"]
+pub mod robot_data;
+#[path = "robot-provider.rs"]
+mod robot_provider;
+#[path = "robot-runtime.rs"]
+pub mod robot_runtime;
+#[path = "robot-tools.rs"]
+pub mod robot_tools;
+#[path = "robot-workbench.rs"]
+mod robot_workbench;
 #[path = "search-cursor.rs"]
 mod search_cursor;
 #[path = "search-edit.rs"]

@@ -6,15 +6,17 @@ The user approved `Orbit_Desktop_Launcher_UX_Spec_v2.md` on 2026-10-20 as author
 
 ## Current behavior
 
-The top fixed page is a Canvas for named solid Boxes, separate from launcher Items. Add box opens a sheet with a required Name and optional multiline Description; Add places a 280 × 180 Box at the visible center. Boxes show both fields, support Arabic/English text and scroll long descriptions. Drag the name or box padding to move a Box freely; overlap is allowed. Drag empty canvas space to pan; wheel over the canvas or a box header zooms around the pointer from 25% to 200%. Wheel over a description scrolls its content. Back returns to the last horizontal page with the existing vertical transition. Layout lock prevents adding/moving Boxes while allowing pan, zoom and Back. Boxes and pan/zoom persist in config.json and launcher backups; movement commits on release, view saves are debounced, and cancelled forms/drags make no changes. Editing, deleting, resizing, color selection and drawing are excluded from this version.
+The single Canvas amendment approved on 2026-11-02 supersedes all earlier page and Box behavior, including the v2 layout specification. Canvas is the launcher's only arrangement space. There are no horizontal or vertical pages, swipe navigation, transitions, page indicators, page management or Boxes.
 
-Existing top-page Items migrate to horizontal pages without changing their IDs, widget state or dock ownership. Migration preflights on a copy; if nine horizontal pages cannot hold them, the old grid remains usable and a Toast explains the space problem. Reopening the top page retries after space is freed. Ordinary launcher Item placement is unavailable on the Canvas. The bottom fixed page and horizontal page behavior stay as described below.
+The Canvas fills the window behind the fixed logo, default search engine selector, Search anything, Lock layout, Settings, Close, Dock and Change background image controls. Their existing sizes and positions remain. The Canvas uses the existing blue-gray surface color at 50% opacity over the wallpaper; foreground controls and text retain their opacity. The wallpaper retains its previously approved 90% opacity. Temporary thin review outlines are red for the logo, green for the engine selector, yellow for search, blue for the dock and white around each icon button. Keyboard focus stays visible. These outlines remain until a separate requested removal.
 
-A fresh native touchpad gesture can finish the previous page animation once the incoming page data is ready. Page animation completion does not lock out the next gesture.
+All existing launcher item types and thirteen supported widget types use the Canvas. Right-click empty space → Add item opens the existing sheet and widget gallery. New items use the clicked world position or a deterministic nearby free position; entry points without a pointer use the visible center. Auto places a widget near that anchor, and Place shows a movable placement preview. Additions, duplication, folder extraction and unpinning share free-space placement without displacing neighbors. Bring new content into view when necessary.
 
-Touchpad page swipes accumulate both axes before choosing the dominant direction at the existing threshold. Small initial movement on the other axis does not lock a horizontal swipe to vertical, or vice versa. Native gesture-start events reset the page-swipe guard immediately, so a fresh swipe does not wait for the previous gesture's momentum timeout. One page change is allowed per gesture and its momentum; the quiet interval remains a fallback for scroll devices without gesture phases.
+Positions are free, without grid snapping, and item rectangles must not overlap. Dragging and resizing show an invalid preview for occupied space; releasing restores the original position without saving. A completed 500 ms shortcut hold can create or fill a Folder. Drag empty space to pan; wheel zooms around the pointer from 25% to 200%. Canvas speed in Settings → General controls both pan and zoom sensitivity from 1× to 10×, defaults to 5×, and Reset to default restores 5×. Widget content consumes scrolling normally. Pan and zoom persist across hiding and restart, with debounced saves. Escape cancels a drag or closes the top layer. Pending moves retain their dropped position until saved data is published; failed saves restore the saved position.
 
-Pages have one fixed page above and one below the horizontal pages. Drag empty page space or scroll vertically to open them; the reverse gesture returns to the horizontal page just left (the first horizontal page after daemon restart). They use the existing slide timing, easing and edge resistance, with no page dots or page add/delete/reorder controls. Horizontal pages retain their one-to-nine limit. The bottom fixed page (and the top grid when Canvas migration is blocked) supports the same items and widgets. Both fixed pages persist in the existing page list with `vertical: -1` (top) and `vertical: 1` (bottom). They are created on the first page navigation. Horizontal overflow never fills a fixed page; a full fixed page rejects further automatic placement.
+The empty-space Context menu also offers Show all items. It fits all Canvas rectangles, may zoom below 25%, and leaves an empty Canvas view unchanged. Zooming in from a fitted view must remain smooth. No Canvas toolbar or zoom label is shown. Lock layout prevents arrangement changes while permitting pan, zoom, Show all items, launching and widget interactions. Search results, Prefixes, English assistance and AI keep their existing presentation and behavior; saved-result placement is called Add to Canvas.
+
+Config version 5 stores a flat item collection, signed Canvas positions and the saved view. Legacy configurations and backups migrate all horizontal and fixed-page layouts into adjacent regions without retaining page boundaries. Existing item IDs, dimensions, folder contents, dock ownership, Recent and widget state remain intact. Existing per-page widget migrations run before flattening. The first view starts at the formerly active region. The original configuration is retained in a timestamped backup before the migrated config is saved atomically. Boxes are removed from active storage and remain recoverable only from that original backup. A failed migration never replaces the original config or substitutes an empty saved configuration. Reopening does not repeat migration offsets. Legacy page structures exist only in decoding/migration paths.
 
 Remembrances combines morning and evening Adhkar in one widget. It follows the first Azan Reminder's saved schedule and time zone: Fajr → Dhuhr selects morning, Dhuhr → next Fajr selects evening. Recommended windows are Fajr → Sunrise and Asr → Maghrib. Mode progress stays separate; evening continues through midnight. The gallery offers one Remembrances card; existing morning/evening pairs on each page combine without discarding saved progress. Prayer times come from the existing explicit Azan Fetch; no additional network requests run. See `widgets.md` for migration and missing/stale schedule behavior.
 
@@ -34,9 +36,9 @@ Search anything excludes Folder tiles and searches their contained Apps, Website
 
 Settings → Search bar → General includes App search paths. Each path is an absolute directory or executable. Refresh adds executable files immediately inside configured directories (no recursion), plus explicitly configured executable files, to the cached Installed apps list. Paths persist in config.json; changing them does not scan until Refresh. On Linux, executable symlinks retain their link name and launch path. Missing executable files, broken symlinks and non-executable files are omitted on refresh. Existing desktop discovery remains enabled. Refresh skips desktop entries whose executable is missing or not executable; command names are resolved through PATH.
 
-Overlapping folder targets accept Apps, Websites, Files and Directories. After a 500 ms tile-overlap dwell, release creates a folder or appends to an existing folder. Existing page items remain fixed during dragging and dropping. Occupied targets that cannot form a folder reject placement instead of displacing neighbors; empty-space drops move only the dragged item. Folder children retain shortcut type, URL/path, ID and icon through extraction, dissolution, unpacking and restart. Widgets and folders never become folder children.
+Overlapping folder targets accept Apps, Websites, Files and Directories. After a 500 ms tile-overlap dwell, release creates a folder or appends to an existing folder. Existing Canvas items remain fixed during dragging and dropping. Occupied targets that cannot form a folder reject placement instead of displacing neighbors; empty-space drops move only the dragged item. Folder children retain shortcut type, URL/path, ID and icon through extraction, dissolution, unpacking and restart. Widgets and folders never become folder children.
 
-`Orbit_Desktop_Launcher_UX_Spec_v2.md` is the current product specification and acceptance-test source. Its desktop Android-inspired spatial model supersedes the earlier list-only home-screen, Arch-only target and ordered-dock assumptions below. Existing Orbit appearance, item launching, search, native pickers and background-work requirements remain in force when compatible. New layout data lives in `config.json` version 3 with stable page IDs, explicit pixel-cell item rectangles, widget instances and active page; versions 1, 2 and 3 migrate on load while preserving rendered sizes. Grid item sizing is persisted in the existing Settings page. A dock pin owns a shortcut's layout location; page arrays retain its item record for existing app/search/recent lookups.
+`Orbit_Desktop_Launcher_UX_Spec_v2.md` is the current product specification and acceptance-test source. Its desktop Android-inspired spatial model supersedes the earlier list-only home-screen, Arch-only target and ordered-dock assumptions below. Existing Orbit appearance, item launching, search, native pickers and background-work requirements remain in force when compatible. New layout data lives in `config.json` version 5 with stable item IDs, signed Canvas rectangles, widget instances and a saved view; older schemas migrate on load while preserving rendered sizes. Grid item sizing is persisted in the existing Settings page. A dock pin owns a shortcut's layout location; the flat item collection retains its record for existing app/search/recent lookups.
 
 
 
@@ -44,7 +46,7 @@ Every decision for the MVP, in one place. Words follow `glossary.md`. Shortcuts 
 
 ## 1. What Orbit is
 
-Orbit is a fullscreen desktop app-launcher replacement for Windows and Arch Linux, styled like iOS. It replaces the desktop launcher and takes over the work that would otherwise send you to your browser bookmarks, your file search or your task app. You arrange apps, websites, files, directories, folders and widgets on pages, like a phone home screen, and open it instantly with a key. It starts empty. Search anything searches saved page items, System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Ctrl+K focuses it. A Prefix routes the rest of the query to a site, a search engine, TickTick or a user Action, so the query is typed in Orbit and not in the browser's search field. Orbit is written in Rust with Slint and runs as one binary with a resident daemon that keeps everything ready, so showing the launcher does no disk or network work. Interactions and transitions are animated; showing and hiding the launcher is immediate.
+Orbit is a fullscreen desktop app-launcher replacement for Windows and Arch Linux, styled like iOS. It replaces the desktop launcher and takes over the work that would otherwise send you to your browser bookmarks, your file search or your task app. You arrange apps, websites, files, directories, folders and widgets on an infinite Canvas, and open it instantly with a key. It starts empty. Search anything searches saved Canvas items, System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Ctrl+K focuses it. A Prefix routes the rest of the query to a site, a search engine, TickTick or a user Action, so the query is typed in Orbit and not in the browser's search field. Orbit is written in Rust with Slint and runs as one binary with a resident daemon that keeps everything ready, so showing the launcher does no disk or network work. Interactions and transitions are animated; showing and hiding the launcher is immediate.
 
 ## 2. Stack
 
@@ -94,7 +96,7 @@ Website = { id, name, url, icon }
 File   = { id, name, path, icon }
 Directory = { id, name, path, icon }
 Folder = { id, name, apps: [App] }
-Page   = { items: [Item] }
+Canvas = { items: [Item], positions: { item id: rectangle }, view: { x, y, zoom } }
 Dock   = { pinned: [item id] }      ordered
 Recent = [item id]                  most recent first
 ```
@@ -112,13 +114,9 @@ Recent = [item id]                  most recent first
 
 ## 5. The launcher screen
 
-From top to bottom: top bar, the open page, page dots, dock.
+The fixed controls sit above the full-window Canvas. The existing logo and wordmark remain at the left, Search anything is centered with its default engine selector beside it, and Lock layout, Settings and Close remain at the right. The floating Dock and Change background image button retain their positions. Only the controls' own bounds intercept Canvas input.
 
-- **Top bar:** the supplied Orbit logo and wordmark (`ui/assets/orbit.svg`) and name on the left. The Settings and Close icons on the right.
-- **Page:** a full-width, full-height page area below the top bar and above the dock, with a grid of items. Right-click empty page space and choose Add item to add an item. It scrolls vertically and has no item limit.
-- **Page dots:** show which page is open. Clicking a dot opens that page. A + beside the dots adds a page, as does Add page in the empty-space Context menu.
-- **Dock:** a floating, semi-transparent rounded bar at the bottom center, with no blur. Up to five recent items appear on the left and up to ten pinned items in saved order on the right, separated by a thin line when both sections have items. Each 48 px icon has no name: hovering one magnifies it and its neighbours, widens the bar by the room they take, as the macOS dock does, and shows the item name after 50 ms in a white rounded tooltip with a downward caret. The dock is always shown, even when it is empty. When its contents exceed the viewport, the dock scrolls horizontally only, with transparent arrows layered over the first and last visible items; the bottom position line is omitted.
-- **On open:** the launcher opens on its current page with folders, Settings, sheets and alerts closed, search cleared, and Search anything focused. Grid focus navigation remains deferred.
+The Dock remains visible when empty. It shows up to five recent unpinned shortcuts and fifteen pinned items, a separator when both are present, 48 px icons, existing magnification, delayed tooltips and horizontal overflow scrolling. Showing the launcher clears search and closes folders, Settings and sheets while retaining the Canvas view.
 
 ## 6. Behavior
 
@@ -126,12 +124,12 @@ From top to bottom: top bar, the open page, page dots, dock.
 - An app starts directly with no shell: the command is split into arguments and run detached, so the app survives a daemon restart. On success the launcher hides and the item enters Recent.
 - A Website opens its URL in the default browser. A File opens with its default app. A Directory opens in the default file manager. These use `xdg-open` with the URL or path as one argument, without a shell. On success the launcher hides.
 - On failure the launcher stays open and shows a banner such as "Couldn't start 'figma': not found".
-- A folder opens instead of launching. Right-click empty page space → Add item opens the Add item sheet.
+- A folder opens instead of launching. Right-click empty Canvas space → Add item opens the Add item sheet.
 
-**Context menu:** right-click a page item for Edit, Pin (or Unpin), Move to Page and Delete. Delete asks for confirmation and includes widgets. Right-click empty page space for Add item, Add page or Delete page; page deletion asks for confirmation and is unavailable on the final page. A pinned dock item offers Unpin; a Recent dock item offers Remove from Recent.
+**Context menu:** right-click a Canvas item for its existing Edit, Pin/Unpin, widget sizing/duplication and Delete operations. Delete asks for confirmation. Right-click empty space for Add item or Show all items. A pinned dock item offers Unpin; a Recent dock item offers Remove from Recent. There are no page-related actions.
 
 **Sheets.** All open over a dimmed backdrop inside the launcher window. The Add item sheet fits the selected tab's content, has a maximum height of 760 px, and scrolls only when that content exceeds the available height.
-- *Add item:* segmented control App, Website, File, Directory or Folder. For an App, a second segmented control: Custom command (first and selected by default), Actions or Installed apps. Actions shows Lock screen, Take screenshot, Sleep, Log out, Volume up, Volume down, Mute, Mute microphone, Play or pause, Next track and Previous track; choosing one adds it to the current page and closes the sheet. Audio and media actions use `wpctl` and `playerctl`, following the [Hyprland media examples](https://wiki.hypr.land/0.53.0/Configuring/Binds/) and [WirePlumber command reference](https://pipewire.pages.freedesktop.org/wireplumber/man/wpctl.html). Custom command has Name, Icon and Command, with Cancel and Save. Installed apps shows the saved Installed apps list and a Refresh button; clicking an app adds it right away at the end of the current page and closes the sheet, with no Save. Adding the same installed app again is allowed. Its name and icon come from the list and can be changed later with Edit. Website has Name and URL. File and Directory each have an editable Path, a native chooser button, a default Icon with Change icon beside it, and Cancel and Save. The chooser fills Path. Save checks the path, derives the item name, adds it to the current page and closes the sheet. A Folder has just a Name, with Cancel and Save.
+- *Add item:* segmented control App, Website, File, Directory or Folder. For an App, a second segmented control: Custom command (first and selected by default), Actions or Installed apps. Actions shows Lock screen, Take screenshot, Sleep, Log out, Volume up, Volume down, Mute, Mute microphone, Play or pause, Next track and Previous track; choosing one adds it to the Canvas and closes the sheet. Audio and media actions use `wpctl` and `playerctl`, following the [Hyprland media examples](https://wiki.hypr.land/0.53.0/Configuring/Binds/) and [WirePlumber command reference](https://pipewire.pages.freedesktop.org/wireplumber/man/wpctl.html). Custom command has Name, Icon and Command, with Cancel and Save. Installed apps shows the saved Installed apps list and a Refresh button; clicking an app adds it right away near the clicked Canvas position and closes the sheet, with no Save. Adding the same installed app again is allowed. Its name and icon come from the list and can be changed later with Edit. Website has Name and URL. File and Directory each have an editable Path, a native chooser button, a default Icon with Change icon beside it, and Cancel and Save. The chooser fills Path. Save checks the path, derives the item name, adds it to the Canvas and closes the sheet. A Folder has just a Name, with Cancel and Save.
 - *Edit app:* Name, Icon, Command (custom command apps only). Cancel and Save. Delete is in the item's Context menu.
 - *Edit website:* Name and URL. Its cached icon is refreshed when the URL is changed.
 - *Edit file* and *Edit directory:* editable Path, native chooser button, Icon and Change icon, with Cancel and Save. Choosing another path fills Path; Save updates the item and its name from that path. The Icon preview and Change icon button are vertically centered together in these sheets and Edit app. Delete is in the item's Context menu.
@@ -139,59 +137,28 @@ From top to bottom: top bar, the open page, page dots, dock.
 - Keys inside sheets, pickers and alerts are listed in `shortcuts.md`. Their defaults can be changed in Settings. `Enter` in a Name, URL, Path or Command field moves to the next field or Save. Clicking the backdrop closes the sheet.
 
 **Alert.** Delete always asks for confirmation.
-- Deleting an app removes it everywhere: its page or folder, the dock.
-- Deleting a Website, File or Directory removes that item from its page and the dock. It does not delete the file or directory from the computer. Deleting a Website also removes its cached icon.
-- Deleting a folder deletes only the folder. Its apps move to the page where the folder was, at the folder's position. The alert says so, for example "Delete folder 'X'? Its 4 apps will move to the page."
+- Deleting an app removes it everywhere: the Canvas or folder, the dock.
+- Deleting a Website, File or Directory removes that item from the Canvas and the dock. It does not delete the file or directory from the computer. Deleting a Website also removes its cached icon.
+- Deleting a folder deletes only the folder. Its apps move to the Canvas where the folder was, at the folder's position. The alert says so, for example "Delete folder 'X'? Its 4 apps will move to the Canvas."
 - If the deleted folder was pinned, it is unpinned. A folder with no apps is simply removed.
 
-**Pages.**
-- No names. At least 1, at most 9.
-- A new page is created by dropping an item past the right edge of the last page, clicking + beside the page dots, or clicking Add page in the empty-space Context menu.
-- Drag an empty area of the page left or right to move to the previous or next page. The page follows the pointer without delay and settles into place after release. At the first or last page, it moves only a little and returns to the center.
-- Widgets keep their full content visible on both pages throughout a page swipe and its settling transition.
-- Two-finger horizontal touchpad scrolling changes pages in the scroll direction configured on the desktop. Small movements below 40 px do not change pages; momentum stays on the same page change until scrolling pauses for 350 ms. Vertical scrolling remains available inside widgets and pages.
-- A 24 px gap separates page surfaces during a swipe.
-- The page area fills the available width and height. The + beside the page dots creates and opens an empty page with the mouse.
-- Leaving an empty page does not remove it. Delete page in the empty-space Context menu or the empty-space Context menu removes the current page after confirmation, moving its items to the previous page (or the next page when deleting the first). The last page cannot be deleted.
-- First run: one empty page with Add item available from its empty-space Context menu.
-- Startup page controls are deferred; reopening keeps the current page.
-
 **Folders** work like iOS folders.
-- They hold apps only and cannot nest. Websites, files and directories stay on pages and cannot be placed in folders. The tile shows a small preview of its apps.
+- They hold Apps, Websites, Files and Directories, and cannot nest. Widgets stay on the Canvas. The tile shows a small preview of its apps.
 - A folder opens from its tile into a centered panel over the backdrop, with one scrolling grid. Clicking outside or pressing `Esc` closes it.
-- Dropping an app on another app makes a folder with both. Dropping an app on a folder adds it. Websites, files and directories can be reordered and moved between pages, but do not make folders.
+- Dropping an app on another app makes a folder with both. Dropping an app on a folder adds it. Websites, Files and Directories use the same folder hold gesture and retain their shortcut type.
 - A folder disappears when its last app leaves it.
-- Dragging an app out past the panel edge closes the folder visually and keeps the app under the pointer. Only releasing it over the page moves it out of the folder; Esc cancels without changing the folder.
+- Dragging an app out past the panel edge closes the folder visually and keeps the app under the pointer. Only releasing it over the Canvas moves it out of the folder; Esc cancels without changing the folder.
 
 **Dock.**
-- Pin or Unpin in an item's context menu adds or removes it from the dock. The item stays on its page.
+- Pin gives the Dock exclusive ownership of an item. Unpin returns it to a nearby free Canvas position without displacing existing items.
 - Right-click a pinned dock item to Unpin it. Right-click a Recent dock item to remove it from Recent history.
-- Recent tracks successfully opened Apps, Websites, Files and Directories, including Apps inside folders. Folders themselves do not enter Recent. The five newest unpinned items appear on the left; pinned items appear on the right in saved order, up to ten. An item appears only once in the dock.
+- Recent tracks successfully opened Apps, Websites, Files and Directories, including Apps inside folders. Folders themselves do not enter Recent. The five newest unpinned items appear on the left; pinned items appear on the right in saved order, up to fifteen. An item appears only once in the dock.
 - Recent keeps up to sixteen item IDs so older unpinned items can fill the left side when a newer item is pinned or deleted. Opening an item again moves it to the front. A successful launch writes `recent.json` only when the order changes.
-- Clicking a dock item opens it, including a folder or an App inside a folder on another page. Dock drag reordering remains a later functional step.
+- Clicking a dock item opens it, including a folder or a shortcut inside a Folder. Dock drag reordering remains available.
 
-**Drag and drop** (iOS behavior).
-- A click without movement launches. Dragging makes the other items slide aside to open a gap, and dropping fills it.
-- Holding an app over the central 112 px area of another app or folder for 2 seconds previews the combined folder on the target; releasing creates the folder or adds the app. The target stays in place and highlights while ready. A folder dropped onto anything only reorders.
-- Holding a dragged item at the left or right screen edge advances through successive pages every half second until the edge is left or the last available page is reached. At the right edge of the last page, it shows a new empty page (if there are fewer than 9). Dropping inserts the item at the pointer's position and opens that page. Near the top or bottom edge, the page scrolls.
-- Dropping on the dock snaps the item back. `Esc` during a drag cancels it. A drag changes saved data only on release. One stationary input surface tracks the pointer while rendered tiles move; the dragged tile follows without interpolation. Page and folder moves resolve their source and folder target by item ID. The same folder hold works after changing pages.
+**Drag and drop.** A click launches; a drag freely moves only the dragged item. Coordinates are transformed through the saved Canvas view. Occupied targets reject the drop unless the existing folder hold gesture is ready. Folder children preserve their type, URL/path, ID and icon through extraction, dissolution and restart. Folders and widgets cannot become folder children. A drag changes saved data only on release; Escape cancels without mutation. Pinned items belong exclusively to the Dock; dropping back onto the Canvas or Unpin gives them a free Canvas position.
 
-**Everything works with the mouse.** Orbit is mouse first, and the keyboard only repeats what the mouse can do.
-
-| To do this | With the mouse |
-|---|---|
-| Open an item (launch an app, open a Website, File or Directory; open a Folder) | Click it |
-| Add an item | Right-click empty page space → Add item |
-| Edit, Pin or Unpin, Delete | Right-click the item, choose from the context menu |
-| Reorder, move between pages, make a folder | Drag and drop |
-| Change page | Click a page dot, or Shift + wheel |
-| Add a page | Click + beside the page dots, or Add page in the empty-space Context menu |
-| Open Settings | Click the Settings icon |
-| Leave Settings | Click Back |
-| Hide the launcher | Click the Close icon |
-| Close a sheet, alert, picker or folder | Click Cancel or the backdrop |
-
-Hover shows a slightly lighter tile and the pointer cursor, so it is clear what can be clicked.
+Everything works with the mouse. Context menus stay inside the window. Sheets, alerts and folders close through their backdrop or Escape; Settings retains Back. Hover lightens tiles and the dock retains its magnification and tooltips.
 
 ## 7. Icons
 
@@ -212,15 +179,15 @@ Installed apps use their real system icon, resolved once when you press Refresh 
 - A saved index of programs found on the computer. **Only the Refresh button changes it.** No automatic refresh, no file watcher, no scan at startup, no scan when a sheet opens.
 - Read `.desktop` files from the XDG data folders (`/usr/share/applications`, `~/.local/share/applications`, Flatpak exports). Skip `NoDisplay`, `Hidden` and `Terminal=true` (terminal apps are not in the MVP). Strip field codes such as `%u` and `%F`. Store each app's start command in the list.
 - Resolve each icon from the icon theme once, at refresh. This is the one place where a small crate is justified, because icon themes are hard to resolve by hand.
-- Refresh shows a status such as "4 new apps found". It never adds anything to a page. You add apps from the list through the Add item sheet.
+- Refresh shows a status such as "4 new apps found". It never adds anything to the Canvas. You add apps from the list through the Add item sheet.
 - Before the first refresh, the list is empty and shows a Refresh button.
-- The list has a filter box that narrows it as you type. Clicking an app adds it to the current page immediately.
+- The list has a filter box that narrows it as you type. Clicking an app adds it to the Canvas immediately.
 
 ## 9. Settings
 
-The top bar Settings control opens a dark panel with General, Shortcuts, Search bar, and Back. Add, Edit or Delete a path in either list. Each path is an existing folder and can be entered as an absolute Path. File search paths are searched recursively for files; Directory search paths show only their immediate directories. Indexing starts on the first non-empty search and stays cached until a path changes. The refresh status is visible in the panel. Esc returns to the launcher. Page margin and Item size controls save to config.json. Page margins are equal on all four sides, default to 10 px and allow 0–64 px. Page tiles stay square, default to 128 px and allow 80–240 px. Startup controls remain deferred.
+The top bar Settings control opens a dark panel with General, Shortcuts, Search bar, and Back. Add, Edit or Delete a path in either list. Each path is an existing folder and can be entered as an absolute Path. File search paths are searched recursively for files; Directory search paths show only their immediate directories. Indexing starts on the first non-empty search and stays cached until a path changes. The refresh status is visible in the panel. Esc returns to the launcher. Item size and Item Gap controls save to config.json; page margin is removed. Item tiles default to 128 px and allow 80–240 px; Item Gap allows 0–64 px. Startup controls remain deferred.
 
-Settings also has Export data and Import data. Export saves a versioned JSON backup containing pages, folders, saved icons, Pinned, Recent, search paths and the Installed apps list. Import opens the native chooser directly, then validates the chosen backup before replacing data. Cancelling the chooser leaves data unchanged. It retains the previous data in a sibling `orbit-before-import-<time>` directory and reloads the launcher. File and Directory items keep their paths; the referenced files and installed programs are not included. Both operations run on the worker and use a centered floating native file chooser. Orbit stays fullscreen behind the chooser, and returns focus to Settings when it closes. This explicitly requested addition is outside the original build order.
+Settings also has Export data and Import data. Export saves a versioned JSON backup containing the Canvas, folders, saved icons, Pinned, Recent, search paths and the Installed apps list. Import opens the native chooser directly, then validates the chosen backup before replacing data. Cancelling the chooser leaves data unchanged. It retains the previous data in a sibling `orbit-before-import-<time>` directory and reloads the launcher. File and Directory items keep their paths; the referenced files and installed programs are not included. Both operations run on the worker and use a centered floating native file chooser. Orbit stays fullscreen behind the chooser, and returns focus to Settings when it closes. This explicitly requested addition is outside the original build order.
 
 Settings has General, Shortcuts and Search bar tabs. Shortcuts lists each Orbit action once, with all assigned key combinations grouped in that row. Users can record, change, add and delete individual combinations. Duplicate key combinations are rejected. Bindings persist in config.json and backups; old configurations receive the defaults. Native text editing remains provided by text fields; the global toggle is configured in Hyprland. These user-requested changes extend the original fixed-shortcut scope.
 
@@ -228,24 +195,23 @@ Settings has General, Shortcuts and Search bar tabs. Shortcuts lists each Orbit 
 
 The authoritative visual reference is `doc/orbit-ui/orbit.png` and `orbit.svg` (1440 × 1080). The user approved this design replacing the previous light theme restrictions on 2026-10-18.
 
-- Use the reference radial background, lavender artwork, logo, search field, Settings and Close controls, page dots, icon-only dock and footer hints.
-- Embed Inter. Page labels are 14 px. Page icons are 92 px in the default 128 px tile, leaving a compact label gap; dock icons are 48 px.
+- Use the reference radial background, lavender artwork, logo, search field, Settings and Close controls and icon-only dock, with the approved Canvas tint and temporary review outlines.
+- Embed Inter. Canvas labels are 14 px. Canvas icons are 92 px in the default 128 px tile, leaving a compact label gap; dock icons are 48 px.
 - Top bar: logo at (48,40), 360 × 44 px centered search at y=34, controls 48 px apart at the right.
-- Grid: 144 px between item centers at reference width (128 px item size + 16 px default Item Gap). The page area fills the available width and height, and the grid adds columns as width permits. The page and its 128 × 128 px item tiles have 1 px borders. Item tiles have a lighter background on hover. The gaps between tiles do not select items. Settings lets the user change Item Gap from 0 to 64 px.
-- Page dots are centered 146 px above the bottom. The dock is 64 px tall, 22 px above the bottom, with rounded corners and 68 px per item. Hovering grows the icon under the pointer to 1.6× and its neighbours by less with distance, and the icons slide apart and upward from the bar so they never overlap; the bar widens by the room they take. After hovering an item for 50 ms, a white rounded tooltip bubble with a downward caret shows the item's name above the icon. The dock can grow to 1400 px wide and scrolls horizontally when its Recent and Pinned items overflow. Side controls sit outside the scroll viewport. The separator divides Recent from Pinned when both are present.
-- Search filters saved page items, all System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Results from saved page items appear after the other matches. The first result is initially selected. Arrow keys move the selection through the grid without wrapping and scroll it into view. Enter opens the selected result. Clicking any result opens it. Each highlight encloses the icon and labels with padding and a gap from neighboring results. Results show their saved or cached icon when available. Choosing an action runs it, and choosing an installed app launches it without adding it to a page. Esc clears search before hiding.
+- Canvas items retain their default 128 px tile, 92 px icon and 14 px label. Position and resize are free, without a visible grid or enclosing surface border. Item Gap retains its role in default footprints and Folder spacing. Changing monitor dimensions does not reflow or resize saved Canvas positions.
+- The dock is 64 px tall, 22 px above the bottom, with rounded corners and 68 px per item. Hovering grows the icon under the pointer to 1.6× and its neighbours by less with distance, and the icons slide apart and upward from the bar so they never overlap; the bar widens by the room they take. After hovering an item for 50 ms, a white rounded tooltip bubble with a downward caret shows the item's name above the icon. The dock can grow to 1400 px wide and scrolls horizontally when its Recent and Pinned items overflow. Side controls sit outside the scroll viewport. The separator divides Recent from Pinned when both are present.
+- Search filters saved Canvas items, all System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Results from saved Canvas items appear after the other matches. The first result is initially selected. Arrow keys move the selection through the grid without wrapping and scroll it into view. Enter opens the selected result. Clicking any result opens it. Each highlight encloses the icon and labels with padding and a gap from neighboring results. Results show their saved or cached icon when available. Choosing an action runs it, and choosing an installed app launches it without adding it to the Canvas. Esc clears search before hiding.
 - Prefix tokens activate with Tab or Space, display the Prefix name as a badge and hide search results while active. Enter sends only the remaining query as the Action argument. When no local results match, Enter searches with the web search engine selected in Settings → Search bar → General (Perplexity by default). Prefixes, Actions and the selected engine are stored in config.json; one Action can have several editable Prefix Tokens, and URL Actions encode query text. Site-search defaults include ChatGPT (`g`, `ل`), Claude (`c`, `ؤ`), GitHub (`gh`), Google Maps (`m`), Image Search (`i`, `ه`), Perplexity (`p`, `ح`), Wikipedia (`w`, `ص`), Translate ar to en (`ف`), Translate en to ar (`tr`), YouTube (`y`, `غ`), plus the web search engines. TickTick task creation parses `!today` (or `!!`), `!high`, `!medium`, `!low`, `!none`, `#tag`, and `^List`/`~List` in its own handler; omitted lists use Inbox. Shell Actions receive the query as a separate process argument, never interpolated into script source.
-- Left and Right switch pages when a text field, sheet or folder is not active. Ctrl+K focuses search.
+- Arrow keys navigate search results or spatial neighbors; they never change pages. Ctrl+K focuses search.
 - Preserve native, interactive controls. The exported `main.slint` is only a full-screen PNG and cannot be used as the application implementation.
 - Sheets, the Context menu and Delete alerts follow the supplied Add item reference in `doc/add-item` and the shared rules in `design-system.md`. The 2026-10-18 request adds system icons to Installed apps rows.
 
 **Animation.** Short and few, because Orbit must stay fast.
 - Showing and hiding the launcher: none. It is instant.
-- Page switch: the adjacent page appears beside the open page during a mouse drag, and both pages slide together after release with ease-out motion. A full switch takes about 170 ms; a partly dragged page settles faster according to the distance left.
 - Folder open: instant, with no movement or fade. Folder close: the panel shrinks back to its tile in about 220 ms.
 - Drag: other items slide into the gap, about 120 ms, and the dropped item settles into place.
 - Sheet and alert: the backdrop and panel fade in, about 120 ms.
-- Focus ring: none. Hover: page tiles lighten, dock icons magnify and slide apart over 80 ms with ease-out motion, and the hovered item's name appears in a tooltip after 50 ms.
+- Focus ring: none. Hover: Canvas tiles lighten, dock icons magnify and slide apart over 80 ms with ease-out motion, and the hovered item's name appears in a tooltip after 50 ms.
 - Input never waits. Keys and clicks take effect immediately and the animation only follows. There is no animation setting in the MVP.
 
 ## 11. Saved files
@@ -254,7 +220,7 @@ One folder: `~/.config/orbit/` (respecting `XDG_CONFIG_HOME`).
 
 | File | Holds |
 |---|---|
-| `config.json` | Version, pages, items, folders, pinned order and file and directory search paths |
+| `config.json` | Version, Canvas view and positions, items, folders, pinned order and file and directory search paths |
 | `recent.json` | Up to sixteen recent item IDs, newest first |
 | `installed-apps.json` | The Installed apps list |
 | `icons/` | Saved icon images |
@@ -272,27 +238,31 @@ The 2026-10-18 UI task explicitly overrides the earlier exclusions of search, Ct
 Each step ends with an app that runs on Arch.
 
 1. **Skeleton and speed test:** fullscreen Slint window, daemon, `orbit toggle`, hide on focus loss, monitor with the cursor. Run the speed test from section 3 and write the results there. Stop and report if the budget cannot be met.
-2. **Data:** `config.json`, atomic writes, the empty launcher, pages with scrolling and the empty-space Add item menu.
+2. **Data:** `config.json`, atomic writes, the empty launcher, the Canvas and the empty-space Add item menu.
 3. **Apps:** the Add item sheet for custom commands, launching, letter and SVG icons, the context menu, the delete alert.
-4. **Folders and drag and drop:** folders, reordering, moving between pages, mouse page swipes, creating and deleting pages. This is the largest step.
+4. **Folders and drag and drop:** folders and free Canvas placement. This is the largest step.
 5. **Item types, App sources and Search Prefixes:** Websites, files and directories; Actions and custom commands; scan, cache and choose installed apps from the Add item sheet. Add reusable shell-script and URL-template Actions, editable Actions and Prefixes settings, generic token activation/dispatch, the TickTick task Action, and default site-search prefixes.
 6. **Dock:** Recent, Pinned and pin reordering.
 7. **Keyboard:** the few keys in `shortcuts.md` and the focus ring.
-8. **Settings and looks:** startup page, appearance, background color, iOS polish.
+8. **Settings and looks:** appearance, background color and iOS polish.
 9. **Glyph picker:** the Phosphor Icon picker.
 10. **Packaging:** the `PKGBUILD` and the README.
 
+### Robot extension (authorized 2026-11-03)
+
+Implement one step at a time using `robot-capabilities.md`: (1) Robot data and its backup boundary, (2) local approvals, Skills, MCP and web tools, (3) multi-turn execution and queues, (4) Canvas Robot items, Settings and workbench, (5) full backup/runtime coordination and release acceptance. All five steps are needed for the first Robot release. Saved Teams and delegation follow in a later step.
+
 ## 14. Assumptions to confirm
 
-1. Item size: Use 92 px icons in the default 128 px tile, 14 px labels and 144 px spacing between item centers. Settings can change square page tiles from 80 to 240 px; icons scale to fit.
+1. Item size: Use 92 px icons in the default 128 px tile, 14 px labels and 144 px spacing between item centers. Settings can change square Canvas tiles from 80 to 240 px; icons scale to fit.
 2. Editing an installed app changes its name and icon, not what it launches.
-3. If an installed app is gone from the Installed apps list after a refresh, its item stays on its page. Launching it shows a banner such as "Couldn't start 'X': not found".
+3. If an installed app is gone from the Installed apps list after a refresh, its item stays on the Canvas. Launching it shows a banner such as "Couldn't start 'X': not found".
 
 ## 15. Open questions
 
 None at the moment.
 
-Settings groups Home Screen sizing, TickTick account and data under General. Search bar contains General (search engine and search paths), Prefixes and Actions. Page creation, deletion and Move page left/right are in the empty-space Context menu. TickTick widgets use the raised surface background.
+Settings groups Home Screen sizing, TickTick account and data under General. Search bar contains General (search engine and search paths), Prefixes and Actions. TickTick widgets use the raised surface background.
 
 Search anything wraps long queries and grows vertically, with results below the field. Backspace removes an active Prefix when its query is empty. When local items match, show those results. If none match, show no search engine tiles; Enter still searches with the saved default engine (Perplexity initially). The default engine select beside Search anything opens the engine list.
 
@@ -304,14 +274,14 @@ Settings → Search bar → General → Smooth cursor saves immediately and defa
 
 Settings → Shortcuts includes Delete previous word (Ctrl+W by default), scoped to focused Search anything. Native word boundaries, selection and undo are preserved. Existing configs receive the default once when Ctrl+W is free; removing it keeps it removed.
 
-Shortcut displays use shared native Kbd keycaps, including search, footer, Settings bindings and recording. Search and close/page hints reflect saved bindings. Search anything reserves full cursor space at wrapped line ends and scrolls the entire final block into view, with or without a Prefix.
+Shortcut displays use shared native Kbd keycaps, including search, footer, Settings bindings and recording. Search and close hints reflect saved bindings. Search anything reserves full cursor space at wrapped line ends and scrolls the entire final block into view, with or without a Prefix.
 
 Search anything uses 16 px text for the query and placeholder. Opening a folder animates its panel from the tile to the centered overlay over 220 ms while the backdrop fades in; closing reverses the movement.
 
 
 ### Settings redesign and file-search exclusions (2026-10-22)
 
-Settings follows `settings/DESIGN.md` with General, Shortcuts, Search bar and Back in a sidebar, and General, Prefixes and Actions in Search bar’s segmented control. The top bar, dock and bottom hints retain their existing appearance. Existing actions, sizing preview, Save, Reset and unsaved-sizing cancellation remain available. Shortcuts use display-only key chips with × and confirmation; use Add after removing a binding to change it.
+Settings follows `settings/DESIGN.md` with General, Shortcuts, Search bar and Back in a sidebar, and General, Prefixes and Actions in Search bar’s segmented control. The top bar and dock retain their existing appearance with the approved temporary review outlines. Existing actions, sizing preview, Save, Reset and unsaved-sizing cancellation remain available. Shortcuts use display-only key chips with × and confirmation; use Add after removing a binding to change it.
 
 Settings → Appearance lets the user save a solid background color as `#RRGGBB`, choose a PNG, JPEG or SVG background image, and Reset background to restore the supplied radial SVG. The selected image is copied into Orbit's saved icon storage and decoded by the existing worker; showing the launcher does no file I/O or image decoding.
 
@@ -324,7 +294,7 @@ Patterns match whole descendant file or directory names case-sensitively. Only `
 
 ## Layout lock (2026-10-22)
 
-Lock layout / Unlock layout is the padlock immediately left of Settings. One saved state applies to all pages, folder contents and the pinned dock; existing configurations default to unlocked. While locked, disable dragging, resizing, Move to Page, pin/unpin, adding, duplicating, deleting and reordering items/pages, layout sizing controls and Import data. Rust handlers reject these operations as well as the interface. Navigation, launching, search, scrolling, Recent updates, widget interactions and editing existing content remain available. Locking cancels pending drag/resize and placement previews. The lock survives hiding and restarting Orbit; no default shortcut is added.
+Lock layout / Unlock layout is the padlock immediately left of Settings. One saved state applies to the Canvas, folder contents and the pinned dock; existing configurations default to unlocked. While locked, disable dragging, resizing, pin/unpin, adding, duplicating, deleting and rearranging items, layout sizing controls and Import data. Rust handlers reject these operations as well as the interface. Navigation, launching, search, scrolling, Recent updates, widget interactions and editing existing content remain available. Locking cancels pending drag/resize and placement previews. The lock survives hiding and restarting Orbit; no default shortcut is added.
 
 ### Website icon drafts and anchored Add item (2026-10-22)
 
@@ -348,7 +318,7 @@ Existing configurations receive the AI Action and Prefix once without replacing 
 
 AI verification (2026-10-24): native input in an isolated Hyprland release session exercised Settings → Search bar → AI, local model refresh/selection, ai activation, submission, the visible local-model answer, Copy and Cancel. Clipboard output matched the displayed answer. OpenAI and Gemini model IDs saved independently; the masked key draft stayed out of config.json and cleared on provider changes. No cloud keys were created or saved, and live cloud calls remain unverified until keys are configured. Automated checks cover request bodies, responses, HTTP failures, timeouts, migrations and stale replies. Captures and the check report are in target/ui-check/ai-*.
 
-AI mode uses a dedicated opaque answer card aligned with a wider prompt field. While its Prefix is active, page items/widgets, page indicators, search results/details, the search-engine chooser and page-switch hints are hidden, including for an empty prompt. Page navigation and hidden-result activation are disabled; the dock stays available. Leaving AI mode restores the normal launcher. Empty/loading/error content stays compact; answers grow to a bounded height and scroll with native selection and Copy.
+AI mode uses a dedicated opaque answer card aligned with a wider prompt field. While its Prefix is active, Canvas items/widgets, search results/details and the search-engine chooser are hidden, including for an empty prompt. Hidden-result activation is disabled; the dock stays available. Leaving AI mode restores the normal launcher. Empty/loading/error content stays compact; answers grow to a bounded height and scroll with native selection and Copy.
 
 AI view verification (2026-10-24): the rebuilt release was opened on a populated page with TickTick widgets. Both Space and Tab activated the clean AI view; a visible local-model answer and exact clipboard copy were checked, a 50-line reply scrolled through its final line, arrow-key editing worked, and Esc restored the populated page. Formatting, Clippy and all 91 enabled tests passed (6 existing opt-in tests ignored). Captures and details: target/ui-check/ai-clean-*.
 
@@ -356,7 +326,7 @@ UI update (2026-10-25): Add item → Widgets is a responsive card grid. Footer s
 
 Settings → Search bar → General groups App search paths, File search paths, Directory search paths and Excluded from file search in one Search locations panel. Refresh rebuilds Installed apps and rescans all configured file and directory paths on the worker, applying file exclusions. All installed-app refresh controls use this shared operation. Newly created files become searchable after Refresh without restarting Orbit.
 
-Search results for saved shortcuts, System actions, Installed apps, Files and Directories offer Pin and Add to Page in their Context menu. Add to Page places the shortcut on the current Page. Dragging a result hides search results and English assistance while revealing the current Page; release on free page space saves its exact placement, and release on the dock pins it. Existing saved items move by ID instead of creating a duplicate; new results become saved shortcuts. Invalid drops and Esc cancel without saving. Search engine fallback results cannot be added. Lock layout prevents these changes. Successful placement clears Search anything.
+Search results for saved shortcuts, System actions, Installed apps, Files and Directories offer Pin and Add to Canvas in their Context menu. Add to Canvas uses the visible center or a nearby free position. Dragging a result hides search results and English assistance while revealing the Canvas; release on free Canvas space saves its exact placement, and release on the dock pins it. Existing saved items move by ID instead of creating a duplicate; new results become saved shortcuts. Invalid drops and Esc cancel without saving. Search engine fallback results cannot be added. Lock layout prevents these changes. Successful placement clears Search anything.
 
 Morning Remembrances (Adhkar), explicitly requested 2026-10-27, adds a local widget with the user's 25 Arabic entries. Each tap counts one repetition; reaching the required count plays a chime and advances automatically. Only completing every entry plays the distinct final chime and shows Restart. Skip retains unfinished entries, Previous preserves counts, and source details expand. Daily per-instance progress and editable content live in widgets.db (schema 3); the bundled source JSON remains unchanged. Add it through Add item → Widgets → Morning Remembrances → Auto or Place.
 
@@ -373,3 +343,26 @@ Focus task redesign (2026-10-28): the TickTick Focus Task card uses a wrapping t
 English assistance displays only the untyped completion suffix; corrections to typed letters use an explicit Autocomplete replacement preview. Ctrl+E, Tab and Accept word accept the same validated current-word or next-word edit. Grammar corrections remain separate clicks. Known built-in prompts migrate without replacing custom prompts; grammar defers the word still being typed. See `english-assistance.md` for the 2026-10-30 repair and verification.
 
 English Suggestions show Ctrl+1/2/3 keycaps for direct application. Ctrl+N/J moves the highlight down, Ctrl+P/K moves it up, and Enter applies the selected rewrite without submitting. The selection resets on refreshed or invalidated results. Ctrl+K keeps its normal focus action outside current suggestions.
+
+## Robots (authorized 2026-11-03)
+
+The first release adds persistent Robots while retaining the independent AI Prefix. Add item offers Robot with one shared 2D illustration. Opening a Robot shows its workbench over the Canvas: selected project, conversations, progress, tool activity and results. Settings manages Robot profiles, reusable Roles, model selection, installed Codex Skills and local stdio MCP servers. Multiple profiles can be saved, but only one Robot executes at a time. Teams are deferred.
+
+Choose an existing Ollama, OpenAI or Gemini model. New conversations copy their starting model, provider, Role instructions and project path; resuming retains that context even after profile edits. Commands queue per Robot, continue while Orbit is hidden and persist replies and tool activity locally. Conversation titles derive from the first message, history orders by recent activity, deletion is permanent in the live database and optional one-to-five-star ratings are saved as feedback.
+
+Orbit implements the runtime and executes selected Skill workflows using its own tools. Every local file or shell operation requires approval for that exact action. The project is a working directory, not a sandbox: approved tools may access the machine. Enabled MCP tools execute automatically. Historical approvals never authorize replay after restart or import. Internet research uses built-in web search and MCP tools, retains source links and writes a requested Markdown report only after local-write approval. Credentials stay in the OS keyring.
+
+`robots.db` schema 2 stores profiles, Roles, immutable conversation context, activity and ratings transactionally, separately from Canvas configuration and widget data. History reads 50 summaries at a time; conversations are read on demand by workers. No Robot history or Skill scanning runs when showing the launcher. Backup version 3 includes a validated Robot snapshot, queued-command states and credential references, never keyring values. Versions 1 and 2 remain readable. Import retains previous data, stages all restored records and clears MCP enabled-tool lists until the user re-enables them. Version 1 backups remain readable. Existing backup limits and the widget-database exclusion remain unchanged.
+
+The later Teams step adds saved lead/specialist Robots, direct assignment and lead delegation. Each assignment creates one team run, with sequential member work in the shared project folder and one combined history.
+
+Release acceptance follows the user's checks: create/reopen a configured Robot and Role; queue work, approve a local action, observe automatic enabled MCP activity and completion while hidden; verify a sourced Markdown research report; round-trip profiles, conversations and ratings without credential values; verify Canvas use and Arabic/English/mixed text through the real entry path on an isolated display/profile; pass formatting, Clippy and a release build, then restart the normal daemon hidden. Teams have separate later acceptance for direct assignment, delegation and sequential shared-folder edits.
+
+Implementation status: steps 1–3 provide storage, backup format, worker-side tools and the multi-turn runtime. Local UTF-8 reads, directory listings, atomic text writes, program/shell execution and installed Skill loading require a single-use approval of the exact action and project directory. MCP stdio discovery and enabled-tool calls use protocol 2025-06-18, bounded messages, deadlines and keyring-injected environment values. Built-in Brave Search returns titles, snippets and source URLs independently of the model provider; its API key uses `orbit-robots` / `brave-search` in the OS keyring. Reports are saved through the approved local write tool. Step 4 connects Add item → Robot and Settings to profile and Role management, Skill paths, MCP discovery/configuration, credential storage and the conversation workbench. The workbench exposes queued commands, exact-action approvals, activity, results, history, ratings and permanent deletion. The isolated Linux workbench flow is verified with local model/MCP fixtures, including Arabic text, queued work, approvals, saved reports, restart persistence, ratings and deletion. Full backup/runtime release acceptance remains step 5; live provider/search and Windows checks remain outstanding. See `adr/0002-robot-execution.md` for the execution and permission model.
+
+
+Robot runtime (step 3): one worker executes accepted commands in FIFO order across Robot profiles, with up to 128 waiting commands. Acceptance is reported only after a Queued entry is saved. Later queued commands are excluded from the active model context. All local approvals match both conversation and exact in-memory action ID, are single-use, and occupy the one execution slot while waiting. A denied Skill stops its workflow; a denied ordinary action returns denial to the model and cannot be requested identically again in that command. Execution stops if history cannot be saved. Cancelling discards pending approvals and queued commands for that conversation; already executing calls may finish or time out, but no subsequent action starts. Closing an observer does not stop the worker.
+
+Ollama uses native tool calls and verifies the selected installed model is local and tool-capable. OpenAI uses Responses with store=false and opaque encrypted reasoning continuation; Gemini retains native function-call parts and thought signatures. Opaque provider state remains in memory for the current command. Resumed conversations rebuild context from saved commands, replies and historical tool results while retaining the starting model and Role. Private reasoning is not saved as conversation text. There is no provider fallback or automatic retry of failed actions. A command stops after 32 model turns; each turn allows up to 16 tool calls and each request at most 8 MiB. Tool results sent to the model/history are capped at 512 KiB with an explicit truncation notice; selected Skill instructions retain the existing 1 MiB limit.
+
+On first runtime use, unfinished queued/running commands are marked Interrupted without replay. The schema-1 to schema-2 upgrade preserves existing tables and records; version 3 backups record the new command states. Import remains nonexecuting. Import rejects outstanding Robot work, synchronously stops the idle runtime and closes its database before replacing data, and prevents new work during replacement. Reopening imported data marks unfinished commands Interrupted without replay. Runtime tests use isolated databases rather than the normal profile.

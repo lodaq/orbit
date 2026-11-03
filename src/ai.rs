@@ -154,7 +154,7 @@ fn http_error(status: u16) -> String {
     .into()
 }
 
-fn client(seconds: u64) -> ureq::Agent {
+pub(crate) fn client(seconds: u64) -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(seconds)))
         .max_redirects(0)
@@ -162,7 +162,7 @@ fn client(seconds: u64) -> ureq::Agent {
         .into()
 }
 
-fn read_json(mut response: ureq::http::Response<ureq::Body>) -> Result<Value, String> {
+pub(crate) fn read_json(mut response: ureq::http::Response<ureq::Body>) -> Result<Value, String> {
     response
         .body_mut()
         .with_config()
@@ -171,7 +171,7 @@ fn read_json(mut response: ureq::http::Response<ureq::Body>) -> Result<Value, St
         .map_err(|_| "Invalid or oversized AI response.".into())
 }
 
-fn network_error(error: ureq::Error) -> String {
+pub(crate) fn network_error(error: ureq::Error) -> String {
     match error {
         ureq::Error::StatusCode(status) => http_error(status),
         ureq::Error::Timeout(_) => {
@@ -181,7 +181,7 @@ fn network_error(error: ureq::Error) -> String {
     }
 }
 
-fn credential(provider: i32) -> Result<keyring::Entry, String> {
+pub(crate) fn credential(provider: i32) -> Result<keyring::Entry, String> {
     #[cfg(target_os = "linux")]
     crate::ticktick::activate_secret_service()?;
     let name = match provider {

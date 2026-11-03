@@ -358,7 +358,7 @@ export component LocalWidget inherits Rectangle {
     in property <string> widget-id;
     in property <bool> enabled: true;
     property <WidgetView> view: LocalWidgets.lookup(widget-id, LocalWidgets.views);
-    // Content owns its input; the page retains the header and resize corner.
+    // Content owns its input; the Canvas retains the header and resize corner.
     TouchArea { enabled: root.enabled; clicked => { } }
     if root.view.category == 11: InternetUsageWidget {
         x: 0px; y: 0px; width: parent.width; height: parent.height;

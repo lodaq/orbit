@@ -105,12 +105,6 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
             return EventResult::Propagate;
         };
         match event {
-            winit::event::WindowEvent::MouseWheel {
-                phase: winit::event::TouchPhase::Started,
-                ..
-            } => {
-                launcher.invoke_start_page_scroll();
-            }
             winit::event::WindowEvent::ModifiersChanged(state) => modifiers = state.state(),
             winit::event::WindowEvent::KeyboardInput { event, .. }
                 if event.state == winit::event::ElementState::Pressed =>
@@ -442,4 +436,15 @@ pub fn scan_app_search_paths(paths: &[String]) -> io::Result<Vec<InstalledApp>> 
         }
     }
     Ok(apps.into_values().collect())
+}
+pub fn configure_robot_process(_command: &mut std::process::Command) {}
+
+pub fn stop_robot_process(child: &mut std::process::Child) {
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &child.id().to_string(), "/T", "/F"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    let _ = child.kill();
+    let _ = child.wait();
 }

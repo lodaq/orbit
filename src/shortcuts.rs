@@ -40,7 +40,7 @@ pub fn defaults() -> Vec<Shortcut> {
 
 pub fn valid(bindings: &[Shortcut]) -> bool {
     bindings.iter().enumerate().all(|(index, binding)| {
-        (0..14).contains(&binding.action)
+        matches!(binding.action, 0..=9 | 12..=13)
             && !binding.keys.is_empty()
             && binding.keys.len() < 80
             && !bindings[..index]
@@ -144,6 +144,17 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
     let Some(keys) = chord(key, modifiers) else {
         return false;
     };
+    if launcher.global::<crate::RobotWorkbench>().get_visible() {
+        if launcher
+            .get_shortcuts()
+            .iter()
+            .any(|binding| binding.action == 1 && binding.keys == keys)
+        {
+            launcher.invoke_close_top_layer();
+            return true;
+        }
+        return false;
+    }
     if !launcher
         .global::<crate::AzanSettings>()
         .get_widget_id()
@@ -205,16 +216,6 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         launcher.invoke_context_focused();
         return true;
     }
-    if launcher.get_grid_navigation()
-        && matches!(key, Key::Named(NamedKey::PageUp | NamedKey::PageDown))
-    {
-        launcher.invoke_page_key(if *key == Key::Named(NamedKey::PageUp) {
-            -1
-        } else {
-            1
-        });
-        return true;
-    }
     let action = launcher
         .get_shortcuts()
         .iter()
@@ -248,8 +249,6 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
                 launcher.invoke_move_search_selection(action - 2);
             } else if launcher.get_grid_navigation() {
                 launcher.invoke_move_grid(action - 2);
-            } else if action < 4 && !launcher.get_search_focused() && !launcher.get_ai_active() {
-                launcher.invoke_page_key(if action == 2 { -1 } else { 1 });
             } else {
                 return false;
             }
@@ -283,8 +282,6 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
                 .dispatch_event(slint::platform::WindowEvent::KeyReleased { text: text.into() });
         }
         9 => launcher.set_settings(!launcher.get_settings()),
-        10 if !launcher.get_layout_locked() => launcher.invoke_add_page(),
-        11 if !launcher.get_layout_locked() => launcher.invoke_confirm_delete_page(),
         12 if launcher.get_search_editing() => {
             if launcher.get_search_text().is_empty() {
                 let text = slint::platform::Key::Backspace.into();
@@ -544,6 +541,26 @@ mod tests {
             &Key::Character("j".into()),
             ModifiersState::CONTROL
         ));
+    }
+
+    #[test]
+    fn retired_arrangement_actions_are_rejected_without_renumbering_search_actions() {
+        for action in [10, 11] {
+            assert!(!valid(&[Shortcut {
+                action,
+                keys: "Ctrl+P".into()
+            }]));
+        }
+        assert!(valid(&[
+            Shortcut {
+                action: 12,
+                keys: "Ctrl+W".into()
+            },
+            Shortcut {
+                action: 13,
+                keys: "Ctrl+E".into()
+            }
+        ]));
     }
 
     #[test]
