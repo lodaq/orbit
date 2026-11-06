@@ -1,8 +1,16 @@
 # V2 authority
 
+Robot management uses **Robots**, **Skills**, **Providers**, **Actions**, **MCPs**, **Credentials**, **Projects** and **Roles**. A Robot **Action** is a reusable prompt or shell-command instruction run through that Robot's tools and permissions. **Refresh from ~/.agents** rereads installed Skill paths; **Fetch from T3 Code** rereads shared provider configuration. **Send** queues the chat message. These terms supersede the earlier workbench labels for this flow.
+
 The user approved `Orbit_Desktop_Launcher_UX_Spec_v2.md` on 2026-10-20 as authoritative wherever it conflicts with this document. Windows and Arch Linux, spatial grids, widgets, exclusive dock ownership, new UI terms, and the complete v2 build sequence are authorized. Existing visual artwork and nonconflicting performance and coding rules remain in force. The older build-step restriction does not apply to v2.
 
 # Orbit glossary
+
+| Term | Meaning |
+|---|---|
+| **Providers** | The second Settings tab, listing shared T3 Code provider instances and cached models for Robots. |
+| **Connection fingerprint** | A hash of provider connection settings that detects account changes without saving credential values. |
+| **Command-scoped permission** | Explicit permission for one native Robot command to use the displayed file, program, network and native MCP access. |
 
 ## Robots
 
@@ -265,3 +273,9 @@ Canvas replaces the retired page layout. Boxes and their Add box command are rem
 | **Approve once** | Authorize only the displayed local action for its owning conversation. |
 | **Cancel work** | Stop pending work for the selected conversation; an already executing operation can finish or time out. |
 | **Credential reference** | A name pointing to a secret in the system credential store; the value is excluded from backups. |
+
+| **Provider account** | A named provider instance selected by a Robot. Several accounts may use one provider. |
+| **Account name** | The label distinguishing saved accounts, such as Personal or Work. |
+| **Account credential reference** | A system credential-store identifier for a named OpenAI API or Gemini account; never the credential value. |
+| **Account directory** | A separate absolute configuration/authentication directory reference for a native provider account. Its contents are excluded from backups. |
+| **OpenCode**, **Antigravity**, **Copilot**, **Codex / ChatGPT** | Native Robot providers whose account metadata is supported in step 1; connection and execution follow in steps 2–3. |

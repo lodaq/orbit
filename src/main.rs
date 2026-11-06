@@ -22,6 +22,8 @@ mod platform;
 mod recent;
 #[path = "robot-data.rs"]
 pub mod robot_data;
+#[path = "robot-native.rs"]
+mod robot_native;
 #[path = "robot-provider.rs"]
 mod robot_provider;
 #[path = "robot-runtime.rs"]
@@ -37,6 +39,8 @@ mod search_edit;
 mod shortcuts;
 mod spatial;
 mod storage;
+#[path = "t3-providers.rs"]
+mod t3_providers;
 #[path = "text-direction.rs"]
 mod text_direction;
 mod ticktick;

@@ -1,5 +1,9 @@
 # File structure
 
+- `src/t3-providers.rs`: bounded local T3 Code provider/model import, secret-free account references and connection fingerprints.
+- `src/robot-native.rs` and `src/robot-native/tests.rs`: direct Codex app-server, ACP and Pi RPC execution, permission routing, bounded output, credential redaction and cancellation fixtures.
+- `tests/native-provider-fixture.py`: offline stdio agent for protocol and permission checks.
+
 - `robot-capabilities.md`: authorized Robot capability boundaries, integration points, build order and release gates.
 - `src/robot-data.rs`: versioned `robots.db`, validated Robot/Role profiles, immutable conversation context, ordered activity, ratings, deletion and transactional backup snapshots. The execution and workbench layers will use this storage API.
 - `src/robot-data/tests.rs`: persistence, conversation snapshots, Unicode titles, history, deletion, validation and import rollback checks.
@@ -46,7 +50,7 @@ The approved supplied UI update adds the reference launcher appearance, search a
 - `src/spatial.rs`: signed rectangular Canvas positions, deterministic free-space placement, fixed-neighbor rectangle placement, widget footprints, and spatial regression tests.
 - `src/ticktick.rs`: TickTick API requests, personal-token storage in the operating system credential store, and task moves, which the API only accepts as a copy into the new list followed by deleting the original.
 - `src/toast.rs`: user feedback levels, short message queue, duplicate suppression and handling while the Launcher is hidden.
-- `src/storage.rs`: shared versioned config, recent, installed-app, icon and backup storage across supported desktop platforms.
+- `src/storage.rs`: shared versioned config, recent, installed-app, icon and backup storage across supported desktop platforms; bounded Website icon fetching, ranked declarations and HTTP connection reuse.
 - `src/widget-data.rs`: the local SQLite text collections, stable entry IDs, editing, deletion, search, pagination and storage sizes.
 - `src/widget-data-ui.rs`: Settings → Data callbacks, collection counts, storage meter values, completed TickTick titles and a dedicated worker; database initialization, migrations and reads stay outside the launcher show path.
 - `src/platform-windows.rs`: Windows resident launcher IPC, fullscreen window behavior, registered-file opening, process launch, system actions and Installed apps discovery.
@@ -107,6 +111,15 @@ The 2026-11-02 single Canvas amendment supersedes historical page-related struct
 - `doc/adr/0001-single-canvas.md`: the Canvas model and original-config migration backup decision.
 
 Robot workbench integration:
+- `tests/robot-management-ui.py`: private-display, temporary-profile checks for chat replies, shell approval, repeated actions, management collections, Robot name propagation, restart persistence and compact layouts.
+- Robot database schema 4 stores validated shared collections and includes them in backup snapshots. `ui/robot-workbench.slint` separates eight-section management from Canvas chat; `src/robot-workbench.rs` handles explicit Skill/provider refresh, collection changes, repeated commands and profile duplication on the worker.
 - `src/robot-workbench.rs`: worker-side profile/Role/tool management, conversation navigation, exact approval routing and runtime event delivery. Import suspends the idle runtime before the data directory is replaced.
 - `ui/robot-workbench.slint`: shared Robot settings and workbench layer, including approval review, conversation history, ratings and permanent deletion.
 - `ui/assets/robot.svg`: one shared 2D Robot illustration for Canvas items and entry points.
+
+Robot provider accounts:
+- `robot-provider-capabilities.md`: approved account, connection and native execution extension and acceptance gates.
+- `src/robot-data.rs`: named account metadata, validation, schema-3 persistence and immutable per-conversation connection snapshots.
+- `src/robot-workbench.rs` and `ui/robot-workbench.slint`: account selection/editing in Robot profiles, using the shared fields and controls.
+- `src/robot-provider.rs` and `src/robot-runtime.rs`: account credential resolution, import reconnection checks and explicit errors for unconnected native providers.
+- `src/backup.rs`: version-4 account metadata export/import, without provider credential values or account-directory contents.

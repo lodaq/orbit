@@ -11,6 +11,68 @@ pub enum Provider {
     Ollama,
     OpenAi,
     Gemini,
+    OpenCode,
+    Antigravity,
+    Copilot,
+    Codex,
+    Agent,
+}
+
+impl Provider {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Ollama => "Ollama",
+            Self::OpenAi => "OpenAI",
+            Self::Gemini => "Gemini",
+            Self::OpenCode => "OpenCode",
+            Self::Antigravity => "Antigravity",
+            Self::Copilot => "Copilot",
+            Self::Codex => "Codex / ChatGPT",
+            Self::Agent => "Agent",
+        }
+    }
+
+    pub fn index(&self) -> i32 {
+        match self {
+            Self::Ollama => 0,
+            Self::OpenAi => 1,
+            Self::Gemini => 2,
+            Self::OpenCode => 3,
+            Self::Antigravity => 4,
+            Self::Copilot => 5,
+            Self::Codex => 6,
+            Self::Agent => 7,
+        }
+    }
+
+    pub fn from_index(index: i32) -> Option<Self> {
+        Some(match index {
+            0 => Self::Ollama,
+            1 => Self::OpenAi,
+            2 => Self::Gemini,
+            3 => Self::OpenCode,
+            4 => Self::Antigravity,
+            5 => Self::Copilot,
+            6 => Self::Codex,
+            7 => Self::Agent,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Account {
+    pub id: String,
+    pub name: String,
+    pub provider: Provider,
+    pub address: Option<String>,
+    pub credential: Option<String>,
+    pub home: Option<String>,
+    #[serde(default)]
+    pub needs_reconnection: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -19,6 +81,8 @@ pub struct Model {
     pub provider: Provider,
     pub id: String,
     pub ollama_address: Option<String>,
+    #[serde(default)]
+    pub account: Option<Account>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -130,13 +194,107 @@ pub struct History {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Snapshot {
+    #[serde(default)]
+    pub catalog: Vec<CatalogEntry>,
+    #[serde(default)]
+    pub accounts: Vec<Account>,
     pub roles: Vec<Role>,
     pub profiles: Vec<Profile>,
     pub conversations: Vec<Conversation>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogEntry {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub content: String,
+}
+impl CatalogEntry {
+    fn validate(&self) -> Result<()> {
+        if !matches!(
+            self.kind.as_str(),
+            "skill" | "prompt" | "shell" | "project" | "credential" | "mcp"
+        ) || self.id.trim().is_empty()
+            || self.name.trim().is_empty()
+            || self.id.len() > 512
+            || self.name.len() > 512
+            || self.content.len() > 131_072
+            || self.content.contains('\0')
+            || (self.kind != "credential" && self.content.trim().is_empty())
+        {
+            return Err("Enter a name and content for this collection.".into());
+        }
+        if self.kind == "credential" && !self.content.is_empty() {
+            return Err("Credential values belong only in the system store.".into());
+        }
+        if self.kind == "skill"
+            && Path::new(&self.content)
+                .file_name()
+                .is_none_or(|name| name != "SKILL.md")
+        {
+            return Err("Choose an installed SKILL.md file.".into());
+        }
+        if self.kind == "mcp" {
+            serde_json::from_str::<McpServer>(&self.content)?.validate()?;
+        }
+        Ok(())
+    }
+}
+
 pub struct Database {
     connection: Connection,
+}
+
+impl Account {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self
+            .binding
+            .as_ref()
+            .is_some_and(|s| s.len() != 64 || !s.bytes().all(|c| c.is_ascii_hexdigit()))
+        {
+            return Err("Invalid provider connection binding.".into());
+        }
+        identifier(&self.id)?;
+        required(&self.name, 512)?;
+        if let Some(reference) = &self.credential {
+            identifier(reference)?;
+        }
+        match self.provider {
+            Provider::Ollama => {
+                loopback(self.address.as_deref().ok_or("Enter an Ollama address.")?)?;
+                if self.home.is_some() || self.credential.is_some() {
+                    return Err("Ollama accounts use only a local address.".into());
+                }
+            }
+            Provider::OpenAi | Provider::Gemini => {
+                if self.address.is_some() || self.home.is_some() {
+                    return Err("API accounts use a credential reference.".into());
+                }
+            }
+            _ => {
+                if self.address.is_some() || self.credential.is_some() {
+                    return Err("Agent accounts use a separate account directory.".into());
+                }
+                if let Some(home) = &self.home {
+                    absolute_path(home)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn loopback(address: &str) -> Result<()> {
+    let port = address
+        .strip_prefix("http://127.0.0.1:")
+        .or_else(|| address.strip_prefix("http://localhost:"))
+        .and_then(|port| port.parse::<u16>().ok());
+    if !port.is_some_and(|port| port > 0) {
+        return Err("Choose a loopback Ollama address with a port.".into());
+    }
+    Ok(())
 }
 
 impl Model {
@@ -145,22 +303,34 @@ impl Model {
         if !self.id.bytes().all(|c| {
             c.is_ascii_alphanumeric()
                 || b"-_.:".contains(&c)
-                || (self.provider == Provider::Ollama && c == b'/')
+                || (matches!(
+                    self.provider,
+                    Provider::Ollama | Provider::OpenCode | Provider::Agent
+                ) && c == b'/')
         }) {
             return Err("Invalid Robot model ID.".into());
         }
         match (&self.provider, &self.ollama_address) {
             (Provider::Ollama, Some(address)) => {
-                let port = address
-                    .strip_prefix("http://127.0.0.1:")
-                    .or_else(|| address.strip_prefix("http://localhost:"))
-                    .and_then(|port| port.parse::<u16>().ok());
-                if !port.is_some_and(|port| port > 0) {
-                    return Err("Choose a loopback Ollama address with a port.".into());
-                }
+                loopback(address)?;
             }
-            (Provider::OpenAi | Provider::Gemini, None) => {}
+            (_, None) if self.provider != Provider::Ollama => {}
             _ => return Err("Only Ollama uses a local model address.".into()),
+        }
+        if let Some(account) = &self.account {
+            account.validate()?;
+            if account.provider != self.provider || account.address != self.ollama_address {
+                return Err("Robot model and provider account do not match.".into());
+            }
+        } else if matches!(
+            self.provider,
+            Provider::OpenCode
+                | Provider::Antigravity
+                | Provider::Copilot
+                | Provider::Codex
+                | Provider::Agent
+        ) {
+            return Err("Choose a saved provider account.".into());
         }
         Ok(())
     }
@@ -173,7 +343,7 @@ fn required(value: &str, limit: usize) -> Result<()> {
     Ok(())
 }
 
-fn identifier(value: &str) -> Result<()> {
+pub(crate) fn identifier(value: &str) -> Result<()> {
     required(value, 128)?;
     if !value
         .bytes()
@@ -336,6 +506,20 @@ impl Conversation {
 
 impl Snapshot {
     pub fn validate(&self) -> Result<()> {
+        let mut catalog = HashSet::new();
+        for entry in &self.catalog {
+            entry.validate()?;
+            if !catalog.insert(&entry.id) {
+                return Err("Duplicate collection entry ID.".into());
+            }
+        }
+        let mut accounts = HashSet::new();
+        for account in &self.accounts {
+            account.validate()?;
+            if !accounts.insert(&account.id) {
+                return Err("Duplicate provider account ID.".into());
+            }
+        }
         let mut roles = HashSet::new();
         for role in &self.roles {
             role.validate()?;
@@ -346,6 +530,14 @@ impl Snapshot {
         let mut profiles = HashSet::new();
         for profile in &self.profiles {
             profile.validate()?;
+            if profile.model.account.as_ref().is_some_and(|a| {
+                !self
+                    .accounts
+                    .iter()
+                    .any(|saved| saved.id == a.id && saved.provider == a.provider)
+            }) {
+                return Err("Missing Robot provider account.".into());
+            }
             if !profiles.insert(&profile.id)
                 || profile
                     .role_id
@@ -358,6 +550,20 @@ impl Snapshot {
         let mut conversations = HashSet::new();
         for conversation in &self.conversations {
             conversation.validate()?;
+            if conversation
+                .context
+                .model
+                .account
+                .as_ref()
+                .is_some_and(|a| {
+                    !self
+                        .accounts
+                        .iter()
+                        .any(|saved| saved.id == a.id && saved.provider == a.provider)
+                })
+            {
+                return Err("Missing conversation provider account.".into());
+            }
             if !conversations.insert(&conversation.id) || !profiles.contains(&conversation.robot_id)
             {
                 return Err("Duplicate conversation ID or missing Robot.".into());
@@ -367,6 +573,15 @@ impl Snapshot {
     }
 
     pub fn disable_tools(&mut self) {
+        for entry in &mut self.catalog {
+            if entry.kind == "mcp"
+                && let Ok(serde_json::Value::Object(mut server)) =
+                    serde_json::from_str(&entry.content)
+            {
+                server.insert("enabled_tools".into(), serde_json::json!([]));
+                entry.content = serde_json::Value::Object(server).to_string();
+            }
+        }
         for profile in &mut self.profiles {
             for server in &mut profile.mcp_servers {
                 server.enabled_tools.clear();
@@ -382,7 +597,7 @@ impl Database {
         connection.busy_timeout(std::time::Duration::from_secs(3))?;
         connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;")?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 2 {
+        if version > 4 {
             return Err("This Robot database needs a newer version of Orbit.".into());
         }
         if version == 0 {
@@ -403,7 +618,109 @@ impl Database {
         if version < 2 {
             connection.pragma_update(None, "user_version", 2)?;
         }
+        if version < 3 {
+            connection.execute_batch("BEGIN IMMEDIATE; CREATE TABLE accounts(id TEXT PRIMARY KEY NOT NULL, data TEXT NOT NULL); PRAGMA user_version=3; COMMIT;")?;
+        }
+        if version < 4 {
+            connection.execute_batch("BEGIN IMMEDIATE; CREATE TABLE catalog(id TEXT PRIMARY KEY NOT NULL, data TEXT NOT NULL); PRAGMA user_version=4; COMMIT;")?;
+        }
         Ok(Self { connection })
+    }
+
+    pub fn catalog(&self) -> Result<Vec<CatalogEntry>> {
+        read_json_rows(
+            &self.connection,
+            "SELECT data FROM catalog ORDER BY json_extract(data,'$.name'),id",
+        )
+    }
+    pub fn save_catalog(&self, entry: &CatalogEntry) -> Result<()> {
+        entry.validate()?;
+        self.connection.execute("INSERT INTO catalog(id,data) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE data<>excluded.data", params![entry.id, serde_json::to_string(entry)?])?;
+        Ok(())
+    }
+    pub fn delete_catalog(&self, id: &str) -> Result<()> {
+        self.connection
+            .execute("DELETE FROM catalog WHERE id=?1", [id])?;
+        Ok(())
+    }
+    pub fn delete_role(&self, id: &str) -> Result<()> {
+        self.connection
+            .execute("DELETE FROM roles WHERE id=?1", [id])
+            .map_err(|_| "This Role is assigned to a Robot. Remove that assignment first.")?;
+        Ok(())
+    }
+    pub fn delete_profile(&mut self, id: &str) -> Result<()> {
+        let tx = self.connection.transaction()?;
+        tx.execute("DELETE FROM conversations WHERE robot_id=?1", [id])?;
+        tx.execute("DELETE FROM profiles WHERE id=?1", [id])?;
+        tx.commit()?;
+        Ok(())
+    }
+    pub fn common_commands(&self, robot: &str) -> Result<Vec<String>> {
+        let mut query = self.connection.prepare("SELECT json_extract(e.data,'$.text') AS text FROM entries e JOIN conversations c ON c.id=e.conversation_id WHERE c.robot_id=?1 AND json_extract(e.data,'$.kind') IN ('Command','Queued') GROUP BY text ORDER BY COUNT(*) DESC,MAX(c.updated_at) DESC,text LIMIT 3")?;
+        Ok(query
+            .query_map([robot], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn accounts(&self) -> Result<Vec<Account>> {
+        read_json_rows(
+            &self.connection,
+            "SELECT data FROM accounts ORDER BY json_extract(data,'$.name'),id",
+        )
+    }
+
+    pub fn account(&self, id: &str) -> Result<Account> {
+        read_account(&self.connection, id)
+    }
+
+    pub fn save_account(&self, account: &Account) -> Result<()> {
+        account.validate()?;
+        let previous: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT data FROM accounts WHERE id=?1",
+                [&account.id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(previous) = previous {
+            let previous: Account = serde_json::from_str(&previous)?;
+            if previous.provider != account.provider {
+                return Err("Create a new account to change its provider.".into());
+            }
+        }
+        self.connection.execute("INSERT INTO accounts(id,data) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE data<>excluded.data", params![account.id, serde_json::to_string(account)?])?;
+        Ok(())
+    }
+
+    pub fn check_account(&self, model: &mut Model) -> Result<()> {
+        if let Some(account) = &mut model.account {
+            let saved = self.account(&account.id)?;
+            if account.id.starts_with("t3-")
+                && (saved.home != account.home || saved.binding != account.binding)
+            {
+                return Err("This T3 Code connection changed. Select the provider again for a new conversation.".into());
+            }
+            if saved.provider != account.provider || saved.needs_reconnection {
+                return Err(
+                    "Reconnect this provider account in Robot settings before running work.".into(),
+                );
+            }
+            // Reconnection authorizes the saved account, without retargeting its conversation snapshot.
+            account.needs_reconnection = false;
+        }
+        Ok(())
+    }
+
+    pub fn delete_account(&self, id: &str) -> Result<()> {
+        let used: bool = self.connection.query_row("SELECT EXISTS(SELECT 1 FROM profiles WHERE json_extract(data,'$.model.account.id')=?1 UNION ALL SELECT 1 FROM conversations WHERE json_extract(context,'$.model.account.id')=?1)", [id], |r| r.get(0))?;
+        if used {
+            return Err("This account is used by a Robot or conversation. Keep it to preserve its account binding.".into());
+        }
+        self.connection
+            .execute("DELETE FROM accounts WHERE id=?1", [id])?;
+        Ok(())
     }
 
     pub fn profiles(&self) -> Result<Vec<Profile>> {
@@ -430,6 +747,12 @@ impl Database {
 
     pub fn save_profile(&self, profile: &Profile) -> Result<()> {
         profile.validate()?;
+        if let Some(account) = &profile.model.account {
+            let saved = self.account(&account.id)?;
+            if saved.provider != account.provider {
+                return Err("Provider account does not match the Robot.".into());
+            }
+        }
         self.connection.execute("INSERT INTO profiles(id,role_id,data) VALUES(?1,?2,?3)
             ON CONFLICT(id) DO UPDATE SET role_id=excluded.role_id,data=excluded.data WHERE data<>excluded.data",
             params![profile.id, profile.role_id, serde_json::to_string(profile)?])?;
@@ -579,6 +902,8 @@ impl Database {
 
     pub fn snapshot(&mut self) -> Result<Snapshot> {
         let tx = self.connection.transaction()?;
+        let catalog = read_json_rows(&tx, "SELECT data FROM catalog ORDER BY id")?;
+        let accounts = read_json_rows(&tx, "SELECT data FROM accounts ORDER BY id")?;
         let roles = read_json_rows(&tx, "SELECT data FROM roles ORDER BY id")?;
         let profiles = read_json_rows(&tx, "SELECT data FROM profiles ORDER BY id")?;
         let ids = tx
@@ -593,6 +918,8 @@ impl Database {
             .collect::<Result<Vec<_>>>()?;
         tx.commit()?;
         let snapshot = Snapshot {
+            catalog,
+            accounts,
             roles,
             profiles,
             conversations,
@@ -604,7 +931,27 @@ impl Database {
     pub fn restore(&mut self, snapshot: &Snapshot) -> Result<()> {
         snapshot.validate()?;
         let tx = self.connection.transaction()?;
-        tx.execute_batch("DELETE FROM conversations; DELETE FROM profiles; DELETE FROM roles;")?;
+        tx.execute_batch("DELETE FROM conversations; DELETE FROM profiles; DELETE FROM roles; DELETE FROM accounts; DELETE FROM catalog;")?;
+        for entry in &snapshot.catalog {
+            let mut entry = entry.clone();
+            if entry.kind == "mcp" {
+                let mut server: McpServer = serde_json::from_str(&entry.content)?;
+                server.enabled_tools.clear();
+                entry.content = serde_json::to_string(&server)?;
+            }
+            tx.execute(
+                "INSERT INTO catalog(id,data) VALUES(?1,?2)",
+                params![entry.id, serde_json::to_string(&entry)?],
+            )?;
+        }
+        for account in &snapshot.accounts {
+            let mut account = account.clone();
+            account.needs_reconnection = true;
+            tx.execute(
+                "INSERT INTO accounts(id,data) VALUES(?1,?2)",
+                params![account.id, serde_json::to_string(&account)?],
+            )?;
+        }
         for role in &snapshot.roles {
             tx.execute(
                 "INSERT INTO roles(id,data) VALUES(?1,?2)",
@@ -613,6 +960,9 @@ impl Database {
         }
         for profile in &snapshot.profiles {
             let mut profile = profile.clone();
+            if let Some(account) = &mut profile.model.account {
+                account.needs_reconnection = true;
+            }
             for server in &mut profile.mcp_servers {
                 server.enabled_tools.clear();
             }
@@ -626,11 +976,25 @@ impl Database {
             )?;
         }
         for conversation in &snapshot.conversations {
-            insert_conversation(&tx, conversation)?;
+            let mut conversation = conversation.clone();
+            if let Some(account) = &mut conversation.context.model.account {
+                account.needs_reconnection = true;
+            }
+            insert_conversation(&tx, &conversation)?;
         }
         tx.commit()?;
         Ok(())
     }
+}
+
+fn read_account(db: &Connection, id: &str) -> Result<Account> {
+    let data: String = db
+        .query_row("SELECT data FROM accounts WHERE id=?1", [id], |r| r.get(0))
+        .optional()?
+        .ok_or("Provider account is missing. Choose an account in Robot settings.")?;
+    let account: Account = serde_json::from_str(&data)?;
+    account.validate()?;
+    Ok(account)
 }
 
 fn title(command: &str) -> String {
@@ -654,7 +1018,15 @@ fn create_conversation(
     let data: String = db.query_row("SELECT data FROM profiles WHERE id=?1", [robot], |r| {
         r.get(0)
     })?;
-    let profile: Profile = serde_json::from_str(&data)?;
+    let mut profile: Profile = serde_json::from_str(&data)?;
+    if let Some(account) = &profile.model.account {
+        let account = read_account(db, &account.id)?;
+        if account.provider != profile.model.provider {
+            return Err("Provider account does not match the Robot.".into());
+        }
+        profile.model.ollama_address = account.address.clone();
+        profile.model.account = Some(account);
+    }
     let role = profile
         .role_id
         .as_ref()

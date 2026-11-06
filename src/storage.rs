@@ -5,7 +5,6 @@ pub use backup::transfer_data;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::process::Command;
 pub(crate) fn config_path() -> io::Result<PathBuf> {
     #[cfg(windows)]
     let directory = PathBuf::from(
@@ -155,97 +154,232 @@ pub fn remove_icon(name: &str) {
     }
 }
 
-pub fn fetch_icon(url: &str) -> Option<(String, Vec<u8>)> {
-    let (scheme, address) = url.split_once("://")?;
-    let host = address.split(['/', '?', '#']).next()?;
-    if host.is_empty()
-        || !host
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b".-:".contains(&byte))
+type FetchedIcon = (
+    (String, Vec<u8>),
+    slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+);
+
+pub fn fetch_icon(url: &str) -> Option<FetchedIcon> {
+    let uri = website_url(url)?;
+    let origin = format!("{}://{}", uri.scheme_str()?, uri.authority()?);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let website = url.to_string();
+    let direct = sender.clone();
+    std::thread::spawn(move || {
+        let _ = direct.send((true, fetch_site_icon(&website, deadline)));
+    });
+    // A blocked website must not delay the independent fallback by several timeouts.
+    std::thread::spawn(move || {
+        let address = format!("https://www.google.com/s2/favicons?domain_url={origin}&sz=256");
+        let icon = fetch_url(&address, deadline).and_then(|(_, data)| decode_fetched_icon(data));
+        let _ = sender.send((false, icon));
+    });
+    let mut best = None;
+    while let Ok((direct, icon)) =
+        receiver.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
     {
-        return None;
-    }
-    if let Some((_, page)) = fetch_url(url, "html")
-        && let Some(icon) = icon_link(&page, scheme, host)
-        && let Some(image) = fetch_url(&icon, "")
-    {
-        return Some(image);
-    }
-    for extension in ["svg", "png", "jpg", "ico"] {
-        let address = format!("{scheme}://{host}/favicon.{extension}");
-        if let Some(image) = fetch_url(&address, extension) {
-            return Some(image);
+        if let Some(icon) = icon {
+            let ready = direct && icon_quality(&icon) >= 128;
+            keep_better_icon(&mut best, icon);
+            if ready {
+                break;
+            }
         }
     }
-    fetch_url(
-        &format!("https://www.google.com/s2/favicons?domain_url={host}&sz=128"),
-        "png",
-    )
+    best
 }
 
-fn fetch_url(address: &str, extension: &str) -> Option<(String, Vec<u8>)> {
-    let output = Command::new("curl")
-        .args([
-            "--fail",
-            "--location",
-            "--silent",
-            "--show-error",
-            "--proto",
-            "=http,https",
-            "--proto-redir",
-            "=http,https",
-            "--max-time",
-            "4",
-            "--max-filesize",
-            "2097152",
-            address,
-        ])
-        .output()
-        .ok()?;
-    let extension = if extension.is_empty() {
-        ["svg", "png", "jpg", "ico"]
-            .into_iter()
-            .find(|extension| is_icon(&output.stdout, extension))
-            .unwrap_or("")
+fn fetch_site_icon(url: &str, deadline: std::time::Instant) -> Option<FetchedIcon> {
+    let mut addresses = Vec::new();
+    let mut base = url.to_string();
+    if let Some((effective_url, page)) = fetch_url(url, deadline) {
+        addresses = icon_links(&page, &effective_url);
+        base = effective_url;
+    }
+    let uri = website_url(&base)?;
+    let favicon = format!("{}://{}/favicon.ico", uri.scheme_str()?, uri.authority()?);
+    // shortcut: try the three best declarations, expand only if sites need more broken-icon fallbacks.
+    addresses.truncate(3);
+    let mut best = None;
+    for address in addresses {
+        if let Some((_, data)) = fetch_url(&address, deadline)
+            && let Some(icon) = decode_fetched_icon(data)
+        {
+            let ready = icon_quality(&icon) >= 128;
+            keep_better_icon(&mut best, icon);
+            if ready {
+                break;
+            }
+        }
+    }
+    best.or_else(|| fetch_url(&favicon, deadline).and_then(|(_, data)| decode_fetched_icon(data)))
+}
+
+fn icon_quality(icon: &FetchedIcon) -> u32 {
+    if icon.0.0 == "svg" {
+        u32::MAX
     } else {
-        extension
-    };
-    (output.status.success() && is_icon(&output.stdout, extension))
-        .then_some((extension.into(), output.stdout))
+        icon.1.width().min(icon.1.height())
+    }
 }
 
-fn icon_link(html: &[u8], scheme: &str, host: &str) -> Option<String> {
-    let html = std::str::from_utf8(html).ok()?;
-    let mut remaining = html;
-    while let Some(start) = remaining.to_ascii_lowercase().find("<link") {
-        remaining = &remaining[start..];
-        let end = remaining.find('>')?;
-        let tag = &remaining[..end];
-        remaining = &remaining[end + 1..];
+fn keep_better_icon(best: &mut Option<FetchedIcon>, icon: FetchedIcon) {
+    if best
+        .as_ref()
+        .is_none_or(|current| icon_quality(&icon) > icon_quality(current))
+    {
+        *best = Some(icon);
+    }
+}
+
+fn decode_fetched_icon(data: Vec<u8>) -> Option<FetchedIcon> {
+    let extension = ["svg", "png", "jpg", "ico"]
+        .into_iter()
+        .find(|extension| is_icon(&data, extension))?;
+    let preview = crate::apps::decode_icon(&data, &format!("preview.{extension}")).ok()?;
+    (preview.width() > 0 && preview.height() > 0).then_some(((extension.into(), data), preview))
+}
+
+fn fetch_url(address: &str, deadline: std::time::Instant) -> Option<(String, Vec<u8>)> {
+    use std::time::{Duration, Instant};
+    use ureq::ResponseExt;
+    website_url(address)?;
+    let timeout = deadline.checked_duration_since(Instant::now())?;
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    let agent = AGENT.get_or_init(|| {
+        ureq::Agent::config_builder()
+            .max_redirects(5)
+            .timeout_connect(Some(Duration::from_secs(2)))
+            .user_agent("Orbit/0.1")
+            .build()
+            .into()
+    });
+    let mut response = agent
+        .get(address)
+        .config()
+        .timeout_global(Some(timeout))
+        .build()
+        .call()
+        .ok()?;
+    let effective_url = response.get_uri().to_string();
+    let data = response
+        .body_mut()
+        .with_config()
+        .limit(2 * 1024 * 1024)
+        .read_to_vec()
+        .ok()?;
+    Some((effective_url, data))
+}
+
+fn website_url(value: &str) -> Option<ureq::http::Uri> {
+    let uri: ureq::http::Uri = value.parse().ok()?;
+    (matches!(uri.scheme_str(), Some("http" | "https"))
+        && !uri.authority()?.as_str().contains('@')
+        && !uri.host()?.is_empty())
+    .then_some(uri)
+}
+
+fn icon_links(html: &[u8], base: &str) -> Vec<String> {
+    let html = String::from_utf8_lossy(html);
+    let lowercase = html.to_ascii_lowercase();
+    let mut links = Vec::new();
+    let mut offset = 0;
+    while let Some(start) = lowercase[offset..].find("<link") {
+        let start = offset + start;
+        let Some(end) = html[start..].find('>') else {
+            break;
+        };
+        offset = start + end + 1;
+        let tag = &html[start..start + end];
         let Some(rel) = attribute(tag, "rel") else {
             continue;
         };
-        if !rel
-            .split_ascii_whitespace()
-            .any(|word| word.eq_ignore_ascii_case("icon"))
+        let touch = rel.split_ascii_whitespace().any(|word| {
+            word.eq_ignore_ascii_case("apple-touch-icon")
+                || word.eq_ignore_ascii_case("apple-touch-icon-precomposed")
+        });
+        if !touch
+            && !rel
+                .split_ascii_whitespace()
+                .any(|word| word.eq_ignore_ascii_case("icon"))
         {
             continue;
         }
         let Some(href) = attribute(tag, "href") else {
             continue;
         };
-        let address = if href.starts_with("https://") || href.starts_with("http://") {
-            href.to_string()
-        } else if let Some(path) = href.strip_prefix("//") {
-            format!("{scheme}://{path}")
-        } else if href.starts_with('/') {
-            format!("{scheme}://{host}{href}")
-        } else {
-            format!("{scheme}://{host}/{href}")
+        let Some(address) = resolve_icon_url(base, &href.replace("&amp;", "&")) else {
+            continue;
         };
-        return Some(address);
+        let size = attribute(tag, "sizes")
+            .unwrap_or("")
+            .split_ascii_whitespace()
+            .filter_map(|size| {
+                if size.eq_ignore_ascii_case("any") {
+                    return Some(u32::MAX);
+                }
+                let (width, height) = size.split_once(['x', 'X'])?;
+                Some(width.parse::<u32>().ok()?.min(height.parse().ok()?))
+            })
+            .max()
+            .unwrap_or(if touch { 180 } else { 0 });
+        let vector = attribute(tag, "type")
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("image/svg+xml"))
+            || address
+                .split(['?', '#'])
+                .next()
+                .is_some_and(|path| path.to_ascii_lowercase().ends_with(".svg"));
+        links.push((if vector { u32::MAX } else { size }, address));
     }
-    None
+    links.sort_by_key(|link| std::cmp::Reverse(link.0));
+    let mut addresses = Vec::new();
+    for (_, address) in links {
+        if !addresses.contains(&address) {
+            addresses.push(address);
+        }
+    }
+    addresses
+}
+
+fn resolve_icon_url(base: &str, href: &str) -> Option<String> {
+    let base = website_url(base)?;
+    let href = href.trim().split('#').next()?;
+    if href.is_empty() || href.starts_with('#') {
+        return None;
+    }
+    let address = if href.starts_with("//") {
+        format!("{}:{href}", base.scheme_str()?)
+    } else if href.contains(':') {
+        href.to_string()
+    } else {
+        let origin = format!("{}://{}", base.scheme_str()?, base.authority()?);
+        let path = if href.starts_with('/') {
+            href.to_string()
+        } else if href.starts_with('?') {
+            format!("{}{href}", base.path())
+        } else {
+            format!(
+                "{}/{href}",
+                base.path()
+                    .rsplit_once('/')
+                    .map_or("", |(parent, _)| parent)
+            )
+        };
+        let end = path.find(['?', '#']).unwrap_or(path.len());
+        let mut parts = Vec::new();
+        for part in path[..end].split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    parts.pop();
+                }
+                _ => parts.push(part),
+            }
+        }
+        format!("{origin}/{}{}", parts.join("/"), &path[end..])
+    };
+    website_url(&address).map(|_| address)
 }
 
 fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
@@ -325,14 +459,6 @@ fn is_icon(data: &[u8], extension: &str) -> bool {
         "png" => data.starts_with(b"\x89PNG\r\n\x1a\n"),
         "jpg" => data.starts_with(b"\xff\xd8\xff"),
         "ico" => data.starts_with(&[0, 0, 1, 0]),
-        "html" => data.starts_with(b"<!DOCTYPE html") || data.starts_with(b"<html"),
-        "" => {
-            data.starts_with(b"<svg")
-                || data.starts_with(b"<?xml")
-                || data.starts_with(b"\x89PNG\r\n\x1a\n")
-                || data.starts_with(b"\xff\xd8\xff")
-                || data.starts_with(&[0, 0, 1, 0])
-        }
         _ => false,
     }
 }
@@ -377,41 +503,210 @@ pub fn read_chosen_icon(value: &str) -> Result<(String, Vec<u8>), String> {
 
 #[cfg(test)]
 mod icon_tests {
-    use super::icon_link;
+    use super::*;
+
+    #[test]
+    fn prefers_large_touch_icons_over_small_favicons() {
+        assert_eq!(
+            icon_links(
+                br#"<link rel="icon" sizes="16x16" href="/small.png"><link rel="apple-touch-icon" sizes="180x180" href="/large.png">"#,
+                "https://example.com",
+            ),
+            vec!["https://example.com/large.png".to_string(), "https://example.com/small.png".to_string()],
+        );
+    }
+
+    #[test]
+    fn ranks_vectors_and_large_icons_and_removes_duplicates() {
+        let links = icon_links(
+            br#"
+            <LINK HREF="small.png" SIZES="16x16" REL="ICON">
+            <link href="large.png" sizes="48x48 256x256" rel="icon">
+            <link href="vector" type="image/svg+xml" rel="icon">
+            <link href="large.png" sizes="128x128" rel="icon">
+            <link href="data:image/png;base64,AAAA" rel="icon">
+        "#,
+            "https://example.com/sub/page",
+        );
+        assert_eq!(
+            links,
+            vec![
+                "https://example.com/sub/vector",
+                "https://example.com/sub/large.png",
+                "https://example.com/sub/small.png",
+            ]
+        );
+    }
+
+    #[test]
+    fn resolves_relative_and_protocol_relative_icon_urls() {
+        for (href, expected) in [
+            ("../icon.png", "https://example.com/icon.png"),
+            ("../../icon.png", "https://example.com/icon.png"),
+            ("./icon.png", "https://example.com/sub/icon.png"),
+            (
+                "//cdn.example.com/icon.png",
+                "https://cdn.example.com/icon.png",
+            ),
+            ("/icon.svg#symbol", "https://example.com/icon.svg"),
+            ("?icon=1", "https://example.com/sub/page?icon=1"),
+        ] {
+            assert_eq!(
+                resolve_icon_url("https://example.com/sub/page", href).as_deref(),
+                Some(expected)
+            );
+        }
+        for href in [
+            "data:image/png,abc",
+            "file:///tmp/icon",
+            "javascript:alert(1)",
+            "#icon",
+            "https://user:password@example.com/icon",
+        ] {
+            assert!(resolve_icon_url("https://example.com", href).is_none());
+        }
+    }
+
+    #[test]
+    fn rejects_undecodable_images_and_renders_small_vectors_sharply() {
+        assert!(decode_fetched_icon(b"\x89PNG\r\n\x1a\nnot an image".to_vec()).is_none());
+        let vector = decode_fetched_icon(br#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="red"/></svg>"#.to_vec()).unwrap();
+        assert_eq!((vector.1.width(), vector.1.height()), (80, 80));
+        assert_eq!(icon_quality(&vector), u32::MAX);
+    }
+
+    #[test]
+    fn follows_redirects_and_tries_the_next_icon_after_decode_failure() {
+        use std::io::{BufRead, BufReader};
+        use std::net::TcpListener;
+        use std::time::{Duration, Instant};
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(256, 256, image::Rgba([0, 80, 180, 255]))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let png = png.into_inner();
+        let expected = png.clone();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/start", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for (path, status, headers, body) in [
+                ("/start", "302 Found", "Location: /sub/page\r\n", Vec::new()),
+                (
+                    "/sub/page",
+                    "200 OK",
+                    "",
+                    br#"
+                    <!doctype html><link rel="icon" type="image/svg+xml" href="../broken.svg">
+                    <link rel="apple-touch-icon" sizes="256x256" href="../image?x=1&amp;y=2">
+                    <link rel="icon" sizes="16x16" href="/small.png">
+                "#
+                    .to_vec(),
+                ),
+                (
+                    "/broken.svg",
+                    "200 OK",
+                    "",
+                    b"<?xml version='1.0'?><error/>".to_vec(),
+                ),
+                ("/image?x=1&y=2", "200 OK", "", png),
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut reader = BufReader::new(&stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                assert_eq!(line.split_whitespace().nth(1), Some(path));
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nConnection: close\r\nContent-Length: {}\r\n{headers}\r\n",
+                    body.len()
+                )
+                .unwrap();
+                stream.write_all(&body).unwrap();
+            }
+        });
+        let icon = fetch_site_icon(&url, Instant::now() + Duration::from_secs(6)).unwrap();
+        server.join().unwrap();
+        assert_eq!(icon.0, ("png".into(), expected));
+        assert_eq!((icon.1.width(), icon.1.height()), (256, 256));
+    }
+
+    #[test]
+    fn request_deadline_stops_a_stalled_server() {
+        use std::net::TcpListener;
+        use std::time::{Duration, Instant};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}/", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            std::thread::sleep(Duration::from_millis(400));
+        });
+        let start = Instant::now();
+        assert!(fetch_url(&address, start + Duration::from_millis(100)).is_none());
+        assert!(start.elapsed() < Duration::from_millis(350));
+        server.join().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires public website and Google connectivity"]
+    fn fetches_live_website_icons() {
+        for url in [
+            "https://www.linkedin.com",
+            "https://github.com",
+            "https://www.wikipedia.org",
+        ] {
+            let start = std::time::Instant::now();
+            let icon = fetch_icon(url).unwrap_or_else(|| panic!("No icon for {url}"));
+            eprintln!(
+                "{url}: {} {}x{} in {:.2}s",
+                icon.0.0,
+                icon.1.width(),
+                icon.1.height(),
+                start.elapsed().as_secs_f32()
+            );
+            assert!(start.elapsed() < std::time::Duration::from_secs(7));
+        }
+    }
 
     #[test]
     fn reads_site_icon_with_attributes_in_either_order() {
         assert_eq!(
-            icon_link(
+            icon_links(
                 br#"<link rel="stylesheet" href="x.css"><link href="/brand.png" sizes="64x64" rel="icon">"#,
-                "https",
-                "example.com",
+                "https://example.com",
             ),
-            Some("https://example.com/brand.png".into()),
+            vec!["https://example.com/brand.png".to_string()],
         );
     }
 
     #[test]
     fn reads_shortcut_icon_rel_tokens() {
         assert_eq!(
-            icon_link(
+            icon_links(
                 br#"<link rel="shortcut icon" href="/favicon.png">"#,
-                "https",
-                "example.com",
+                "https://example.com",
             ),
-            Some("https://example.com/favicon.png".into()),
+            vec!["https://example.com/favicon.png".to_string()],
         );
     }
 
     #[test]
     fn reads_absolute_site_icon_url() {
         assert_eq!(
-            icon_link(
+            icon_links(
                 br#"<link rel="icon" href="https://icons.example.com/brand.png">"#,
-                "https",
-                "example.com",
+                "https://example.com",
             ),
-            Some("https://icons.example.com/brand.png".into()),
+            vec!["https://icons.example.com/brand.png".to_string()],
         );
     }
 }

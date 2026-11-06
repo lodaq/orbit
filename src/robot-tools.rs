@@ -20,6 +20,10 @@ static APPROVAL_ID: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "action", deny_unknown_fields)]
 pub enum LocalAction {
+    Provider {
+        name: String,
+        scope: serde_json::Value,
+    },
     Read {
         path: PathBuf,
     },
@@ -44,6 +48,17 @@ pub struct Approval {
     pub id: u64,
     pub project: PathBuf,
     pub action: LocalAction,
+}
+
+pub fn provider_approval(project: &Path, name: &str, scope: serde_json::Value) -> Approval {
+    Approval {
+        id: APPROVAL_ID.fetch_add(1, Ordering::Relaxed) + 1,
+        project: project.into(),
+        action: LocalAction::Provider {
+            name: name.into(),
+            scope,
+        },
+    }
 }
 
 // Pending actions are memory-only and owned by one conversation's worker.
@@ -96,6 +111,9 @@ impl LocalTools {
 
 fn validate_action(project: &Path, action: &mut LocalAction) -> Result<()> {
     match action {
+        LocalAction::Provider { .. } => {
+            return Err("Provider permissions are handled by the native session.".into());
+        }
         LocalAction::Run { program, arguments } => {
             if program.is_empty()
                 || program.contains('\0')
@@ -135,6 +153,9 @@ fn validate_action(project: &Path, action: &mut LocalAction) -> Result<()> {
 
 fn execute(request: Approval) -> Result<String> {
     match request.action {
+        LocalAction::Provider { .. } => {
+            Err("Provider permissions cannot execute as local tools.".into())
+        }
         LocalAction::Read { path } => read_text(&path),
         LocalAction::Skill { path } => {
             let instructions = read_text(&path)?;

@@ -97,6 +97,7 @@ enum Action {
     SavePath(String, String, bool, String, u64),
     SaveFolder(String, String, u64),
     AddRobot(String, String),
+    RenameRobot(String, String),
     Delete(String),
     Open(String),
     OpenFolder(String),
@@ -249,6 +250,7 @@ pub fn connect(launcher: &Launcher) {
                     | Action::SavePath(..)
                     | Action::SaveFolder(..)
                     | Action::AddRobot(..)
+                    | Action::RenameRobot(..)
                     | Action::Delete(_)
                     | Action::Drop(..)
                     | Action::AddPredefined(..)
@@ -277,6 +279,7 @@ pub fn connect(launcher: &Launcher) {
                 && !matches!(
                     action,
                     Action::Drop(..)
+                        | Action::RenameRobot(..)
                         | Action::SaveSearchPath(..)
                         | Action::DeleteSearchPath(..)
                         | Action::AddFileSearchExclusion(..)
@@ -700,6 +703,10 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     let sender = send.clone();
     launcher.on_add_robot(move |profile, name| {
         let _ = sender.send(Action::AddRobot(profile.into(), name.into()));
+    });
+    let sender = send.clone();
+    launcher.on_rename_robot(move |profile, name| {
+        let _ = sender.send(Action::RenameRobot(profile.into(), name.into()));
     });
     let sender = send.clone();
     launcher.on_save_shortcut(move |action, existing, keys| {
@@ -1192,6 +1199,28 @@ impl Apps {
             }
             Action::SaveFolder(index, name, request) => {
                 self.save_folder(&index, name, requests, request)
+            }
+            Action::RenameRobot(profile, name) => {
+                let mut config = self.config.clone();
+                let mut changed = false;
+                for item in &mut config.items {
+                    if let Item::Robot {
+                        profile: saved,
+                        name: label,
+                        ..
+                    } = item
+                        && *saved == profile
+                        && *label != name
+                    {
+                        label.clone_from(&name);
+                        changed = true;
+                    }
+                }
+                if changed {
+                    config.save().map_err(|e| e.to_string())?;
+                    self.config = config;
+                }
+                Ok(())
             }
             Action::AddRobot(profile, name) => {
                 let db = crate::robot_data::Database::open(
@@ -2956,10 +2985,18 @@ pub(crate) fn decode_icon(
             image.height(),
         ));
     }
-    slint::Image::load_from_data(data, Some(extension))
-        .map_err(|_| "Couldn't read website icon")?
-        .to_rgba8()
-        .ok_or_else(|| "Couldn't read website icon".into())
+    let image = slint::Image::load_from_data(data, Some(extension))
+        .map_err(|_| "Couldn't read website icon")?;
+    if extension == "svg" {
+        // Small intrinsic SVG dimensions must not turn a scalable icon into a tiny bitmap.
+        i_slint_core::graphics::image_to_rgba8_with_target_size(
+            &image,
+            i_slint_core::graphics::IntSize::new(80, 80),
+        )
+    } else {
+        image.to_rgba8()
+    }
+    .ok_or_else(|| "Couldn't read website icon".into())
 }
 
 fn read_background_image(path: &std::path::Path) -> Option<SharedPixelBuffer<Rgba8Pixel>> {

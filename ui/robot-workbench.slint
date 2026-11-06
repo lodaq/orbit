@@ -1,8 +1,29 @@
 import { Theme } from "theme.slint";
-import { Panel, AddOption, AddField, OrbitText, TextDirection } from "controls.slint";
+import { AddOption, AddField, OrbitText, TextDirection, SettingsSelect, SettingsNav } from "controls.slint";
 export struct RobotChoice { id: string, name: string }
 export struct RobotActivity { heading: string, text: string }
+export struct RobotProvider { id: string, name: string, driver: string, status: string, models: string }
+export struct RobotResource { id: string, kind: string, name: string, content: string }
 export global RobotWorkbench {
+    in-out property <int> section;
+    in-out property <[RobotResource]> actions;
+    in-out property <[RobotResource]> custom-skills;
+    in-out property <[RobotResource]> projects;
+    in-out property <[RobotResource]> mcps;
+    in-out property <[RobotResource]> credentials;
+    in-out property <[RobotChoice]> installed-skills;
+    in-out property <[RobotChoice]> common-actions;
+    in-out property <string> common-profile;
+    in-out property <string> resource-id;
+    in-out property <string> resource-name;
+    in-out property <string> resource-content;
+    in-out property <bool> shell-action;
+    callback refresh-skills();
+    callback save-resource();
+    callback remove-resource(string, string);
+    callback context-actions(string);
+    callback run-action(string, string);
+    callback duplicate-robot(string);
     in-out property <bool> visible;
     in-out property <bool> editing;
     in-out property <bool> adding;
@@ -14,6 +35,22 @@ export global RobotWorkbench {
     in-out property <string> name;
     in-out property <string> project;
     in-out property <int> provider;
+    in-out property <[RobotChoice]> accounts;
+    in-out property <[string]> account-names;
+    in-out property <int> account-index;
+    in-out property <[RobotProvider]> providers;
+    in-out property <[string]> provider-models;
+    in-out property <int> provider-model-index;
+    in-out property <string> providers-error;
+    in-out property <bool> providers-loading;
+    callback load-providers();
+    in-out property <string> account-id;
+    in-out property <bool> account-managed;
+    in-out property <string> account-name;
+    in-out property <string> account-credential;
+    in-out property <string> account-home;
+    callback select-account(string);
+    callback save-account();
     in-out property <string> model;
     in-out property <string> address: "http://127.0.0.1:11434";
     in-out property <string> role-id;
@@ -59,39 +96,48 @@ export global RobotWorkbench {
 }
 
 export component RobotPanel inherits Rectangle {
-    background: Theme.backdrop;
+    background: Theme.robot-background;
     init => { initial-focus.focus(); }
     initial-focus := FocusScope { }
-    private property <length> content-width: min(1100px, root.width - 32px) - 284px;
-    private property <int> tab;
+    private property <length> content-width: root.width - 316px;
+    private property <string> pending-delete;
     private property <bool> confirm-delete;
     TouchArea { clicked => { RobotWorkbench.visible = false; } }
-    Panel {
-        x: max(16px, (parent.width - 1100px) / 2); y: 24px;
-        width: parent.width - 2 * self.x; height: parent.height - 48px;
+    Rectangle {
+        x: 0px; y: 0px; background: Theme.robot-background;
+        width: parent.width; height: parent.height;
         TouchArea { }
+        Rectangle { x: 12px; y: 96px; width: 244px; height: parent.height - 120px; background: Theme.robot-sidebar; border-radius: Theme.robot-radius; }
         VerticalLayout {
             width: parent.width; height: parent.height;
             padding: 24px; spacing: 12px;
             HorizontalLayout {
                 height: 48px;
-                Image { width: 48px; source: @image-url("assets/robot.svg"); image-fit: contain; }
-                OrbitText { text: RobotWorkbench.name == "" ? "Robots" : RobotWorkbench.name; color: Theme.text; font-size: Theme.type-title; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
-                AddOption { label: RobotWorkbench.editing ? "Workbench" : "Settings"; enabled: RobotWorkbench.profile-id != ""; clicked => { RobotWorkbench.editing = !RobotWorkbench.editing; } }
+
+                OrbitText { text: RobotWorkbench.editing ? "Robots" : RobotWorkbench.name; color: Theme.text; font-size: Theme.type-title; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+
                 AddOption { label: "×"; accessible-label: "Close workbench"; option-width: 40px; clicked => { RobotWorkbench.visible = false; } }
             }
-            if RobotWorkbench.error != "": OrbitText { text: RobotWorkbench.error; color: Theme.error; wrap: word-wrap; }
-            if RobotWorkbench.status != "": OrbitText { text: RobotWorkbench.status; color: Theme.secondary; wrap: word-wrap; }
+            OrbitText { min-height: 32px; max-height: 32px; text: RobotWorkbench.error != "" ? RobotWorkbench.error : RobotWorkbench.status; color: RobotWorkbench.error != "" ? Theme.error : Theme.secondary; wrap: word-wrap; }
             Rectangle {
-                height: root.height - 180px;
+                height: max(100px, root.height - 152px);
               HorizontalLayout {
                 width: parent.width; height: parent.height;
                 spacing: 16px;
                 VerticalLayout {
                     width: 220px; height: parent.height; spacing: 8px;
-                    if RobotWorkbench.editing: AddOption { label: "New Robot"; full-width: true; available-width: 220px; clicked => { RobotWorkbench.open("", true); } }
+                    if RobotWorkbench.editing: Flickable {
+                      vertical-stretch: 1; content-width: self.width; content-height: navigation.preferred-height;
+                      navigation := VerticalLayout {
+                        width: parent.width; height: self.preferred-height; spacing: 4px;
+                        for title[i] in ["Robots", "Skills", "Providers", "Actions", "MCPs", "Credentials", "Projects", "Roles"]: SettingsNav {
+                            label: title; available-width: 220px; selected: RobotWorkbench.section == i;
+                            clicked => { RobotWorkbench.section = i; root.pending-delete = ""; RobotWorkbench.resource-id = ""; RobotWorkbench.resource-name = ""; RobotWorkbench.resource-content = ""; }
+                        }
+                      }
+                    }
                     if !RobotWorkbench.editing: AddOption { label: "New conversation"; full-width: true; available-width: 220px; clicked => { RobotWorkbench.select-conversation(""); root.confirm-delete = false; } }
-                    Flickable {
+                    if !RobotWorkbench.editing: Flickable {
                         vertical-stretch: 1; min-height: 100px;
                         content-width: self.width;
                         content-height: choices.preferred-height;
@@ -113,9 +159,7 @@ export component RobotPanel inherits Rectangle {
                   if RobotWorkbench.editing: VerticalLayout {
                     width: parent.width; height: parent.height;
                     spacing: 12px;
-                    HorizontalLayout {
-                        for label[i] in ["Profile", "Roles", "MCP", "Credentials"] : AddOption { label: label; option-width: 110px; selected: root.tab == i; clicked => { root.tab = i; } }
-                    }
+                    OrbitText { text: ["Robots", "Skills", "Providers", "Actions", "MCPs", "Credentials", "Projects", "Roles"][RobotWorkbench.section]; color: Theme.text; font-size: Theme.type-title; font-weight: 600; }
                     Flickable {
                         vertical-stretch: 1; min-height: 100px;
                         width: root.content-width;
@@ -123,39 +167,96 @@ export component RobotPanel inherits Rectangle {
                         form := VerticalLayout {
                             width: root.content-width; height: self.preferred-height;
                             spacing: 12px; padding: 0px; alignment: start;
-                            if root.tab == 0: VerticalLayout {
+                            if RobotWorkbench.section == 0: VerticalLayout {
                                 width: root.content-width;
                                 spacing: 12px;
+                                HorizontalLayout {
+                                    AddOption { label: "Add Robot"; clicked => { RobotWorkbench.open("", true); } }
+                                    AddOption { label: "Add to Canvas"; option-width: 150px; enabled: RobotWorkbench.profile-id != ""; clicked => { RobotWorkbench.add-to-canvas(); } }
+                                }
+                                for profile in RobotWorkbench.profiles: HorizontalLayout {
+                                    AddOption { label: profile.name; full-width: true; available-width: root.content-width - 140px; selected: RobotWorkbench.profile-id == profile.id; clicked => { RobotWorkbench.open(profile.id, true); } }
+                                    AddOption { label: root.pending-delete == profile.id ? "Confirm delete" : "Remove"; destructive: true; option-width: 130px; clicked => { if root.pending-delete == profile.id { RobotWorkbench.remove-resource("robot", profile.id); root.pending-delete = ""; } else { root.pending-delete = profile.id; } } }
+                                }
                                 AddField { label: "Name"; text <=> RobotWorkbench.name; }
                                 AddField { label: "Project"; placeholder: "Absolute project directory"; text <=> RobotWorkbench.project; }
-                                HorizontalLayout {
-                                    for label[i] in ["Ollama", "OpenAI", "Gemini"] : AddOption { label: label; selected: RobotWorkbench.provider == i; clicked => { RobotWorkbench.provider = i; } }
-                                }
+                                OrbitText { text: "Provider"; color: Theme.text; }
+                                SettingsSelect { width: root.content-width; label: "Provider"; model: RobotWorkbench.account-names; current-index <=> RobotWorkbench.account-index; selected => { RobotWorkbench.select-account(self.current-index == 0 ? "" : RobotWorkbench.accounts[self.current-index - 1].id); } }
+                                if RobotWorkbench.accounts.length == 0: OrbitText { text: "Add a provider in Robots → Providers."; color: Theme.secondary; wrap: word-wrap; }
+                                if RobotWorkbench.provider-models.length > 0: SettingsSelect { width: root.content-width; label: "Available models"; model: RobotWorkbench.provider-models; current-index <=> RobotWorkbench.provider-model-index; selected => { RobotWorkbench.model = RobotWorkbench.provider-models[self.current-index]; } }
+                                AddOption { label: "Manage providers"; option-width: 180px; clicked => { RobotWorkbench.section = 2; } }
                                 AddField { label: "Model ID"; placeholder: "An installed or available model"; text <=> RobotWorkbench.model; }
-                                if RobotWorkbench.provider == 0: AddField { label: "Ollama address"; text <=> RobotWorkbench.address; }
                                 OrbitText { text: "Role: " + (RobotWorkbench.role-name == "" ? "None" : RobotWorkbench.role-name); color: Theme.secondary; }
                                 HorizontalLayout {
                                     AddOption { label: "None"; selected: RobotWorkbench.role-id == ""; clicked => { RobotWorkbench.select-role(""); } }
-                                    AddOption { label: "Choose Role"; option-width: 120px; clicked => { root.tab = 1; } }
+                                    AddOption { label: "Choose Role"; option-width: 120px; clicked => { RobotWorkbench.section = 7; } }
                                 }
                                 AddField { label: "Skills"; placeholder: "One absolute installed SKILL.md path per line"; text <=> RobotWorkbench.skills; multiline: true; accept-newlines: true; }
-                                OrbitText { text: "Skills use Orbit tools. Loading each Skill and accessing local files requires approval."; color: Theme.secondary; wrap: word-wrap; }
+                                OrbitText { text: "Loading each Skill requires approval. Native providers use their own tools and the displayed permission scope."; color: Theme.secondary; wrap: word-wrap; }
                             }
-                            if root.tab == 1: VerticalLayout {
+                            if RobotWorkbench.section == 2: VerticalLayout {
+                                spacing: 12px;
+                                AddOption { label: RobotWorkbench.providers-loading ? "Fetching…" : "Fetch from T3 Code"; option-width: 210px; enabled: !RobotWorkbench.providers-loading; clicked => { RobotWorkbench.load-providers(); } }
+                                if RobotWorkbench.providers-error != "": OrbitText { text: RobotWorkbench.providers-error; color: Theme.error; wrap: word-wrap; }
+                                for account in RobotWorkbench.accounts: HorizontalLayout {
+                                    AddOption { label: account.name; full-width: true; available-width: root.content-width - 140px; selected: RobotWorkbench.account-id == account.id; clicked => { RobotWorkbench.select-account(account.id); } }
+                                    AddOption { label: root.pending-delete == account.id ? "Confirm remove" : "Remove"; option-width: 130px; destructive: true; clicked => { if root.pending-delete == account.id { RobotWorkbench.remove-resource("account", account.id); root.pending-delete = ""; } else { root.pending-delete = account.id; } } }
+                                }
+                                for provider in RobotWorkbench.providers: VerticalLayout {
+                                    OrbitText { text: provider.name + " · " + provider.status; color: Theme.secondary; wrap: word-wrap; }
+                                    OrbitText { text: provider.models; color: Theme.secondary; wrap: word-wrap; }
+                                }
+                                AddOption { label: "Add provider"; option-width: 150px; clicked => { RobotWorkbench.select-account(""); } }
+                                SettingsSelect { width: root.content-width; label: "Provider type"; model: ["Ollama", "OpenAI", "Gemini", "OpenCode", "Antigravity", "Copilot", "Codex / ChatGPT"]; current-index <=> RobotWorkbench.provider; }
+                                AddField { label: "Account name"; text <=> RobotWorkbench.account-name; }
+                                if RobotWorkbench.provider == 0: AddField { label: "Ollama address"; text <=> RobotWorkbench.address; }
+                                if RobotWorkbench.provider == 1 || RobotWorkbench.provider == 2: AddField { label: "Credential reference"; text <=> RobotWorkbench.account-credential; }
+                                if RobotWorkbench.provider >= 3: AddField { label: "Account directory"; text <=> RobotWorkbench.account-home; }
+                                AddOption { label: "Save provider"; option-width: 150px; enabled: !RobotWorkbench.account-managed; clicked => { RobotWorkbench.save-account(); } }
+                            }
+                            if RobotWorkbench.section == 1 || RobotWorkbench.section == 3 || RobotWorkbench.section == 6: VerticalLayout {
+                                spacing: 12px;
+                                if RobotWorkbench.section == 1: AddOption { label: "Refresh from ~/.agents"; option-width: 220px; clicked => { RobotWorkbench.refresh-skills(); } }
+                                if RobotWorkbench.section == 1: OrbitText { text: "Installed skills · ~/.agents/skills"; color: Theme.secondary; }
+                                if RobotWorkbench.section == 1: VerticalLayout {
+                                    for skill in RobotWorkbench.installed-skills: AddOption { label: skill.name; full-width: true; available-width: root.content-width; clicked => { RobotWorkbench.skills = RobotWorkbench.skills == "" ? skill.id : RobotWorkbench.skills + "\n" + skill.id; RobotWorkbench.status = "Skill selected. Save the Robot to apply it."; } }
+                                }
+                                for entry in RobotWorkbench.section == 1 ? RobotWorkbench.custom-skills : RobotWorkbench.section == 3 ? RobotWorkbench.actions : RobotWorkbench.projects: VerticalLayout {
+                                    if (RobotWorkbench.section == 1 && entry.kind == "skill") || (RobotWorkbench.section == 3 && (entry.kind == "prompt" || entry.kind == "shell")) || (RobotWorkbench.section == 6 && entry.kind == "project"): HorizontalLayout {
+                                        AddOption { label: entry.name; full-width: true; available-width: root.content-width - 240px; clicked => { RobotWorkbench.resource-id = entry.id; RobotWorkbench.resource-name = entry.name; RobotWorkbench.resource-content = entry.content; RobotWorkbench.shell-action = entry.kind == "shell"; } }
+                                        if RobotWorkbench.section != 3: AddOption { label: "Use"; option-width: 80px; clicked => { if entry.kind == "project" { RobotWorkbench.project = entry.content; } else { RobotWorkbench.skills = RobotWorkbench.skills == "" ? entry.content : RobotWorkbench.skills + "\n" + entry.content; } RobotWorkbench.status = "Selected. Save the Robot to apply it."; } }
+                                        AddOption { label: root.pending-delete == entry.id ? "Confirm" : "Remove"; destructive: true; option-width: 100px; clicked => { if root.pending-delete == entry.id { RobotWorkbench.remove-resource("catalog", entry.id); root.pending-delete = ""; } else { root.pending-delete = entry.id; } } }
+                                    }
+                                }
+                                AddOption { label: "Add"; clicked => { RobotWorkbench.resource-id = ""; RobotWorkbench.resource-name = ""; RobotWorkbench.resource-content = ""; } }
+                                AddField { label: "Name"; text <=> RobotWorkbench.resource-name; }
+                                if RobotWorkbench.section == 3: HorizontalLayout {
+                                    AddOption { label: "Prompt"; selected: !RobotWorkbench.shell-action; clicked => { RobotWorkbench.shell-action = false; } }
+                                    AddOption { label: "Shell command"; option-width: 160px; selected: RobotWorkbench.shell-action; clicked => { RobotWorkbench.shell-action = true; } }
+                                }
+                                AddField { label: RobotWorkbench.section == 1 ? "SKILL.md path" : RobotWorkbench.section == 6 ? "Project directory" : RobotWorkbench.shell-action ? "Shell command (run by Robot)" : "Prompt"; text <=> RobotWorkbench.resource-content; multiline: RobotWorkbench.section == 3; accept-newlines: RobotWorkbench.section == 3; }
+                                AddOption { label: "Save"; primary: true; clicked => { RobotWorkbench.save-resource(); } }
+                            }
+                            if RobotWorkbench.section == 7: VerticalLayout {
                                 width: root.content-width;
                                 spacing: 12px;
                                 for role in RobotWorkbench.roles: AddOption { label: role.name; selected: role.id == RobotWorkbench.role-id; full-width: true; available-width: 220px; clicked => { RobotWorkbench.select-role(role.id); } }
+                                AddOption { label: root.pending-delete != "" && root.pending-delete == RobotWorkbench.role-id ? "Confirm remove" : "Remove Role"; destructive: true; enabled: RobotWorkbench.role-id != ""; option-width: 160px; clicked => { if root.pending-delete == RobotWorkbench.role-id { RobotWorkbench.remove-resource("role", RobotWorkbench.role-id); root.pending-delete = ""; } else { root.pending-delete = RobotWorkbench.role-id; } } }
                                 AddOption { label: "New Role"; clicked => { RobotWorkbench.select-role(""); } }
                                 AddField { label: "Role name"; text <=> RobotWorkbench.role-name; }
                                 AddField { label: "Instructions"; text <=> RobotWorkbench.instructions; multiline: true; accept-newlines: true; multiline-height: 180px; }
                                 AddOption { label: "Save Role"; enabled: !RobotWorkbench.busy; clicked => { RobotWorkbench.save-role(); } }
                                 OrbitText { text: "Saved Roles are reusable. Choose a Role here, then save the Robot profile. Existing conversations keep their starting instructions."; color: Theme.secondary; wrap: word-wrap; }
                             }
-                            if root.tab == 2: VerticalLayout {
+                            if RobotWorkbench.section == 4: VerticalLayout {
                                 width: root.content-width;
                                 spacing: 12px;
+                                OrbitText { text: "Select a saved server, then Save server to attach it to this Robot. Save the Robot profile to apply changes."; color: Theme.secondary; wrap: word-wrap; }
+                                for entry in RobotWorkbench.mcps: AddOption { label: entry.name; full-width: true; available-width: root.content-width; selected: entry.name == RobotWorkbench.server-id; clicked => { RobotWorkbench.select-server(entry.name); } }
                                 OrbitText { text: "Enabled MCP tools run automatically and may access your machine. Discover starts the configured program. Save each server before saving the profile."; color: Theme.secondary; wrap: word-wrap; }
-                                for server in RobotWorkbench.servers: AddOption { label: server.name; selected: server.id == RobotWorkbench.server-id; clicked => { RobotWorkbench.select-server(server.id); } }
+                                if RobotWorkbench.servers.length > 0: OrbitText { text: "Attached to this Robot"; color: Theme.secondary; }
+                                for server in RobotWorkbench.servers: AddOption { label: server.name; full-width: true; available-width: root.content-width; selected: server.id == RobotWorkbench.server-id; clicked => { RobotWorkbench.select-server(server.id); } }
+                                AddOption { label: "Remove server"; destructive: true; enabled: RobotWorkbench.server-id != ""; option-width: 160px; clicked => { RobotWorkbench.remove-resource("server", RobotWorkbench.server-id); } }
                                 AddOption { label: "New server"; clicked => { RobotWorkbench.select-server(""); } }
                                 AddField { label: "Server ID"; text <=> RobotWorkbench.server-id; }
                                 AddField { label: "Program"; text <=> RobotWorkbench.server-command; }
@@ -166,17 +267,21 @@ export component RobotPanel inherits Rectangle {
                                 AddField { label: "Enabled tools (one name per line)"; text <=> RobotWorkbench.server-tools; multiline: true; accept-newlines: true; }
                                 AddOption { label: "Save server"; option-width: 120px; enabled: !RobotWorkbench.busy; clicked => { RobotWorkbench.save-server(); } }
                             }
-                            if root.tab == 3: VerticalLayout {
+                            if RobotWorkbench.section == 5: VerticalLayout {
                                 width: root.content-width;
                                 spacing: 12px;
-                                OrbitText { text: "OpenAI and Gemini use the API keys in Settings → Search bar → AI. Brave Search uses the brave-search reference below. MCP secret references use the same system credential store. Values are never included in backups."; color: Theme.secondary; wrap: word-wrap; }
+                                OrbitText { text: "Named OpenAI and Gemini accounts use their credential reference below. Legacy profiles use the API keys in Settings → Search bar → AI. Brave Search uses the brave-search reference below. MCP secret references use the same system credential store. Values are never included in backups."; color: Theme.secondary; wrap: word-wrap; }
+                                for entry in RobotWorkbench.credentials: HorizontalLayout {
+                                    if entry.kind == "credential": AddOption { label: entry.name; full-width: true; available-width: root.content-width - 140px; clicked => { RobotWorkbench.credential-name = entry.name; } }
+                                    if entry.kind == "credential": AddOption { label: root.pending-delete == entry.id ? "Confirm remove" : "Remove"; destructive: true; option-width: 130px; clicked => { if root.pending-delete == entry.id { RobotWorkbench.remove-resource("credential", entry.name); root.pending-delete = ""; } else { root.pending-delete = entry.id; } } }
+                                }
                                 AddField { label: "Credential reference"; text <=> RobotWorkbench.credential-name; }
                                 AddField { label: "API key or secret"; text <=> RobotWorkbench.credential-value; secret: true; }
                                 AddOption { label: "Save credential"; enabled: !RobotWorkbench.busy; option-width: 160px; clicked => { RobotWorkbench.save-credential(); } }
                             }
                         }
                     }
-                    HorizontalLayout {
+                    if RobotWorkbench.section == 0: HorizontalLayout {
                         Rectangle { horizontal-stretch: 1; }
                         AddOption { label: RobotWorkbench.adding ? "Save and add" : "Save profile"; option-width: 150px; primary: true; enabled: !RobotWorkbench.busy; clicked => { RobotWorkbench.save-profile(); } }
                     }
@@ -188,19 +293,20 @@ export component RobotPanel inherits Rectangle {
                     Flickable {
                         vertical-stretch: 1; min-height: 100px;
                         content-width: self.width; content-height: messages.preferred-height;
+                        changed content-height => { self.content-y = min(0px, self.height - self.content-height); }
                         messages := VerticalLayout {
                             width: root.content-width; height: self.preferred-height;
                             spacing: 16px; padding: 0px; alignment: start;
                             for message in RobotWorkbench.activity: VerticalLayout {
                                 spacing: 6px;
                                 OrbitText { text: message.heading; color: Theme.focus; font-size: Theme.type-control; font-weight: 600; }
-                                TextInput { text: message.text; read-only: true; wrap: word-wrap; color: Theme.text; font-size: Theme.type-body; horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left; }
+                                TextInput { width: root.content-width; height: self.preferred-height; text: message.text; read-only: true; wrap: word-wrap; color: Theme.text; font-size: Theme.type-body; horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left; }
                             }
                         }
                     }
                     if RobotWorkbench.approval != "": VerticalLayout {
                         spacing: 8px;
-                        OrbitText { text: "Local action — full machine access after approval"; color: Theme.focus; wrap: word-wrap; }
+                        OrbitText { text: "Permission request — review the displayed scope"; color: Theme.focus; wrap: word-wrap; }
                         Flickable {
                         height: 160px; content-width: self.width; content-height: approval-text.preferred-height;
                             approval-text := TextInput { width: parent.width; text: RobotWorkbench.approval; read-only: true; wrap: word-wrap; color: Theme.text; }
@@ -210,9 +316,24 @@ export component RobotPanel inherits Rectangle {
                             AddOption { label: "Approve once"; option-width: 140px; primary: true; clicked => { RobotWorkbench.approve(true); } }
                         }
                     }
-                    AddField { label: "Command"; text <=> RobotWorkbench.command; multiline: true; accept-newlines: true; }
+                    Flickable {
+                      height: 44px; content-height: self.height; content-width: action-buttons.preferred-width;
+                      action-buttons := HorizontalLayout {
+                        height: parent.height; width: self.preferred-width; spacing: 8px; alignment: start;
+                        for entry in RobotWorkbench.actions: AddOption {
+                            label: entry.name; option-width: 160px;
+                            clicked => { RobotWorkbench.run-action(RobotWorkbench.profile-id, entry.kind == "shell" ? "Run this exact shell command in the project directory using your shell tool. Request permission before execution.\n\n" + entry.content : entry.content); }
+                        }
+                      }
+                    }
+                    Rectangle {
+                        min-height: 130px; max-height: 130px; background: Theme.robot-composer; border-radius: Theme.robot-radius; border-width: 1px; border-color: Theme.border;
+                        VerticalLayout { padding: 12px;
+                    AddField { label: "Message"; placeholder: "Ask anything…"; text <=> RobotWorkbench.command; multiline: true; accept-newlines: true; }
+                        }
+                    }
                     HorizontalLayout {
-                        AddOption { label: "Queue command"; option-width: 150px; primary: true; enabled: RobotWorkbench.command != ""; clicked => { RobotWorkbench.submit(); } }
+                        AddOption { label: "Send"; option-width: 150px; primary: true; enabled: RobotWorkbench.command != ""; clicked => { RobotWorkbench.submit(); } }
                         AddOption { label: "Cancel work"; option-width: 120px; enabled: RobotWorkbench.running; clicked => { RobotWorkbench.cancel(); } }
                         Rectangle { horizontal-stretch: 1; }
                         for star in 5: AddOption { label: RobotWorkbench.rating > star ? "★" : "☆"; accessible-label: "Rate " + (star + 1); option-width: 40px; enabled: RobotWorkbench.conversation != ""; clicked => { RobotWorkbench.rate(star + 1); } }

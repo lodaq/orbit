@@ -1,5 +1,59 @@
 use super::*;
 
+#[test]
+fn catalog_round_trip_validation_and_removal() {
+    let mut db = database();
+    let mut entry = CatalogEntry {
+        id: "action-1".into(),
+        kind: "shell".into(),
+        name: "Check project".into(),
+        content: "git status --short".into(),
+    };
+    db.save_catalog(&entry).unwrap();
+    let saved = db.snapshot().unwrap();
+    assert_eq!(saved.catalog, vec![entry.clone()]);
+    let mut restored = database();
+    restored.restore(&saved).unwrap();
+    assert_eq!(restored.catalog().unwrap(), vec![entry.clone()]);
+    entry.kind = "credential".into();
+    assert!(db.save_catalog(&entry).is_err());
+    assert!(db.delete_role("researcher").is_err());
+    db.delete_catalog("action-1").unwrap();
+    assert!(db.catalog().unwrap().is_empty());
+}
+
+#[test]
+fn common_commands_are_ranked_per_robot_and_deleted_with_history() {
+    let mut db = database();
+    for (index, text) in ["A", "B", "A", "C", "B", "A", "D"].into_iter().enumerate() {
+        db.start(&format!("chat-{index}"), "robot-1", text, index as i64 + 1)
+            .unwrap();
+    }
+    assert_eq!(db.common_commands("robot-1").unwrap(), vec!["A", "B", "D"]);
+    assert!(db.common_commands("other").unwrap().is_empty());
+    db.delete_profile("robot-1").unwrap();
+    assert!(db.common_commands("robot-1").unwrap().is_empty());
+    assert!(db.snapshot().unwrap().conversations.is_empty());
+}
+
+#[test]
+fn imported_shared_mcp_definitions_require_tools_to_be_enabled_again() {
+    let mut db = database();
+    let server = profile().mcp_servers.remove(0);
+    db.save_catalog(&CatalogEntry {
+        id: "mcp-research".into(),
+        kind: "mcp".into(),
+        name: server.id.clone(),
+        content: serde_json::to_string(&server).unwrap(),
+    })
+    .unwrap();
+    let snapshot = db.snapshot().unwrap();
+    db.restore(&snapshot).unwrap();
+    let imported: McpServer = serde_json::from_str(&db.catalog().unwrap()[0].content).unwrap();
+    assert!(imported.enabled_tools.is_empty());
+    assert_eq!(imported.secret_env, server.secret_env);
+}
+
 fn role() -> Role {
     Role {
         id: "researcher".into(),
@@ -14,6 +68,7 @@ fn profile() -> Profile {
         name: "Research Robot".into(),
         project: "/tmp/project".into(),
         model: Model {
+            account: None,
             provider: Provider::Ollama,
             id: "qwen3:4b".into(),
             ollama_address: Some("http://127.0.0.1:11434".into()),
@@ -51,6 +106,7 @@ fn resumed_conversation_keeps_starting_context_after_profile_and_role_edits() {
     assert_eq!(original.title, "ابحث عن Rust");
     let mut changed = profile();
     changed.model = Model {
+        account: None,
         provider: Provider::Gemini,
         id: "gemini-test".into(),
         ollama_address: None,
@@ -262,7 +318,7 @@ fn export_preserves_unrecognized_and_future_database_files() {
     std::fs::remove_file(&path).unwrap();
     Connection::open(&path)
         .unwrap()
-        .execute_batch("PRAGMA user_version=3")
+        .execute_batch("PRAGMA user_version=5")
         .unwrap();
     let original = std::fs::read(&path).unwrap();
     assert!(export(&path).is_err());
@@ -317,4 +373,206 @@ fn queued_commands_survive_backup_but_restart_never_replays_them() {
         status: RunStatus::Running,
     });
     assert!(invalid.validate().is_err());
+}
+
+fn account(id: &str, provider: Provider) -> Account {
+    let local = provider == Provider::Ollama;
+    Account {
+        id: id.into(),
+        name: format!("حساب {id}"),
+        provider,
+        address: local.then(|| "http://127.0.0.1:11434".into()),
+        credential: None,
+        home: None,
+        needs_reconnection: false,
+        binding: None,
+    }
+}
+
+#[test]
+fn account_selection_is_captured_and_new_conversations_use_saved_connection() {
+    let mut db = database();
+    let personal = account("personal", Provider::Ollama);
+    let work = account("work", Provider::Ollama);
+    db.save_account(&personal).unwrap();
+    db.save_account(&work).unwrap();
+    let mut robot = profile();
+    robot.model.account = Some(personal.clone());
+    db.save_profile(&robot).unwrap();
+    db.start("first", &robot.id, "Hello", 10).unwrap();
+    robot.model.account = Some(work.clone());
+    db.save_profile(&robot).unwrap();
+    let mut changed_work = work.clone();
+    changed_work.address = Some("http://localhost:11435".into());
+    db.save_account(&changed_work).unwrap();
+    db.start("second", &robot.id, "مرحبا", 20).unwrap();
+    assert_eq!(
+        db.conversation("first")
+            .unwrap()
+            .unwrap()
+            .context
+            .model
+            .account,
+        Some(personal)
+    );
+    let second = db.conversation("second").unwrap().unwrap();
+    assert_eq!(second.context.model.account, Some(changed_work.clone()));
+    assert_eq!(second.context.model.ollama_address, changed_work.address);
+    assert!(db.delete_account("personal").is_err());
+    assert!(db.delete_account("work").is_err());
+    assert_eq!(db.accounts().unwrap().len(), 2);
+}
+
+#[test]
+fn accounts_round_trip_without_secrets_and_import_requires_reconnection() {
+    let mut db = database();
+    for provider in [
+        Provider::Ollama,
+        Provider::OpenAi,
+        Provider::Gemini,
+        Provider::OpenCode,
+        Provider::Antigravity,
+        Provider::Copilot,
+        Provider::Codex,
+    ] {
+        for suffix in ["personal", "work"] {
+            let id = format!("account-{}-{suffix}", provider.index());
+            db.save_account(&account(&id, provider.clone())).unwrap();
+        }
+    }
+    let mut robot = profile();
+    robot.model.account = Some(db.account("account-0-personal").unwrap());
+    db.save_profile(&robot).unwrap();
+    db.start("first", &robot.id, "Hello", 10).unwrap();
+    let snapshot = db.snapshot().unwrap();
+    assert_eq!(snapshot.accounts.len(), 14);
+    let encoded = serde_json::to_vec(&snapshot).unwrap();
+    let decoded: Snapshot = serde_json::from_slice(&encoded).unwrap();
+    let mut restored = Database::open(Path::new(":memory:")).unwrap();
+    restored.restore(&decoded).unwrap();
+    assert!(
+        restored
+            .accounts()
+            .unwrap()
+            .iter()
+            .all(|a| a.needs_reconnection)
+    );
+    assert!(
+        restored
+            .profile(&robot.id)
+            .unwrap()
+            .model
+            .account
+            .unwrap()
+            .needs_reconnection
+    );
+    assert!(
+        restored
+            .conversation("first")
+            .unwrap()
+            .unwrap()
+            .context
+            .model
+            .account
+            .unwrap()
+            .needs_reconnection
+    );
+    assert_eq!(
+        restored.conversation("first").unwrap().unwrap().entries,
+        snapshot.conversations[0].entries
+    );
+    let mut malformed = serde_json::to_value(&snapshot).unwrap();
+    malformed["accounts"][0]["access_token"] = "secret".into();
+    assert!(serde_json::from_value::<Snapshot>(malformed).is_err());
+}
+
+#[test]
+fn account_validation_and_deletion_preserve_bindings() {
+    let db = database();
+    let mut a = account("personal", Provider::Ollama);
+    a.address = Some("https://example.org".into());
+    assert!(db.save_account(&a).is_err());
+    a = account("personal", Provider::Ollama);
+    db.save_account(&a).unwrap();
+    let mut changed = account("personal", Provider::Codex);
+    assert!(db.save_account(&changed).is_err());
+    changed.id = "codex".into();
+    changed.home = Some("relative/home".into());
+    assert!(db.save_account(&changed).is_err());
+    let mut robot = profile();
+    robot.model.account = Some(account("missing", Provider::Ollama));
+    assert!(db.save_profile(&robot).is_err());
+    robot.model.account = Some(account("personal", Provider::OpenAi));
+    assert!(db.save_profile(&robot).is_err());
+    db.delete_account("personal").unwrap();
+    assert!(db.accounts().unwrap().is_empty());
+}
+
+#[test]
+fn schema_two_and_legacy_json_migrate_without_account_changes() {
+    let mut db = database();
+    db.start("first", "robot-1", "Hello", 10).unwrap();
+    let before = db.snapshot().unwrap();
+    let mut legacy = serde_json::to_value(&before).unwrap();
+    legacy.as_object_mut().unwrap().remove("accounts");
+    legacy["profiles"][0]["model"]
+        .as_object_mut()
+        .unwrap()
+        .remove("account");
+    legacy["conversations"][0]["context"]["model"]
+        .as_object_mut()
+        .unwrap()
+        .remove("account");
+    let decoded: Snapshot = serde_json::from_value(legacy).unwrap();
+    assert_eq!(decoded, before);
+    db.connection
+        .execute_batch("DROP TABLE accounts; DROP TABLE catalog; PRAGMA user_version=2")
+        .unwrap();
+    let path =
+        std::env::temp_dir().join(format!("orbit-account-migration-{}.db", std::process::id()));
+    // Use a fresh file to exercise Database::open's actual schema migration.
+    let old = Database::open(&path).unwrap();
+    old.connection
+        .execute_batch("DROP TABLE accounts; DROP TABLE catalog; PRAGMA user_version=2")
+        .unwrap();
+    drop(old);
+    let migrated = Database::open(&path).unwrap();
+    assert!(migrated.accounts().unwrap().is_empty());
+    assert_eq!(
+        migrated
+            .connection
+            .pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
+            .unwrap(),
+        4
+    );
+    drop(migrated);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn reconnecting_an_imported_account_unblocks_its_original_conversation_only() {
+    let mut db = database();
+    let original = account("personal", Provider::Ollama);
+    db.save_account(&original).unwrap();
+    let mut robot = profile();
+    robot.model.account = Some(original.clone());
+    db.save_profile(&robot).unwrap();
+    db.start("first", &robot.id, "Hello", 10).unwrap();
+    let snapshot = db.snapshot().unwrap();
+    db.restore(&snapshot).unwrap();
+    let mut model = db.conversation("first").unwrap().unwrap().context.model;
+    assert!(db.check_account(&mut model).is_err());
+    let mut reconnected = original.clone();
+    reconnected.address = Some("http://localhost:11435".into());
+    db.save_account(&reconnected).unwrap();
+    db.check_account(&mut model).unwrap();
+    assert_eq!(model.account, Some(original));
+    assert_eq!(
+        model.ollama_address.as_deref(),
+        Some("http://127.0.0.1:11434")
+    );
+    db.connection
+        .execute("DELETE FROM accounts WHERE id='personal'", [])
+        .unwrap();
+    assert!(db.check_account(&mut model).is_err());
 }

@@ -14,6 +14,7 @@ fn conversation(provider: Provider) -> Conversation {
                 instructions: "Answer in Arabic".into(),
             }),
             model: Model {
+                account: None,
                 ollama_address: if provider == Provider::Ollama {
                     Some("http://127.0.0.1:11434".into())
                 } else {
@@ -47,6 +48,7 @@ fn native_requests_keep_context_and_function_results() {
             Provider::Gemini => {
                 json!({"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"functionCall":{"id":"call-1","name":"read_file","args":{"path":"a.md"}},"thoughtSignature":"opaque"}]}}]})
             }
+            _ => unreachable!("Only connected providers are tested here."),
         };
         let turn = session.accept(response).unwrap();
         assert_eq!(turn.calls.len(), 1);
@@ -79,6 +81,7 @@ fn native_requests_keep_context_and_function_results() {
                 );
             }
             Provider::Ollama => assert_eq!(body["messages"][3]["tool_name"], "read_file"),
+            _ => unreachable!("Only connected providers are tested here."),
         }
     }
 }
@@ -141,4 +144,47 @@ fn provider_keys_and_private_reasoning_do_not_become_visible_output() {
     session.redact(&mut displayed);
     assert_eq!(displayed["text"], "[redacted]");
     assert_eq!(turn.calls[0].arguments["text"], "private-key");
+}
+
+#[test]
+fn saved_native_accounts_report_unconnected_execution_without_running_programs() {
+    for provider in [
+        Provider::OpenCode,
+        Provider::Antigravity,
+        Provider::Copilot,
+        Provider::Codex,
+    ] {
+        let mut conversation = conversation(provider.clone());
+        conversation.context.model.account = Some(crate::robot_data::Account {
+            id: "personal".into(),
+            name: "Personal".into(),
+            provider,
+            address: None,
+            credential: None,
+            home: Some("/tmp/personal".into()),
+            needs_reconnection: false,
+            binding: None,
+        });
+        let error = Session::new(&conversation)
+            .err()
+            .expect("native execution must remain disabled");
+        assert!(error.contains("not connected yet"), "{error}");
+    }
+}
+
+#[test]
+fn imported_accounts_cannot_use_existing_credentials_before_reconnection() {
+    let mut conversation = conversation(Provider::OpenAi);
+    conversation.context.model.account = Some(crate::robot_data::Account {
+        id: "work".into(),
+        name: "Work".into(),
+        provider: Provider::OpenAi,
+        address: None,
+        credential: Some("work-key".into()),
+        home: None,
+        needs_reconnection: true,
+        binding: None,
+    });
+    let error = Session::new(&conversation).err().unwrap();
+    assert!(error.contains("Reconnect"));
 }

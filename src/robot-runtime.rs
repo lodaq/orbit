@@ -422,11 +422,14 @@ impl Worker {
                 status: RunStatus::Running,
             },
         )?;
-        let conversation = self
+        let mut conversation = self
             .db
             .conversation(&job.conversation)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "Conversation no longer exists.".to_owned())?;
+        self.db
+            .check_account(&mut conversation.context.model)
+            .map_err(|e| e.to_string())?;
         let profile = self.db.profile(&job.robot).map_err(|e| e.to_string())?;
         let mut tools = Tools {
             model: Session::new(&conversation)?,
@@ -436,7 +439,102 @@ impl Worker {
         };
         let project = Path::new(&conversation.context.project);
         self.prepare_tools(job, &profile, project, &mut tools)?;
+        if conversation.context.model.provider.index() >= 3 {
+            let mut failure = None;
+            let result = crate::robot_native::run(
+                &conversation.context.model,
+                project,
+                &tools.model.native_prompt(),
+                &profile.mcp_servers,
+                |event| {
+                    self.native_event(
+                        job,
+                        project,
+                        conversation.context.model.provider.name(),
+                        event,
+                    )
+                    .map_err(|error| {
+                        failure = Some(error);
+                        "Native work stopped.".into()
+                    })
+                },
+            );
+            if let Some(error) = failure {
+                return Err(error);
+            }
+            let text = result?;
+            self.checkpoint(&job.conversation)?;
+            self.save(&job.conversation, Entry::Reply { text })?;
+            return Ok(());
+        }
         self.model_loop(job, project, &mut tools)
+    }
+
+    fn native_event(
+        &mut self,
+        job: &Job,
+        project: &Path,
+        provider: &str,
+        event: crate::robot_native::Event,
+    ) -> ResultRun<bool> {
+        match event {
+            crate::robot_native::Event::Check => {
+                self.checkpoint(&job.conversation)?;
+                Ok(true)
+            }
+            crate::robot_native::Event::Permission(scope) => {
+                self.native_permission(job, project, provider, scope)
+            }
+            crate::robot_native::Event::Activity(value) => {
+                self.save(
+                    &job.conversation,
+                    Entry::Tool {
+                        name: "native_activity".into(),
+                        input: json!({"activity":bounded(value.to_string())}),
+                        output: String::new(),
+                        status: ToolStatus::Completed,
+                    },
+                )?;
+                Ok(true)
+            }
+        }
+    }
+    fn native_permission(
+        &mut self,
+        job: &Job,
+        project: &Path,
+        provider: &str,
+        scope: Value,
+    ) -> ResultRun<bool> {
+        let request = robot_tools::provider_approval(project, provider, scope.clone());
+        self.save(
+            &job.conversation,
+            Entry::Tool {
+                name: "native_permission".into(),
+                input: scope.clone(),
+                output: String::new(),
+                status: ToolStatus::AwaitingApproval,
+            },
+        )?;
+        self.emit(Event::Approval {
+            conversation: job.conversation.clone(),
+            request: request.clone(),
+        });
+        let approved = self.wait_approval(&job.conversation, request.id)?;
+        self.save(
+            &job.conversation,
+            Entry::Tool {
+                name: "native_permission".into(),
+                input: scope,
+                output: if approved { "Approved once" } else { "Denied" }.into(),
+                status: if approved {
+                    ToolStatus::Completed
+                } else {
+                    ToolStatus::Denied
+                },
+            },
+        )?;
+        Ok(approved)
     }
 
     fn prepare_tools(

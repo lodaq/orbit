@@ -49,7 +49,7 @@ fn export_data(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let installed_apps =
         serde_json::from_slice(&super::read_installed_apps()?.unwrap_or_else(|| b"[]".to_vec()))?;
     let mut backup = Backup {
-        version: 3,
+        version: 5,
         config,
         recent,
         installed_apps,
@@ -162,12 +162,28 @@ fn import_data(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
 
 impl Backup {
     fn validate(&self) -> Result<(), Box<dyn std::error::Error>> {
-        if !matches!(self.version, 1..=3) || !self.config.valid() {
+        if !matches!(self.version, 1..=5) || !self.config.valid() {
             return Err("Unsupported backup or invalid Canvas".into());
+        }
+        if self.version < 4
+            && self
+                .robots
+                .as_ref()
+                .is_some_and(|robots| !robots.accounts.is_empty())
+        {
+            return Err("Provider accounts require backup version 4".into());
+        }
+        if self.version < 5
+            && self
+                .robots
+                .as_ref()
+                .is_some_and(|robots| !robots.catalog.is_empty())
+        {
+            return Err("Robot collections require backup version 5".into());
         }
         match (self.version, &self.robots) {
             (1, None) => {}
-            (2 | 3, Some(robots)) => robots.validate()?,
+            (2..=5, Some(robots)) => robots.validate()?,
             _ => return Err("Missing or incompatible Robot backup data".into()),
         }
         for name in self.icons.keys() {
@@ -253,6 +269,7 @@ mod tests {
             name: "Research".into(),
             project: "/tmp/project".into(),
             model: Model {
+                account: None,
                 provider: Provider::OpenAi,
                 id: "existing-model".into(),
                 ollama_address: None,
@@ -279,8 +296,15 @@ mod tests {
         )
         .unwrap();
         db.rate("conversation", 5).unwrap();
+        db.save_catalog(&crate::robot_data::CatalogEntry {
+            id: "review".into(),
+            kind: "prompt".into(),
+            name: "Review".into(),
+            content: "Review the project".into(),
+        })
+        .unwrap();
         let backup = Backup {
-            version: 3,
+            version: 5,
             config: Config::default(),
             recent: Recent { ids: vec![] },
             installed_apps: vec![],
@@ -310,6 +334,14 @@ mod tests {
         assert!(directory.join("config.json").exists());
         fs::remove_dir_all(directory).unwrap();
         let mut json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        json["version"] = 4.into();
+        assert!(
+            serde_json::from_value::<Backup>(json.clone())
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        json["robots"]["catalog"] = serde_json::json!([]);
         json["version"] = 2.into();
         serde_json::from_value::<Backup>(json.clone())
             .unwrap()

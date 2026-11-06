@@ -30,6 +30,7 @@ impl Fixture {
             name: "Robot".into(),
             project: root.to_string_lossy().into_owned(),
             model: Model {
+                account: None,
                 provider: Provider::Ollama,
                 id: "original-model".into(),
                 ollama_address: Some(address),

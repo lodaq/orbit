@@ -1,4 +1,4 @@
-export { RobotWorkbench, RobotChoice, RobotActivity } from "robot-workbench.slint";
+export { RobotWorkbench, RobotChoice, RobotActivity, RobotProvider, RobotResource } from "robot-workbench.slint";
 import { RobotWorkbench, RobotPanel } from "robot-workbench.slint";
 export { CanvasState } from "canvas.slint";
 import { CanvasState } from "canvas.slint";
@@ -686,7 +686,7 @@ export component Launcher inherits Window {
     callback activate-grid();
     activate-grid => { if root.focused-item >= 0 && root.focused-item < root.items.length { root.begin-drag(root.focused-item,false,0px,0px); root.end-drag(); } }
     callback context-focused();
-    context-focused => { if root.focused-item >= 0 && root.focused-item < root.items.length { root.context-index = root.focused-item; root.context-x = (CanvasState.pan-x + root.items[root.focused-item].col * CanvasState.zoom) * 1px; root.context-y = (CanvasState.pan-y + root.items[root.focused-item].row * CanvasState.zoom) * 1px; } }
+    context-focused => { if root.focused-item >= 0 && root.focused-item < root.items.length { root.context-index = root.focused-item; RobotWorkbench.common-actions = []; if root.items[root.focused-item].robot != "" { RobotWorkbench.context-actions(root.items[root.focused-item].robot); } root.context-x = (CanvasState.pan-x + root.items[root.focused-item].col * CanvasState.zoom) * 1px; root.context-y = (CanvasState.pan-y + root.items[root.focused-item].row * CanvasState.zoom) * 1px; } }
     private property <bool> snapping;
     snap-timer := Timer { interval: 210ms; triggered => { root.snapping = false; self.stop(); } }
     animate drag-x { duration: root.snapping ? 200ms : 0ms; easing: ease-out; }
@@ -746,6 +746,8 @@ export component Launcher inherits Window {
                 root.cancel-drag();
                 root.canvas-context = index < 0;
                 root.dock-context = ""; root.context-index = index; root.context-x = x; root.context-y = y;
+                RobotWorkbench.common-actions = [];
+                if root.items[index].robot != "" { RobotWorkbench.context-actions(root.items[index].robot); }
                 if index < 0 { root.set-add-position(root.world-x(x) / 1px,root.world-y(y) / 1px); }
                 canvas-focus.focus();
                 return;
@@ -1378,6 +1380,7 @@ export component Launcher inherits Window {
     callback delete-item(string);
     callback open-item(string);
     callback add-robot(string, string);
+    callback rename-robot(string, string);
     callback launch-folder-app(string,string);
     callback open-folder(string);
     callback close-folder();
@@ -2056,18 +2059,17 @@ export component Launcher inherits Window {
     }
     if root.home-visible: Rectangle {
         x: root.width - 72px; y: root.height - 92px; width: 48px; height: 48px;
-        background: Theme.dock-surface; border-width: 1px; border-color: Theme.outline-button; border-radius: 24px;
+        background: Theme.dock-surface; border-width: 0px; border-radius: 24px;
         accessible-role: button; accessible-label: "Change background image"; accessible-action-default => { root.change-background-image(); }
         Image { x: 12px; y: 12px; width: 24px; height: 24px; source: @image-url("assets/change-background.svg"); image-fit: contain; }
         TouchArea { mouse-cursor: pointer; clicked => { root.change-background-image(); } }
     }
-    Rectangle { x: root.width < 1200px ? 16px : 48px; y: 40px; width: root.width < 1200px ? 80px : 90px; height: 32px; border-width: Theme.border-width; border-color: Theme.outline-logo; TouchArea { } Image { width: parent.width; height: parent.height; source: @image-url("assets/orbit.svg"); image-fit: contain; } }
+    Rectangle { x: root.width < 1200px ? 16px : 48px; y: 40px; width: root.width < 1200px ? 80px : 90px; height: 32px; TouchArea { } Image { width: parent.width; height: parent.height; source: @image-url("assets/orbit.svg"); image-fit: contain; } }
     search-bar := Rectangle {
         x: (root.width - self.width) / 2; y: 34px; width: min(root.ai-active && !root.settings ? 820px : 560px, max(240px, root.width - 440px));
         height: max(Theme.search-min-height, min(176px, search-measure.preferred-height + 2 * (Theme.search-padding + Theme.search-cursor-inset) + (completion-ghost.visible && completion-ghost.next-line ? root.search-cursor-height : 0px)));
         background: Theme.search-background;
-        border-color: Theme.outline-search;
-        border-width: Theme.border-width; border-radius: Theme.radius-sheet - Theme.space-1;
+        border-width: 0px; border-radius: Theme.radius-sheet - Theme.space-1;
         if root.search-focused: Rectangle { x: -3px; y: -3px; width: parent.width + 6px; height: parent.height + 6px; border-width: Theme.focus-width; border-color: Theme.search-focus-border; border-radius: parent.border-radius + 3px; }
         Image { x: Theme.space-4; y: (Theme.search-min-height - self.height) / 2; width: 18px; height: 18px; source: @image-url("assets/search.svg"); }
         OrbitText {
@@ -2169,7 +2171,7 @@ export component Launcher inherits Window {
         accessible-role: button; accessible-label: self.label;
         accessible-action-default => { if !root.busy { top-button.clicked(); } }
         forward-focus: top-focus;
-        border-width: top-focus.has-focus ? Theme.focus-width : Theme.border-width; border-color: top-focus.has-focus ? Theme.focus : Theme.outline-button;
+        border-width: top-focus.has-focus ? Theme.focus-width : 0px; border-color: Theme.focus;
         top-focus := FocusScope {
             enabled: !root.busy;
             key-pressed(event) => {
@@ -2209,7 +2211,7 @@ export component Launcher inherits Window {
         width: min(self.widest, self.rest-width + (self.pointer-x > -1000px ? self.magnify-spread : 0px));
         animate width { duration: 80ms; easing: ease-out; }
         height: 64px;
-        background: Theme.dock-surface; border-width: Theme.border-width; border-color: Theme.outline-dock; border-radius: Theme.radius-dock;
+        background: Theme.dock-surface; border-width: 0px; border-radius: Theme.radius-dock;
         property <bool> overflowing: self.content-width > self.rest-width - 16px;
         property <length> scroll-inset: 8px;
         property <length> slot-width: 68px;
@@ -2437,7 +2439,7 @@ export component Launcher inherits Window {
             }
         }
         background: engine-select-hit.pressed ? Theme.press-overlay : engine-select-hit.has-hover ? Theme.hover-overlay : Theme.search-background;
-        border-radius: Theme.radius-control; border-width: engine-focus.has-focus ? Theme.focus-width : Theme.border-width; border-color: engine-focus.has-focus ? Theme.focus : Theme.outline-engine;
+        border-radius: Theme.radius-control; border-width: engine-focus.has-focus ? Theme.focus-width : 0px; border-color: Theme.focus;
         OrbitText { x: Theme.space-3; width: parent.width - 40px; height: parent.height; text: root.search-engine-names[root.default-search-engine-index]; color: Theme.text; font-size: Theme.type-control; vertical-alignment: center; overflow: elide; }
         OrbitText { x: parent.width - 28px; height: parent.height; text: "⌄"; color: Theme.secondary; vertical-alignment: center; }
         engine-select-hit := TouchArea { enabled: !root.busy; mouse-cursor: pointer; clicked => { root.engine-menu = !root.engine-menu; } }
@@ -2583,10 +2585,10 @@ export component Launcher inherits Window {
             spacing: 4px;
             OrbitText { text: "Settings"; color: Theme.settings-text; font-size: 22px; font-weight: 600; height: 46px; }
             SettingsNav { label: "General"; icon: @image-url("assets/settings.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 0; clicked => { root.settings-tab = 0; root.shortcuts-tab = false; root.shortcut-recording = false; } }
+            SettingsNav { label: "Robots"; icon: @image-url("assets/robot.svg"); icon-present: true; available-width: parent.width; clicked => { RobotWorkbench.adding = false; RobotWorkbench.section = 0; RobotWorkbench.refresh-skills(); RobotWorkbench.open("", true); } }
             SettingsNav { label: "Appearance"; icon: @image-url("assets/settings.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 8; clicked => { root.settings-tab = 8; root.shortcuts-tab = false; root.shortcut-recording = false; } }
             SettingsNav { label: "Shortcuts"; icon: @image-url("assets/keyboard.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 1; clicked => { root.settings-tab = 1; root.shortcuts-tab = true; } }
             SettingsNav { label: "Search bar"; icon: @image-url("assets/search.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab >= 2 && root.settings-tab <= 6; clicked => { root.settings-tab = 4; root.shortcuts-tab = false; root.shortcut-recording = false; } }
-            SettingsNav { label: "Robots"; icon: @image-url("assets/robot.svg"); icon-present: true; available-width: parent.width; clicked => { RobotWorkbench.adding = false; RobotWorkbench.open("", true); } }
             SettingsNav { label: "Data"; icon: @image-url("assets/add-widgets.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 7; clicked => { root.settings-tab = 7; root.shortcuts-tab = false; root.shortcut-recording = false; root.load-widget-data(); } }
             Rectangle { vertical-stretch: 1; }
             SettingsNav { label: "Back"; icon: @image-url("assets/arrow-left.svg"); icon-present: true; available-width: parent.width; hint: root.shortcut-hints[1]; clicked => { root.search-path-editor = false; root.settings = false; } }
@@ -2596,8 +2598,8 @@ export component Launcher inherits Window {
             width: root.settings-content-width; height: parent.height - 56px;
             spacing: 20px;
             if root.settings-tab != 7: VerticalLayout { spacing: 6px; vertical-stretch: 0; alignment: start;
-                OrbitText { text: root.settings-tab == 0 ? "General" : root.settings-tab == 1 ? "Shortcuts" : root.settings-tab == 7 ? "Data" : root.settings-tab == 8 ? "Appearance" : "Search bar"; color: Theme.settings-text; font-size: Theme.settings-title-size; font-weight: 600; }
-                SettingsDescription { text: root.settings-tab == 7 ? "Manage locally saved widget content and see Orbit storage use." : root.settings-tab == 0 ? "Home screen layout, integrations and app data." : root.settings-tab == 1 ? "Choose an action, then record its shortcut. Changes are saved automatically." : root.settings-tab == 2 ? "Prefixes route a token to an action. Type one before your query to use it." : root.settings-tab == 3 ? "Choose an action to edit it, or create a new one." : root.settings-tab == 8 ? "Change the Home Screen background color or image, or restore the supplied background." : "Control how Orbit finds things and where it looks."; }
+                OrbitText { text: root.settings-tab == 9 ? "Providers" : root.settings-tab == 0 ? "General" : root.settings-tab == 1 ? "Shortcuts" : root.settings-tab == 7 ? "Data" : root.settings-tab == 8 ? "Appearance" : "Search bar"; color: Theme.settings-text; font-size: Theme.settings-title-size; font-weight: 600; }
+                SettingsDescription { text: root.settings-tab == 9 ? "Your T3 Code provider accounts, shared by Robots. Existing authentication stays in its provider storage." : root.settings-tab == 7 ? "Manage locally saved widget content and see Orbit storage use." : root.settings-tab == 0 ? "Home screen layout, integrations and app data." : root.settings-tab == 1 ? "Choose an action, then record its shortcut. Changes are saved automatically." : root.settings-tab == 2 ? "Prefixes route a token to an action. Type one before your query to use it." : root.settings-tab == 3 ? "Choose an action to edit it, or create a new one." : root.settings-tab == 8 ? "Change the Home Screen background color or image, or restore the supplied background." : "Control how Orbit finds things and where it looks."; }
             }
             if root.settings-tab >= 2 && root.settings-tab <= 6: GridLayout {
                 spacing: 12px;
@@ -3407,6 +3409,10 @@ export component Launcher inherits Window {
                 padding: 8px; spacing: 4px;
                 if root.canvas-context: MenuOption { width: 184px; label: "Add item"; enabled: !root.layout-locked; clicked => { root.add-item("App"); } }
                 if root.canvas-context: MenuOption { width: 184px; label: "Show all items"; clicked => { root.flush-canvas(); root.show-all-items(root.width / 1px,root.height / 1px); root.canvas-context = false; } }
+                if root.context-index >= 0 && root.items[root.context-index].robot != "": MenuOption { width: 184px; label: "Duplicate"; enabled: !root.layout-locked; clicked => { RobotWorkbench.duplicate-robot(root.items[root.context-index].robot); root.context-index = -1; } }
+                if root.context-index >= 0 && root.items[root.context-index].robot != "": VerticalLayout {
+                    for action in RobotWorkbench.common-actions: MenuOption { width: 184px; label: action.name; clicked => { RobotWorkbench.run-action(root.items[root.context-index].robot, action.id); root.context-index = -1; } }
+                }
                 if root.context-index >= 0 && root.items[root.context-index].ticktick && !root.items[root.context-index].ticktick-next: MenuOption { width: 184px; label: "New task"; clicked => { root.open-ticktick-create(root.items[root.context-index].ticktick-project-id); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].widget: MenuOption { width: 184px; label: "Duplicate"; enabled: !root.layout-locked; clicked => { root.busy = true; root.duplicate-widget(root.items[root.context-index].id); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].widget: MenuOption { width: 184px; label: "Resize · wider";
