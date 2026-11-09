@@ -258,8 +258,16 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | Term | Meaning |
 |---|---|
+| **Group** | Named references to Canvas items, shown with a labeled boundary; its shortcut fits those items on screen. |
+| **Select** | Canvas tool for selecting items by rectangle or modified click. |
+| **Hand** | Canvas tool for panning the view. |
+| **Draw** | Canvas tool for saving freehand ink. |
+| **Eraser** | Canvas tool that removes whole ink strokes. |
+| **Undo**, **Redo** | Restore the previous or next Canvas content edit in the current session. View navigation is excluded. |
+| **Cut**, **Copy**, **Paste** | Move or duplicate selected Canvas items using the session's Canvas clipboard. |
+
 | **Canvas** | The single freely pannable and zoomable space holding launcher Items and Widgets. |
-| **Pan** | Move the canvas view by dragging empty space. |
+| **Pan** | Move the Canvas view by dragging with Hand. |
 | **Zoom** | Change the canvas scale around the pointer, from 25% to 200%. |
 | **Canvas speed** | The Settings → General multiplier for Pan and Zoom sensitivity, from 1× to 10×; defaults to 5×. |
 

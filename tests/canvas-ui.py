@@ -119,6 +119,7 @@ class Desktop:
             if self.x.XFetchName(self.connection, children[i], C.byref(name)) and name.value == b'Orbit':
                 windows.append(children[i])
         assert windows, 'Orbit window missing'
+        self.window = windows[-1]
         self.x.XMoveResizeWindow(self.connection, windows[-1], 0, 0, 1920, 1080)
         self.x.XMapWindow(self.connection, windows[-1])
         self.x.XSetInputFocus(self.connection, windows[-1], 1, 0)
@@ -206,6 +207,13 @@ class Desktop:
             self.button(4 if steps > 0 else 5, False)
         time.sleep(.4)
 
+    def zoom(self, x, y, steps):
+        self.key('Control', True)
+        try:
+            self.wheel(x, y, steps)
+        finally:
+            self.key('Control', False)
+
     def shot(self, name):
         path = self.work / name
         ImageGrab.grab(xdisplay=self.display).save(path)
@@ -277,10 +285,11 @@ def verify(d):
     assert d.data()['version'] == 5
     assert 'pages' not in d.data(), 'live pages survived migration'
     before = d.data()['canvas']['view']
+    d.click(40, 516)  # Hand tool pans; Select now draws a selection rectangle.
     d.drag((800, 450), (650, 550))
     d.wait(lambda: d.data()['canvas']['view'] != before, 'empty drag did not pan')
     saved = d.data()['canvas']['view']
-    d.wheel(1000, 500, -2)
+    d.zoom(1000, 500, -2)
     d.wait(lambda: d.data()['canvas']['view']['zoom'] < saved['zoom'], 'wheel did not zoom')
     saved = d.data()['canvas']['view']
     d.stop()
@@ -358,7 +367,7 @@ def verify_items(d):
     d.drag(d.item_point(folder_id), (1500, 500))
     assert d.data()['positions'] == before, 'locked layout accepted a move'
     view = d.data()['canvas']['view']
-    d.wheel(*d.empty_point(), -1)
+    d.zoom(*d.empty_point(), -1)
     d.wait(lambda: d.data()['canvas']['view'] != view, 'Lock layout prevented zoom')
     d.click(1758, 56)
     d.wait(lambda: not d.data()['layout_locked'], 'Unlock layout did not save')
@@ -381,9 +390,9 @@ def verify_widgets(d):
     for index, variant in enumerate(variants):
         before = {item['id'] for item in d.items()}
         d.open_add('Widgets')
-        d.wheel(952, 700, 16)
+        d.zoom(952, 700, 16)
         if index // 2:
-            d.wheel(952, 700, -(index // 2) * 2)
+            d.zoom(952, 700, -(index // 2) * 2)
         # The final fully visible Auto button belongs to the requested gallery row.
         x = 730 if index % 2 == 0 else 992
         screenshot = ImageGrab.grab(xdisplay=d.display)
@@ -462,7 +471,7 @@ def verify_navigation_and_failed_migration(template):
         other.wait(lambda: other.data()['canvas']['view']['zoom'] < .25, 'Show all items did not fit distant items')
         other.shot('fit-below-quarter.png')
         before = other.data()['canvas']['view']
-        other.wheel(900, 800, 1)
+        other.zoom(900, 800, 1)
         other.wait(lambda: other.data()['canvas']['view']['zoom'] > before['zoom'], 'fitted view did not zoom in')
         after = other.data()['canvas']['view']
         assert after['zoom'] < before['zoom'] * 1.5, 'zoom jumped from a fitted view'

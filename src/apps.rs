@@ -3,8 +3,8 @@ use crate::config::{
     ActionKind, App, Config, Icon, Item, Launch, Prefix, SystemAction, UserAction,
 };
 use crate::{
-    ActionChoice, AppTile, FolderPreview, InstalledAppTile, Launcher, add_item, config, platform,
-    recent,
+    ActionChoice, AppTile, CanvasGroupView, FolderPreview, InstalledAppTile, Launcher, add_item,
+    config, platform, recent,
 };
 use crate::{PrefixChoice, PrefixMatch, UserActionChoice};
 use slint::{ComponentHandle, Rgba8Pixel, SharedPixelBuffer};
@@ -77,6 +77,12 @@ enum Action {
     SaveLayoutLocked(bool),
     SaveShortcut(i32, String, String),
     DeleteShortcut(i32, String),
+    SaveGroup(String, String, String, Vec<String>),
+    DeleteGroup(String),
+    FitGroup(String, f32, f32),
+    AddInk(Vec<crate::config::InkPoint>),
+    EraseInk(Vec<crate::config::InkPoint>),
+    EditCanvas(i32, Vec<String>, i32, i32),
     Search(String),
     SearchWeb(String, String),
     RunPrefix(String, String),
@@ -115,6 +121,7 @@ enum Action {
 }
 
 struct Apps {
+    edits: crate::canvas_edit::History,
     config: Config,
     add_position: (i32, i32),
     icons: HashMap<String, SharedPixelBuffer<Rgba8Pixel>>,
@@ -136,6 +143,7 @@ struct SearchPathResult {
 impl Action {
     fn changes_layout(&self) -> bool {
         match self {
+            Self::EditCanvas(command, ..) => *command != 3,
             Self::Widget(..)
             | Self::ChangeWidget(..)
             | Self::DuplicateWidget(..)
@@ -145,6 +153,10 @@ impl Action {
             | Self::Delete(..)
             | Self::SaveSearchResult(..)
             | Self::Drop(..)
+            | Self::SaveGroup(..)
+            | Self::DeleteGroup(..)
+            | Self::AddInk(..)
+            | Self::EraseInk(..)
             | Self::AddRobot(..)
             | Self::AddPredefined(..)
             | Self::AddInstalledApp(..)
@@ -176,6 +188,7 @@ pub fn connect(launcher: &Launcher) {
     let (send, receive) = mpsc::channel();
     let requests = Arc::new(RequestSequence::default());
     crate::spatial::connect(launcher);
+    crate::ink::connect(launcher);
     let canvas_sender = send.clone();
     crate::canvas::connect(launcher, move |change| {
         let _ = canvas_sender.send(Action::Canvas(change));
@@ -189,6 +202,7 @@ pub fn connect(launcher: &Launcher) {
         let (recent, recent_banner) = recent::Recent::load();
         let (inventory, inventory_banner) = Inventory::load();
         let mut apps = Apps {
+            edits: Default::default(),
             add_position: (0, 0),
             config,
             icons: HashMap::new(),
@@ -265,10 +279,14 @@ pub fn connect(launcher: &Launcher) {
                     | Action::DeleteNamedCommand(..)
                     | Action::SavePrefix(..)
                     | Action::DeletePrefix(..)
+                    | Action::SaveGroup(..)
+                    | Action::DeleteGroup(..)
             );
             let save_search_result = matches!(action, Action::SaveSearchResult(..));
             let drag_drop = matches!(action, Action::Drop(..) | Action::SaveSearchResult(..));
             let save_shortcut = matches!(action, Action::SaveShortcut(..));
+            let save_group = matches!(action, Action::SaveGroup(..));
+            let ink_action = matches!(action, Action::AddInk(..) | Action::EraseInk(..));
             let save_action = matches!(
                 action,
                 Action::SaveNamedCommand(..) | Action::DeleteNamedCommand(..)
@@ -290,6 +308,8 @@ pub fn connect(launcher: &Launcher) {
                         | Action::DeleteNamedCommand(..)
                         | Action::SavePrefix(..)
                         | Action::DeletePrefix(..)
+                        | Action::SaveGroup(..)
+                        | Action::DeleteGroup(..)
                 );
             let choosing = matches!(action, Action::ChoosePath(..));
             let update = !choosing
@@ -312,10 +332,35 @@ pub fn connect(launcher: &Launcher) {
                 _ => false,
             };
             let action_feedback = success_message(&action);
+            let before = ((action.changes_layout()
+                || matches!(
+                    action,
+                    Action::Save(..)
+                        | Action::SaveWebsite(..)
+                        | Action::SavePath(..)
+                        | Action::SaveFolder(..)
+                        | Action::RenameRobot(..)
+                        | Action::SelectTickTickList(..)
+                ))
+                && !matches!(
+                    action,
+                    Action::EditCanvas(0 | 1, ..) | Action::TransferData(..)
+                ))
+            .then(|| crate::canvas_edit::State::capture(&apps.config));
             let result = apps.apply(action, &requests, &weak);
+            if result.is_ok()
+                && let Some(before) = before
+            {
+                apps.edits.record(before, &apps.config);
+            }
             if request.is_some_and(|request| !requests.is_current(request)) {
                 continue;
             }
+            let group_error = if save_group {
+                result.as_ref().err().cloned()
+            } else {
+                None
+            };
             let success = result.is_ok();
             if success
                 && reveal_added
@@ -368,6 +413,18 @@ pub fn connect(launcher: &Launcher) {
             if save_shortcut && success {
                 let _ = weak.upgrade_in_event_loop(|launcher| launcher.invoke_shortcut_saved());
             }
+            if ink_action {
+                let _ = weak.upgrade_in_event_loop(|ui| ui.invoke_ink_finished());
+            }
+            if save_group {
+                let _ = weak.upgrade_in_event_loop(move |launcher| {
+                    if let Some(error) = group_error {
+                        launcher.invoke_group_save_failed(error.into());
+                    } else {
+                        launcher.invoke_group_saved();
+                    }
+                });
+            }
             if save_action && success {
                 let _ = weak.upgrade_in_event_loop(|launcher| launcher.invoke_action_saved());
             }
@@ -402,6 +459,17 @@ pub fn connect(launcher: &Launcher) {
 }
 
 fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSequence>) {
+    let sender = send.clone();
+    launcher.on_edit_canvas(move |command, selection, x, y| {
+        use slint::Model;
+        let selection = selection.iter().map(|id| id.to_string()).collect();
+        let _ = sender.send(Action::EditCanvas(
+            command,
+            selection,
+            x.round() as i32,
+            y.round() as i32,
+        ));
+    });
     let prefix_ui = launcher.as_weak();
     launcher.on_match_prefix(move |text| {
         use slint::Model;
@@ -717,6 +785,54 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         let _ = sender.send(Action::DeleteShortcut(action, keys.into()));
     });
     let sender = send.clone();
+    launcher.on_save_group(move |id, name, keys, items| {
+        use slint::Model;
+        let items = items
+            .iter()
+            .map(|item| item.to_string())
+            .collect::<Vec<_>>();
+        let _ = sender.send(Action::SaveGroup(
+            id.into(),
+            name.into(),
+            keys.into(),
+            items,
+        ));
+    });
+    let sender = send.clone();
+    launcher.on_delete_group(move |id| {
+        let _ = sender.send(Action::DeleteGroup(id.into()));
+    });
+    let sender = send.clone();
+    launcher.on_fit_group_action(move |id, width, height| {
+        let _ = sender.send(Action::FitGroup(id.into(), width, height));
+    });
+    let sender = send.clone();
+    launcher.on_add_ink(move |points| {
+        use slint::Model;
+        let _ = sender.send(Action::AddInk(
+            points
+                .iter()
+                .map(|point| crate::config::InkPoint {
+                    x: point.x,
+                    y: point.y,
+                })
+                .collect(),
+        ));
+    });
+    let sender = send.clone();
+    launcher.on_erase_ink(move |points| {
+        use slint::Model;
+        let _ = sender.send(Action::EraseInk(
+            points
+                .iter()
+                .map(|point| crate::config::InkPoint {
+                    x: point.x,
+                    y: point.y,
+                })
+                .collect(),
+        ));
+    });
+    let sender = send.clone();
     launcher.on_set_add_position(move |x, y| {
         let _ = sender.send(Action::AddPosition(x.round() as i32, y.round() as i32));
     });
@@ -871,6 +987,9 @@ impl Apps {
             return Err("Unlock layout to make changes".into());
         }
         match action {
+            Action::EditCanvas(command, selection, x, y) => {
+                self.edit_canvas(command, &selection, x, y, weak)
+            }
             Action::Canvas(change) => crate::canvas::apply(&mut self.config, change),
             Action::SaveLayoutLocked(locked) => {
                 if self.config.layout_locked != locked {
@@ -883,6 +1002,21 @@ impl Apps {
                 }
                 Ok(())
             }
+            Action::SaveGroup(id, name, keys, selected) => {
+                self.save_group(&id, name, keys, &selected)
+            }
+            Action::DeleteGroup(id) => {
+                let mut config = self.config.clone();
+                let before = config.groups.len();
+                config.groups.retain(|group| group.id != id);
+                if config.groups.len() == before {
+                    return Err("Group is missing".into());
+                }
+                self.commit(config)
+            }
+            Action::FitGroup(id, width, height) => self.fit_group(&id, width, height, weak),
+            Action::AddInk(points) => self.add_ink(points),
+            Action::EraseInk(points) => self.erase_ink(&points),
             Action::Search(query) => {
                 self.query = query.to_lowercase();
                 if !self.query.is_empty() {
@@ -1587,6 +1721,7 @@ impl Apps {
                 let mut result = platform::transfer_data(import);
                 if import && matches!(&result, Ok(Some(_))) {
                     self.config = config::load().0;
+                    self.edits = Default::default();
                     let canvas = self.config.canvas.clone();
                     let _ = weak
                         .upgrade_in_event_loop(move |ui| crate::canvas::sync(&ui, &canvas, true));
@@ -2201,7 +2336,80 @@ impl Apps {
             .ok_or("Item changed before it could be saved".into())
     }
 
-    fn commit(&mut self, config: Config) -> Result<(), String> {
+    fn edit_canvas(
+        &mut self,
+        command: i32,
+        selection: &[String],
+        x: i32,
+        y: i32,
+        weak: &slint::Weak<Launcher>,
+    ) -> Result<(), String> {
+        let mut config = self.config.clone();
+        let mut reload_icons = false;
+        let selected = match command {
+            0 | 1 => {
+                let Some(target) = self.edits.target(command == 1) else {
+                    return Ok(());
+                };
+                target.restore(&mut config);
+                reload_icons = config.items != self.config.items;
+                let current = crate::canvas_edit::State::capture(&self.config);
+                self.commit(config)?;
+                self.edits.finish(current, command == 1);
+                Vec::new()
+            }
+            2 | 3 => {
+                let Some(clipboard) =
+                    crate::canvas_edit::Clipboard::capture(&config, selection, command == 2)
+                else {
+                    return Ok(());
+                };
+                if command == 2 {
+                    clipboard.cut(&mut config);
+                    self.commit(config)?;
+                }
+                self.edits.clipboard = Some(clipboard);
+                if command == 3 {
+                    return Ok(());
+                }
+                Vec::new()
+            }
+            4 => {
+                let Some(clipboard) = &self.edits.clipboard else {
+                    return Ok(());
+                };
+                let selected = clipboard.paste(&mut config, x, y)?;
+                reload_icons = true;
+                self.commit(config)?;
+                self.edits.clipboard.as_mut().unwrap().pasted();
+                selected
+            }
+            _ => return Err("Unknown Canvas action".into()),
+        };
+        if reload_icons && let Err(error) = self.load_icons() {
+            crate::toast::error(weak, error);
+        }
+        if command == 4
+            && let Some(id) = selected.first()
+        {
+            self.reveal(id, weak);
+        }
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            ui.set_selected_ids(
+                std::rc::Rc::new(slint::VecModel::from(
+                    selected
+                        .into_iter()
+                        .map(slint::SharedString::from)
+                        .collect::<Vec<_>>(),
+                ))
+                .into(),
+            );
+        });
+        Ok(())
+    }
+
+    fn commit(&mut self, mut config: Config) -> Result<(), String> {
+        crate::spatial::reconcile(&mut config)?;
         config
             .save()
             .map_err(|error| format!("Couldn't save config.json: {error}"))?;
@@ -2269,13 +2477,7 @@ impl Apps {
         {
             eprintln!("orbit: {error}");
         }
-        if let Item::Website {
-            icon: Icon::File(name),
-            ..
-        } = item
-        {
-            platform::remove_icon(&name);
-        }
+        // Saved icons may still be referenced by Undo or the Canvas clipboard.
         Ok(())
     }
 
@@ -2302,13 +2504,6 @@ impl Apps {
         };
         let unchanged_url =
             matches!(existing, Some(Item::Website { url: old, .. }) if old == url.trim());
-        let old_icon = match existing {
-            Some(Item::Website {
-                icon: Icon::File(name),
-                ..
-            }) => Some(name.clone()),
-            _ => None,
-        };
         let current = match existing {
             Some(Item::Website { icon, .. })
                 if unchanged_url
@@ -2341,12 +2536,6 @@ impl Apps {
                 platform::remove_icon(file);
             }
             return Err(error);
-        }
-        if let Some(old_icon) = old_icon
-            && !old_icon.starts_with("chosen-")
-            && !matches!(&icon, Icon::File(file) if file == &old_icon)
-        {
-            platform::remove_icon(&old_icon);
         }
         if matches!(icon, Icon::Letter | Icon::Text(_)) {
             self.icons.remove(&item_id);
@@ -2448,6 +2637,13 @@ impl Apps {
 
     fn save_shortcut(&mut self, action: i32, existing: String, keys: String) -> Result<(), String> {
         let mut config = self.config.clone();
+        if config
+            .groups
+            .iter()
+            .any(|group| !keys.is_empty() && group.keys == keys)
+        {
+            return Err("Shortcut is already used by a Group.".into());
+        }
         let binding = crate::shortcuts::Shortcut { action, keys };
         if existing.is_empty() {
             config.shortcuts.push(binding);
@@ -2465,6 +2661,122 @@ impl Apps {
         }
         config.save().map_err(|error| error.to_string())?;
         self.config = config;
+        Ok(())
+    }
+
+    fn save_group(
+        &mut self,
+        id: &str,
+        name: String,
+        keys: String,
+        selected: &[String],
+    ) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 60 {
+            return Err("Enter a Group name (60 characters or fewer).".into());
+        }
+        let keys = keys.trim();
+        let mut config = self.config.clone();
+        if config
+            .groups
+            .iter()
+            .any(|group| group.id != id && group.name.trim().to_lowercase() == name.to_lowercase())
+        {
+            return Err("A Group with that name already exists.".into());
+        }
+        crate::shortcuts::validate_group_keys(keys, id, &config.shortcuts, &config.groups)?;
+        if id.is_empty() {
+            let existing: std::collections::HashSet<_> = config
+                .items
+                .iter()
+                .map(|item| item.id().to_string())
+                .collect();
+            let mut members = Vec::new();
+            for item in selected {
+                if existing.contains(item) && !members.contains(item) {
+                    members.push(item.clone());
+                }
+            }
+            if members.is_empty() {
+                return Err("Select at least one Canvas item for the Group.".into());
+            }
+            config.groups.push(crate::config::CanvasGroup {
+                id: new_id()?,
+                name: name.into(),
+                items: members,
+                keys: keys.into(),
+            });
+        } else {
+            let group = config
+                .groups
+                .iter_mut()
+                .find(|group| group.id == id)
+                .ok_or("Group changed before it could be saved.")?;
+            group.name = name.into();
+            group.keys = keys.into();
+        }
+        self.commit(config)
+    }
+
+    fn fit_group(
+        &mut self,
+        id: &str,
+        width: f32,
+        height: f32,
+        weak: &slint::Weak<Launcher>,
+    ) -> Result<(), String> {
+        let group = self
+            .config
+            .groups
+            .iter()
+            .find(|group| group.id == id)
+            .ok_or("Group is missing")?;
+        let positions = group
+            .items
+            .iter()
+            .filter_map(|id| {
+                self.config
+                    .positions
+                    .get(id)
+                    .map(|rect| (id.clone(), *rect))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let view = crate::canvas::fit(&positions, width, height)
+            .ok_or("Group has no items on the Canvas")?;
+        crate::canvas::apply(&mut self.config, crate::canvas::Mutation::View(view))?;
+        let canvas = self.config.canvas.clone();
+        weak.upgrade_in_event_loop(move |ui| crate::canvas::sync(&ui, &canvas, true))
+            .map_err(|error| error.to_string())
+    }
+
+    fn add_ink(&mut self, mut points: Vec<crate::config::InkPoint>) -> Result<(), String> {
+        crate::ink::normalize(&mut points);
+        if points.len() < 2 {
+            return Ok(());
+        }
+        let total = self
+            .config
+            .ink
+            .iter()
+            .map(|stroke| stroke.points.len())
+            .sum::<usize>()
+            + points.len();
+        if total > crate::ink::MAX_POINTS {
+            return Err("Canvas ink limit reached; erase some strokes first.".into());
+        }
+        let mut config = self.config.clone();
+        config.ink.push(crate::config::InkStroke {
+            id: new_id()?,
+            points,
+        });
+        self.commit(config)
+    }
+
+    fn erase_ink(&mut self, points: &[crate::config::InkPoint]) -> Result<(), String> {
+        let mut config = self.config.clone();
+        if crate::ink::erase(&mut config.ink, points, 12.0) {
+            self.commit(config)?;
+        }
         Ok(())
     }
 
@@ -2617,6 +2929,57 @@ impl Apps {
             .iter()
             .map(|path| path.as_str().into())
             .collect::<Vec<slint::SharedString>>();
+        let can_undo = self.edits.target(false).is_some();
+        let can_redo = self.edits.target(true).is_some();
+        let can_paste = self.edits.clipboard.is_some();
+        let groups = self
+            .config
+            .groups
+            .iter()
+            .filter_map(|group| {
+                let mut bounds: Option<(f32, f32, f32, f32)> = None;
+                for id in &group.items {
+                    let Some(rect) = self.config.positions.get(id) else {
+                        continue;
+                    };
+                    let (left, top) = (rect.col as f32, rect.row as f32);
+                    let (right, bottom) = (left + rect.width as f32, top + rect.height as f32);
+                    bounds = Some(match bounds {
+                        Some((l, t, r, b)) => {
+                            (l.min(left), t.min(top), r.max(right), b.max(bottom))
+                        }
+                        None => (left, top, right, bottom),
+                    });
+                }
+                let (x, y, right, bottom) = bounds?;
+                Some(CanvasGroupView {
+                    id: group.id.as_str().into(),
+                    name: group.name.as_str().into(),
+                    keys: group.keys.as_str().into(),
+                    x,
+                    y,
+                    width: right - x,
+                    height: bottom - y,
+                    count: group.items.len() as i32,
+                })
+            })
+            .collect::<Vec<_>>();
+        let ink = self
+            .config
+            .ink
+            .iter()
+            .map(|stroke| {
+                let ink = crate::ink::view(&stroke.points);
+                (
+                    ink.x,
+                    ink.y,
+                    ink.width,
+                    ink.height,
+                    ink.path,
+                    stroke.points.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
         let dock: Vec<_> = self
             .config
             .pinned
@@ -2723,7 +3086,7 @@ impl Apps {
                     })
             })
             .collect();
-        let shortcut_groups = (0..14)
+        let shortcut_groups = (0..25)
             .map(|action| {
                 (
                     action,
@@ -2892,6 +3255,34 @@ impl Apps {
             );
             launcher.set_directory_search_paths(
                 std::rc::Rc::new(slint::VecModel::from(directory_search_paths)).into(),
+            );
+            launcher.set_groups(std::rc::Rc::new(slint::VecModel::from(groups)).into());
+            launcher.set_can_undo(can_undo);
+            launcher.set_can_redo(can_redo);
+            launcher.set_can_paste(can_paste);
+            launcher.set_ink_strokes(
+                std::rc::Rc::new(slint::VecModel::from(
+                    ink.into_iter()
+                        .map(|(x, y, width, height, path, samples)| crate::CanvasInk {
+                            x,
+                            y,
+                            width,
+                            height,
+                            path,
+                            samples: std::rc::Rc::new(slint::VecModel::from(
+                                samples
+                                    .into_iter()
+                                    .map(|point| crate::InkSample {
+                                        x: point.x,
+                                        y: point.y,
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ))
+                            .into(),
+                        })
+                        .collect::<Vec<_>>(),
+                ))
+                .into(),
             );
             if let Some((index, name, items)) = folder {
                 launcher.set_folder_id(index.into());
@@ -3648,6 +4039,7 @@ mod tests {
         let mut config = Config::default();
         config.layout_locked = true;
         let mut apps = Apps {
+            edits: Default::default(),
             config,
             add_position: (0, 0),
             icons: HashMap::new(),
@@ -3725,6 +4117,7 @@ mod tests {
         let mut config = Config::default();
         config.default_search_engine = "google-search".into();
         let mut apps = Apps {
+            edits: Default::default(),
             config,
             add_position: (0, 0),
             icons: HashMap::new(),
@@ -3782,6 +4175,7 @@ mod tests {
         });
         config.pinned.push("nested".into());
         let apps = Apps {
+            edits: Default::default(),
             config,
             add_position: (0, 0),
             icons: HashMap::new(),
@@ -3825,6 +4219,7 @@ mod tests {
         let mut config = Config::default();
         config.items = vec![item("first"), item("second")];
         let mut apps = Apps {
+            edits: Default::default(),
             config,
             add_position: (-1200, 5000),
             icons: HashMap::new(),
@@ -3891,6 +4286,7 @@ mod tests {
             },
         );
         let mut apps = Apps {
+            edits: Default::default(),
             config,
             add_position: (0, 0),
             icons: HashMap::new(),
@@ -3942,6 +4338,7 @@ mod tests {
         let mut inventory = Inventory::default();
         inventory.replace(vec![installed("first"), installed("second")]);
         let mut apps = Apps {
+            edits: Default::default(),
             config: Config::default(),
             add_position: (0, 0),
             icons: HashMap::new(),
@@ -3972,6 +4369,7 @@ mod tests {
     #[test]
     fn cancelled_adds_leave_items_and_canvas_positions_unchanged() {
         let mut apps = Apps {
+            edits: Default::default(),
             config: Config::default(),
             add_position: (-1200, 5000),
             icons: HashMap::new(),
@@ -4167,6 +4565,7 @@ mod tests {
             let (action_id, query) = &actions[0];
             assert_eq!(query, argument);
             let mut apps = Apps {
+                edits: Default::default(),
                 config,
                 add_position: (0, 0),
                 icons: HashMap::new(),
@@ -4423,6 +4822,7 @@ mod tests {
         ]);
 
         let mut apps = Apps {
+            edits: Default::default(),
             config,
             add_position: (0, 0),
             icons: HashMap::new(),

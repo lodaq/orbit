@@ -122,6 +122,13 @@ pub fn reconcile(config: &mut Config) -> Result<(), String> {
         .iter()
         .map(|item| item.id().to_owned())
         .collect();
+    config.groups.retain_mut(|group| {
+        let mut seen = HashSet::new();
+        group
+            .items
+            .retain(|id| ids.contains(id) && seen.insert(id.clone()));
+        !group.items.is_empty()
+    });
     let widget_ids: HashSet<_> = config
         .items
         .iter()
@@ -369,6 +376,43 @@ pub fn connect(launcher: &crate::Launcher) {
         )
         .is_some()
     });
+    launcher.on_selection_has(|selection, id| selection.iter().any(|selected| selected == id));
+    launcher.on_selection_toggle(|selection, id| {
+        use slint::Model;
+        let mut selection = selection
+            .iter()
+            .map(|selected| selected.to_string())
+            .collect::<Vec<_>>();
+        selection_toggle(&mut selection, &id);
+        std::rc::Rc::new(slint::VecModel::from(
+            selection
+                .into_iter()
+                .map(slint::SharedString::from)
+                .collect::<Vec<_>>(),
+        ))
+        .into()
+    });
+    launcher.on_marquee_select(|items, x1, y1, x2, y2, selection, additive| {
+        use slint::Model;
+        let selection = selection
+            .iter()
+            .map(|selected| selected.to_string())
+            .collect::<Vec<_>>();
+        std::rc::Rc::new(slint::VecModel::from(
+            marquee_select(&items, x1, y1, x2, y2, &selection, additive)
+                .into_iter()
+                .map(slint::SharedString::from)
+                .collect::<Vec<_>>(),
+        ))
+        .into()
+    });
+    launcher.on_group_index(|groups, id| {
+        use slint::Model;
+        groups
+            .iter()
+            .position(|group| group.id == id)
+            .map_or(-1, |index| index as i32)
+    });
 }
 fn tile_positions(items: &slint::ModelRc<crate::AppTile>) -> BTreeMap<String, Rect> {
     use slint::Model;
@@ -387,6 +431,48 @@ fn tile_positions(items: &slint::ModelRc<crate::AppTile>) -> BTreeMap<String, Re
             )
         })
         .collect()
+}
+
+pub fn selection_has(selection: &[String], id: &str) -> bool {
+    selection.iter().any(|selected| selected == id)
+}
+
+pub fn selection_toggle(selection: &mut Vec<String>, id: &str) {
+    if let Some(index) = selection.iter().position(|selected| selected == id) {
+        selection.remove(index);
+    } else {
+        selection.push(id.into());
+    }
+}
+
+// A marquee selects every visible item footprint it touches, starting from the current selection.
+pub fn marquee_select(
+    items: &slint::ModelRc<crate::AppTile>,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    selection: &[String],
+    additive: bool,
+) -> Vec<String> {
+    use slint::Model;
+    let (left, right) = (x1.min(x2), x1.max(x2));
+    let (top, bottom) = (y1.min(y2), y1.max(y2));
+    let mut result = if additive {
+        selection.to_vec()
+    } else {
+        Vec::new()
+    };
+    for item in items.iter().filter(|item| !item.pinned) {
+        let hit = (item.col as f32) < right
+            && left < ((i64::from(item.col) + i64::from(item.span_x)) as f32)
+            && (item.row as f32) < bottom
+            && top < ((i64::from(item.row) + i64::from(item.span_y)) as f32);
+        if hit && !selection_has(&result, &item.id) {
+            result.push(item.id.to_string());
+        }
+    }
+    result
 }
 #[cfg(test)]
 mod tests {

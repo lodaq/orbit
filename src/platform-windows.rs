@@ -105,7 +105,11 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
             return EventResult::Propagate;
         };
         match event {
-            winit::event::WindowEvent::ModifiersChanged(state) => modifiers = state.state(),
+            winit::event::WindowEvent::ModifiersChanged(state) => {
+                modifiers = state.state();
+                launcher.set_ctrl_held(modifiers.control_key());
+                launcher.set_shift_held(modifiers.shift_key());
+            }
             winit::event::WindowEvent::KeyboardInput { event, .. }
                 if event.state == winit::event::ElementState::Pressed =>
             {
@@ -114,6 +118,8 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
                 }
             }
             winit::event::WindowEvent::Focused(false) => {
+                launcher.set_ctrl_held(false);
+                launcher.set_shift_held(false);
                 launcher.invoke_cancel_pointer();
                 if !launcher.get_data_busy()
                     && !launcher.get_icon_busy()

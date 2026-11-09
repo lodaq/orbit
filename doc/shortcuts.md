@@ -4,6 +4,14 @@ The user approved `Orbit_Desktop_Launcher_UX_Spec_v2.md` on 2026-10-20 as author
 
 # Orbit shortcuts
 
+With Canvas focus (click a tool or empty Canvas space), Ctrl+Z undoes the last content edit and Ctrl+Shift+Z redoes it. Ctrl+X cuts selected items, Ctrl+C copies them, and Ctrl+V pastes them near the visible center without overlaps. History holds 20 edits for the current session; pan/zoom are not history steps. These edit commands also appear in the Canvas Context menu. Lock layout allows Copy and blocks the other edits. Native text editing keeps these keys in text fields.
+
+Ctrl+J and Ctrl+L fit the next Group; Ctrl+H and Ctrl+K fit the previous Group, following saved order and stopping at the ends. Outside Canvas focus, Ctrl+K keeps its Search anything action. Keys 1, 2, 3 and 4 select Select, Hand, Draw and Eraser. Canvas edit, Group navigation and tool bindings can be changed in Settings → Shortcuts. Existing conflicting assignments are preserved during migration.
+
+Wheel pans vertically, Shift+wheel pans horizontally and Ctrl+wheel zooms around the pointer. Draw shows ink and Eraser removes strokes during the drag; release saves once and Escape cancels the gesture.
+
+Canvas tools: Select drags a selection rectangle; Ctrl-click or Shift-click toggles items, and Ctrl/Shift-drag adds a rectangle to the selection. Hand drags to pan. Draw saves ink; Eraser removes whole strokes. Right-click with a selection → New Group to name it and record a shortcut. Click a Group label or press its shortcut to fit its items. Right-click the label to edit or delete the Group. Escape cancels an active gesture, then clears selection. Group shortcuts require Ctrl, Alt or Super and run only on the Canvas with no layer open.
+
 Orbit is mouse first. Settings → Shortcuts lists Orbit bindings and lets you add or delete them. To change a binding, use its ×, confirm with ✓, then use Add to record a replacement. Chip labels do not start recording. Choose an action and record a key combination; duplicate combinations are rejected. The tables below are defaults. Text editing shortcuts are provided by text fields, and the global toggle remains in Hyprland. Ctrl+K returns focus to the search field; while results are visible, arrows navigate results and typing edits the query.
 
 ## Launcher
@@ -18,8 +26,9 @@ The launcher opens with Search anything focused. Ctrl+K focuses it again and Ent
 | Move right in search results / Canvas focus | `→` |
 | Open (launch an app, open a Website, File or Directory, open a Folder) | `Enter` |
 | Close the top layer (picker, then sheet or alert, then open folder, then launcher; on Settings, go back) | `Esc` |
+| Open Settings; press again to return to the launcher | `Ctrl+S` |
 
-Open Settings can also be assigned without a default binding. Legacy Add page and Delete page bindings are removed without renumbering the remaining actions. Deleting the final binding disables an Orbit action’s shortcut; its mouse control remains available.
+Open Settings toggles Settings with `Ctrl+S` by default and can also be assigned to another combination. Legacy Add page and Delete page bindings are removed without renumbering the remaining actions. Deleting the final binding disables an Orbit action’s shortcut; its mouse control remains available.
 
 ## Sheets, pickers, alerts and Settings
 
@@ -60,7 +69,7 @@ Search engines: `:br` Brave, `:g` Google, `:d` DuckDuckGo, `:q` Qwant, `:b` Bing
 | Right-click a pinned dock item | Unpin |
 | Right-click a Recent dock item | Remove from Recent |
 | Drag an item | Move it on the Canvas or into a Folder |
-| Wheel up / down | Zoom the Canvas around the pointer; widget content scrolls normally |
+| Wheel up / down | Pan vertically; Shift pans horizontally; Ctrl zooms around the pointer; widget content scrolls normally |
 | Add, Edit or Delete a file or directory search path in Settings | Manage folders searched by Search anything |
 | Click the Settings icon | Open Settings |
 | Click Back in Settings | Return to the launcher |
@@ -101,6 +110,6 @@ Accept next word also completes the current partial word. The Autocomplete row s
 
 English Suggestions: Ctrl+1, Ctrl+2 and Ctrl+3 apply the corresponding displayed rewrite. Ctrl+N or Ctrl+J highlights the next suggestion; Ctrl+P or Ctrl+K highlights the previous one. Enter applies the highlighted suggestion without submitting. Navigation stops at the ends; the first down/up selects the first/last suggestion. Editing or refreshing suggestions clears the highlight. While suggestions are available in Search anything, Ctrl+K navigates them; otherwise it retains its search-focus action.
 
-Canvas: drag empty space to pan; wheel zooms around the pointer from 25–200%. Right-click empty space → Add item opens the existing sheets and widget gallery at the clicked position. Right-click → Show all items fits the arranged content, including below 25% when necessary. Widgets scroll their own content. Escape cancels an active drag or placement preview without saving. Lock layout prevents adding, moving and resizing items while permitting navigation and widget interactions. The saved view survives hiding and restart. There are no page-switch actions or Box controls.
+Canvas: Select drags a selection rectangle; Hand drags to pan; Ctrl+wheel zooms around the pointer from 25–200%. Right-click empty space → Add item opens the existing sheets and widget gallery at the clicked position. Right-click → Show all items fits the arranged content, including below 25% when necessary. Widgets scroll their own content. Escape cancels an active drag or placement preview without saving. Lock layout prevents adding, moving and resizing items while permitting navigation and widget interactions. The saved view survives hiding and restart. There are no page-switch actions or Box controls.
 
 Robot workbench: Escape closes the workbench without cancelling work. Typing, Tab, text selection and clipboard shortcuts stay in the workbench while it is open. Send queues the chat message with the mouse; Cancel work cancels the selected conversation's queued/pending work. Approve once applies only to the displayed conversation and action. Delete conversation requires confirmation and is unavailable while that conversation has work outstanding.

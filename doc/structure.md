@@ -1,5 +1,9 @@
 # File structure
 
+- `src/ink.rs`: world-coordinate ink paths, bounded stroke input and whole-stroke erasing.
+- `src/canvas-edit.rs`: bounded session history and Canvas item clipboard snapshots, fresh IDs and collision-free paste placement. `tests/canvas-edit-ui.py` checks scoped edit/tool shortcuts, wheel pan/zoom, Group navigation, live ink and gesture cancellation on a private display.
+- Canvas Groups reuse `src/config.rs` storage, `src/spatial.rs` selection and reconciliation, `src/apps.rs` worker saves and fit navigation, and `src/shortcuts.rs` recording and conflict checks. `ui/assets/tool-*.svg` supplies the four toolbar icons.
+
 - `src/t3-providers.rs`: bounded local T3 Code provider/model import, secret-free account references and connection fingerprints.
 - `src/robot-native.rs` and `src/robot-native/tests.rs`: direct Codex app-server, ACP and Pi RPC execution, permission routing, bounded output, credential redaction and cancellation fixtures.
 - `tests/native-provider-fixture.py`: offline stdio agent for protocol and permission checks.
@@ -54,6 +58,7 @@ The approved supplied UI update adds the reference launcher appearance, search a
 - `src/widget-data.rs`: the local SQLite text collections, stable entry IDs, editing, deletion, search, pagination and storage sizes.
 - `src/widget-data-ui.rs`: Settings → Data callbacks, collection counts, storage meter values, completed TickTick titles and a dedicated worker; database initialization, migrations and reads stay outside the launcher show path.
 - `src/platform-windows.rs`: Windows resident launcher IPC, fullscreen window behavior, registered-file opening, process launch, system actions and Installed apps discovery.
+- `tests/canvas-groups-ui.py`: private-display selection, Group creation/editing, shortcut conflicts, layout lock, mixed-language labels and visible ink persistence/erasing checks.
 - `tests/canvas-ui.py`: real pointer and persistence checks using a private Xvfb display, temporary config and isolated runtime socket.
 
 The approved v2 UX specification is `Orbit_Desktop_Launcher_UX_Spec_v2.md`; it supersedes the original OS target and list-grid assumptions.

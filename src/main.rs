@@ -5,11 +5,15 @@ mod ai;
 mod apps;
 mod azan;
 mod canvas;
+#[path = "canvas-edit.rs"]
+mod canvas_edit;
 mod config;
 mod daemon;
 #[path = "english-assistance.rs"]
 mod english_assistance;
 mod icons;
+#[path = "ink.rs"]
+mod ink;
 #[path = "internet-usage.rs"]
 mod internet_usage;
 #[path = "item-drop.rs"]

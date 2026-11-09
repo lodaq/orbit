@@ -151,7 +151,8 @@ struct MovedTask<'a> {
 
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(8)))
+        .timeout_connect(Some(Duration::from_secs(3)))
+        .timeout_global(Some(Duration::from_secs(30)))
         .build()
         .into()
 }
@@ -211,12 +212,15 @@ pub fn validate_token(token: &str) -> Result<Vec<Project>, String> {
 }
 
 pub fn projects(token: &str) -> Result<Vec<Project>, String> {
-    let client = agent();
+    projects_with(&agent(), token)
+}
+
+fn projects_with(client: &ureq::Agent, token: &str) -> Result<Vec<Project>, String> {
     let mut projects = Vec::new();
     let mut offset = 0;
     loop {
         let page: Vec<Project> = get(
-            &client,
+            client,
             token,
             &format!("/project?limit=200&offset={offset}"),
         )?;
@@ -231,7 +235,7 @@ pub fn projects(token: &str) -> Result<Vec<Project>, String> {
 
 pub fn all_tasks(token: &str) -> Result<(Vec<Project>, Vec<Task>), String> {
     let client = agent();
-    let mut projects = projects(token)?;
+    let mut projects = projects_with(&client, token)?;
     let mut tasks = Vec::new();
     for project in &projects {
         let data: ProjectData = get(&client, token, &format!("/project/{}/data", project.id))?;
@@ -256,12 +260,12 @@ pub fn all_tasks(token: &str) -> Result<(Vec<Project>, Vec<Task>), String> {
             tasks.push(task);
         }
     }
-    for task in scheduled_tasks(token, None)? {
+    for task in scheduled_tasks(&client, token, None)? {
         if !tasks.iter().any(|t| t.id == task.id) {
             tasks.push(task);
         }
     }
-    let completed = completed_tasks(token, &projects)?;
+    let completed = completed_tasks_with(&client, token, &projects)?;
     for task in completed {
         if !tasks.iter().any(|t| t.id == task.id) {
             tasks.push(task);
@@ -271,14 +275,16 @@ pub fn all_tasks(token: &str) -> Result<(Vec<Project>, Vec<Task>), String> {
 }
 
 pub fn project_tasks(token: &str, project: &str) -> Result<Vec<Task>, String> {
-    let data: ProjectData = get(&agent(), token, &format!("/project/{project}/data"))?;
+    let client = agent();
+    let data: ProjectData = get(&client, token, &format!("/project/{project}/data"))?;
     let mut tasks = data.tasks;
-    for task in scheduled_tasks(token, Some(project))? {
+    for task in scheduled_tasks(&client, token, Some(project))? {
         if !tasks.iter().any(|t| t.id == task.id) {
             tasks.push(task);
         }
     }
-    let completed = completed_tasks(
+    let completed = completed_tasks_with(
+        &client,
         token,
         &[Project {
             id: project.into(),
@@ -295,15 +301,18 @@ pub fn project_tasks(token: &str, project: &str) -> Result<Vec<Task>, String> {
 }
 
 // Project data can omit older tasks. Query each priority separately to retain them for Today.
-fn scheduled_tasks(token: &str, project: Option<&str>) -> Result<Vec<Task>, String> {
-    let client = agent();
+fn scheduled_tasks(
+    client: &ureq::Agent,
+    token: &str,
+    project: Option<&str>,
+) -> Result<Vec<Task>, String> {
     let mut tasks = Vec::new();
     for priority in [5, 3, 1, 0] {
         let mut filter = serde_json::json!({ "status": [0], "priority": [priority] });
         if let Some(project) = project {
             filter["projectIds"] = serde_json::json!([project]);
         }
-        let batch: Vec<Task> = post_json(&client, token, "/task/filter", &filter)?;
+        let batch: Vec<Task> = post_json(client, token, "/task/filter", &filter)?;
         for task in batch {
             if !tasks.iter().any(|found: &Task| found.id == task.id) {
                 tasks.push(task);
@@ -313,12 +322,21 @@ fn scheduled_tasks(token: &str, project: Option<&str>) -> Result<Vec<Task>, Stri
     Ok(tasks)
 }
 
+#[allow(dead_code)]
 pub fn completed_tasks(token: &str, projects: &[Project]) -> Result<Vec<Task>, String> {
+    completed_tasks_with(&agent(), token, projects)
+}
+
+fn completed_tasks_with(
+    client: &ureq::Agent,
+    token: &str,
+    projects: &[Project],
+) -> Result<Vec<Task>, String> {
     let project_ids = projects
         .iter()
         .map(|project| &project.id)
         .collect::<Vec<_>>();
-    let response = agent()
+    let response = client
         .post(format!("{API}/task/completed"))
         .header("Authorization", format!("Bearer {token}"))
         .send_json(serde_json::json!({ "projectIds": project_ids }))
@@ -568,6 +586,20 @@ pub(crate) fn activate_secret_service() -> Result<(), String> {
 #[cfg(test)]
 mod move_tests {
     use super::*;
+
+    #[test]
+    #[ignore = "uses the configured TickTick account"]
+    fn fetch_all_tasks() {
+        let start = std::time::Instant::now();
+        let token = load_token().unwrap().expect("TickTick must be connected");
+        let (projects, tasks) = all_tasks(&token).unwrap();
+        println!(
+            "Fetched {} projects and {} tasks in {:?}",
+            projects.len(),
+            tasks.len(),
+            start.elapsed()
+        );
+    }
 
     #[test]
     #[ignore = "uses the configured TickTick account"]

@@ -278,11 +278,12 @@ fn canvas_context_anchor_uses_world_coordinates_after_pan_and_zoom() {
 }
 
 #[test]
-fn escape_cancels_empty_space_pan_while_locked_or_unlocked() {
+fn escape_cancels_hand_pan_while_locked_or_unlocked() {
     use std::{cell::Cell, rc::Rc};
     i_slint_backend_testing::init_no_event_loop();
     let launcher = Launcher::new().unwrap();
     launcher.set_canvas_speed(1);
+    launcher.set_tool_mode(1);
     launcher
         .window()
         .set_size(slint::LogicalSize::new(1600., 1000.));

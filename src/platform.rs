@@ -648,6 +648,8 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
             match event {
                 WindowEvent::ModifiersChanged(state) => {
                     modifiers = state.state();
+                    launcher.set_ctrl_held(modifiers.control_key());
+                    launcher.set_shift_held(modifiers.shift_key());
                 }
                 WindowEvent::KeyboardInput { event, .. }
                     if event.state == ElementState::Pressed =>
@@ -660,6 +662,8 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
                     let generation = focus_generation.get().wrapping_add(1);
                     focus_generation.set(generation);
                     if !active {
+                        launcher.set_ctrl_held(false);
+                        launcher.set_shift_held(false);
                         launcher.invoke_cancel_pointer();
                         let focus_generation = focus_generation.clone();
                         let weak = weak.clone();

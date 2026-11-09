@@ -61,6 +61,10 @@ pub struct Config {
     pub file_search_exclusions: Vec<String>,
     #[serde(default)]
     pub directory_search_paths: Vec<String>,
+    #[serde(default)]
+    pub groups: Vec<CanvasGroup>,
+    #[serde(default)]
+    pub ink: Vec<InkStroke>,
     #[serde(default = "default_actions")]
     pub user_actions: Vec<UserAction>,
     #[serde(default = "default_prefixes")]
@@ -71,6 +75,10 @@ pub struct Config {
     search_word_shortcut_initialized: bool,
     #[serde(default)]
     search_completion_shortcut_initialized: bool,
+    #[serde(default)]
+    settings_shortcut_initialized: bool,
+    #[serde(default)]
+    canvas_shortcuts_initialized: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -98,6 +106,28 @@ pub struct Prefix {
     pub name: String,
     pub token: String,
     pub action_id: String,
+}
+
+// A Group names selected Canvas items and fits them on screen; it does not move or contain them.
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub struct CanvasGroup {
+    pub id: String,
+    pub name: String,
+    pub items: Vec<String>,
+    #[serde(default)]
+    pub keys: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+pub struct InkPoint {
+    pub x: f32,
+    pub y: f32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct InkStroke {
+    pub id: String,
+    pub points: Vec<InkPoint>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -427,11 +457,15 @@ impl Default for Config {
             app_search_paths: Vec::new(),
             file_search_exclusions: default_file_search_exclusions(),
             directory_search_paths: Vec::new(),
+            groups: Vec::new(),
+            ink: Vec::new(),
             user_actions: default_actions(),
             prefixes: default_prefixes(),
             site_searches_initialized: true,
             search_word_shortcut_initialized: true,
             search_completion_shortcut_initialized: true,
+            settings_shortcut_initialized: true,
+            canvas_shortcuts_initialized: true,
         }
     }
 }
@@ -691,6 +725,33 @@ impl Config {
         }
         self.search_word_shortcut_initialized = true;
     }
+    fn add_settings_shortcut(&mut self) {
+        if !self
+            .shortcuts
+            .iter()
+            .any(|entry| entry.action == 9 || entry.keys == "Ctrl+S")
+        {
+            self.shortcuts.push(crate::shortcuts::Shortcut {
+                action: 9,
+                keys: "Ctrl+S".into(),
+            });
+        }
+        self.settings_shortcut_initialized = true;
+    }
+
+    fn add_canvas_shortcuts(&mut self) {
+        for binding in crate::shortcuts::canvas_defaults() {
+            if !self
+                .shortcuts
+                .iter()
+                .any(|entry| entry.keys == binding.keys)
+                && !self.groups.iter().any(|group| group.keys == binding.keys)
+            {
+                self.shortcuts.push(binding);
+            }
+        }
+        self.canvas_shortcuts_initialized = true;
+    }
 
     pub fn search_engine_names() -> Vec<&'static str> {
         SEARCH_ENGINES.iter().map(|(_, name)| *name).collect()
@@ -872,6 +933,53 @@ impl Config {
             }
         }
         if self.positions.values().any(|rect| !rect.valid()) {
+            return false;
+        }
+        let mut group_ids = std::collections::HashSet::new();
+        let mut group_names = std::collections::HashSet::new();
+        let mut group_keys = std::collections::HashSet::new();
+        if self.groups.iter().any(|group| {
+            let mut members = std::collections::HashSet::new();
+            group.id.is_empty()
+                || group.name.trim().is_empty()
+                || group.name.chars().count() > 60
+                || !group_names.insert(group.name.trim().to_lowercase())
+                || group.items.is_empty()
+                || group
+                    .items
+                    .iter()
+                    .any(|id| !ids.contains(id.as_str()) || !members.insert(id.as_str()))
+                || !group_ids.insert(group.id.as_str())
+                || (!group.keys.is_empty() && !group_keys.insert(group.keys.as_str()))
+                || crate::shortcuts::validate_group_keys(
+                    &group.keys,
+                    &group.id,
+                    &self.shortcuts,
+                    &self.groups,
+                )
+                .is_err()
+        }) {
+            return false;
+        }
+        let mut ink_ids = std::collections::HashSet::new();
+        if self
+            .ink
+            .iter()
+            .map(|stroke| stroke.points.len())
+            .sum::<usize>()
+            > crate::ink::MAX_POINTS
+            || self.ink.iter().any(|stroke| {
+                stroke.id.is_empty()
+                    || !ink_ids.insert(stroke.id.as_str())
+                    || !(2..=2000).contains(&stroke.points.len())
+                    || stroke.points.iter().any(|point| {
+                        !point.x.is_finite()
+                            || !point.y.is_finite()
+                            || point.x.abs() > 10_000_000.0
+                            || point.y.abs() > 10_000_000.0
+                    })
+            })
+        {
             return false;
         }
         self.canvas.valid()
@@ -1056,6 +1164,14 @@ fn migrate(
     }
     if !config.search_word_shortcut_initialized {
         config.add_search_word_shortcut();
+        changed = true;
+    }
+    if !config.settings_shortcut_initialized {
+        config.add_settings_shortcut();
+        changed = true;
+    }
+    if !config.canvas_shortcuts_initialized {
+        config.add_canvas_shortcuts();
         changed = true;
     }
     if !config.site_searches_initialized {
@@ -1562,6 +1678,46 @@ mod search_shortcut_tests {
     use super::Config;
 
     #[test]
+    fn adds_settings_shortcut_to_old_settings_without_restoring_removed_bindings() {
+        let mut config = Config::default();
+        config.shortcuts.retain(|entry| entry.action != 9);
+        config.settings_shortcut_initialized = false;
+        config.add_settings_shortcut();
+        assert!(
+            config
+                .shortcuts
+                .iter()
+                .any(|entry| entry.action == 9 && entry.keys == "Ctrl+S")
+        );
+        config.shortcuts.retain(|entry| entry.action != 9);
+        let saved = serde_json::to_vec(&config).unwrap();
+        let loaded: Config = serde_json::from_slice(&saved).unwrap();
+        assert!(loaded.settings_shortcut_initialized);
+        assert!(!loaded.shortcuts.iter().any(|entry| entry.action == 9));
+    }
+
+    #[test]
+    fn migration_preserves_an_existing_settings_or_ctrl_s_binding() {
+        let mut config = Config::default();
+        config.shortcuts.retain(|entry| entry.action != 9);
+        config.shortcuts[0].keys = "Ctrl+S".into();
+        config.settings_shortcut_initialized = false;
+        config.add_settings_shortcut();
+        assert!(!config.shortcuts.iter().any(|entry| entry.action == 9));
+        assert_eq!(config.shortcuts[0].keys, "Ctrl+S");
+
+        let mut config = Config::default();
+        config.shortcuts.retain(|entry| entry.action != 9);
+        config.shortcuts.push(crate::shortcuts::Shortcut {
+            action: 9,
+            keys: "Alt+S".into(),
+        });
+        config.settings_shortcut_initialized = false;
+        config.add_settings_shortcut();
+        assert!(!config.shortcuts.iter().any(|entry| entry.keys == "Ctrl+S"));
+    }
+
+    #[test]
     fn adds_word_shortcut_to_old_settings_without_restoring_removed_bindings() {
         let mut config = Config::default();
         config.shortcuts.retain(|entry| entry.action != 12);
@@ -1637,5 +1793,120 @@ mod exclusion_persistence_tests {
         assert_eq!(loaded.file_search_paths, config.file_search_paths);
         assert_eq!(loaded.directory_search_paths, config.directory_search_paths);
         assert_eq!(loaded.items.len(), config.items.len());
+    }
+}
+
+#[cfg(test)]
+mod canvas_group_tests {
+    use super::*;
+
+    #[test]
+    fn canvas_shortcuts_preserve_existing_bindings_and_deleted_defaults() {
+        let mut config = config_with_group();
+        config.shortcuts.retain(|entry| entry.action < 14);
+        config.shortcuts.push(crate::shortcuts::Shortcut {
+            action: 0,
+            keys: "Ctrl+Z".into(),
+        });
+        config.groups[0].keys = "Ctrl+V".into();
+        config.canvas_shortcuts_initialized = false;
+        config.add_canvas_shortcuts();
+        assert!(config.canvas_shortcuts_initialized);
+        assert!(
+            !config
+                .shortcuts
+                .iter()
+                .any(|entry| entry.action == 14 || entry.action == 18)
+        );
+        assert!(config.valid());
+        config.shortcuts.retain(|entry| entry.action != 21);
+        let loaded: Config = serde_json::from_slice(&serde_json::to_vec(&config).unwrap()).unwrap();
+        assert!(loaded.canvas_shortcuts_initialized);
+        assert!(!loaded.shortcuts.iter().any(|entry| entry.action == 21));
+    }
+
+    fn config_with_group() -> Config {
+        let mut config = Config::default();
+        config.items.push(Item::App(App {
+            id: "a".into(),
+            name: "A".into(),
+            icon: Icon::Letter,
+            launch: Launch::Command("true".into()),
+        }));
+        config.positions.insert(
+            "a".into(),
+            crate::spatial::Rect {
+                col: 0,
+                row: 0,
+                width: 144,
+                height: 144,
+            },
+        );
+        config.groups.push(CanvasGroup {
+            id: "g".into(),
+            name: "Work".into(),
+            items: vec!["a".into()],
+            keys: "Ctrl+1".into(),
+        });
+        config
+    }
+
+    #[test]
+    fn groups_require_members_unique_names_and_modified_unique_keys() {
+        let mut config = config_with_group();
+        assert!(config.valid());
+        let saved = serde_json::to_vec(&config).unwrap();
+        let loaded: Config = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(loaded.groups.len(), 1);
+
+        config.groups[0].items = vec!["missing".into()];
+        assert!(!config.valid());
+        config.groups[0].items = vec!["a".into()];
+
+        config.groups.push(CanvasGroup {
+            id: "h".into(),
+            name: " work ".into(),
+            items: vec!["a".into()],
+            keys: String::new(),
+        });
+        assert!(!config.valid());
+        config.groups[1].name = "Personal".into();
+        assert!(config.valid());
+
+        config.groups[1].keys = "A".into();
+        assert!(!config.valid());
+        config.groups[1].keys = "1".into();
+        assert!(!config.valid());
+        config.groups[1].keys = "Ctrl+1".into();
+        assert!(!config.valid());
+    }
+
+    #[test]
+    fn groups_drop_removed_members_and_disappear_when_empty() {
+        let mut config = config_with_group();
+        config.groups[0].items.push("missing".into());
+        crate::spatial::reconcile(&mut config).unwrap();
+        assert_eq!(config.groups[0].items, ["a"]);
+        config.items.clear();
+        crate::spatial::reconcile(&mut config).unwrap();
+        assert!(config.groups.is_empty());
+    }
+
+    #[test]
+    fn ink_requires_two_to_two_thousand_points_and_unique_ids() {
+        let mut config = Config::default();
+        config.ink.push(InkStroke {
+            id: "s".into(),
+            points: vec![InkPoint { x: 0.0, y: 0.0 }, InkPoint { x: 1.0, y: 1.0 }],
+        });
+        assert!(config.valid());
+        config.ink[0].points.pop();
+        assert!(!config.valid());
+        config.ink[0].points = vec![InkPoint { x: 0.0, y: 0.0 }, InkPoint { x: 1.0, y: 1.0 }];
+        config.ink.push(InkStroke {
+            id: "s".into(),
+            points: vec![InkPoint { x: 0.0, y: 0.0 }, InkPoint { x: 1.0, y: 1.0 }],
+        });
+        assert!(!config.valid());
     }
 }

@@ -14,6 +14,9 @@ import { WidgetDataEntry, WidgetView, LocalWidgets, LocalWidget } from "local-wi
 import { Palette, ScrollView } from "std-widgets.slint";
 
 export struct CompletedReference { id: string, date: string, title: string, done: bool }
+export struct CanvasGroupView { id: string, name: string, keys: string, x: float, y: float, width: float, height: float, count: int }
+export struct InkSample { x: float, y: float }
+export struct CanvasInk { x: float, y: float, width: float, height: float, path: string, samples: [InkSample] }
 
 export struct ShortcutEntry { action: int, keys: string }
 export struct ShortcutGroup { action: int, entries: [ShortcutEntry] }
@@ -289,6 +292,7 @@ component ItemTile inherits Rectangle {
     private property <length> ticktick-max-scroll: max(0px,(ticktick-total-count - ticktick-visible-count) * 36px);
     in property <bool> pressed;
     in property <bool> hovered;
+    in property <bool> selected: false;
     in property <bool> folder-preview: false;
     in property <bool> layout-locked;
     in property <bool> resize-active;
@@ -501,6 +505,12 @@ component ItemTile inherits Rectangle {
         horizontal-alignment: center;
         overflow: elide;
     }
+    if root.selected: Rectangle {
+        width: parent.width; height: parent.height;
+        border-width: 2px; border-radius: Theme.radius-control;
+        border-color: Theme.selection-border;
+        background: Theme.selection.with-alpha(0.08);
+    }
 }
 
 component DockTile inherits Rectangle {
@@ -607,6 +617,12 @@ export component Launcher inherits Window {
     pure callback folder-target([AppTile],AppTile,int,int,int,int) -> int;
     pure callback hit-cell([AppTile],int,int) -> int;
     pure callback preview-valid([AppTile],string,int,int,int,int) -> bool;
+    pure callback selection-has([string], string) -> bool;
+    pure callback selection-toggle([string], string) -> [string];
+    pure callback marquee-select([AppTile],float,float,float,float,[string],bool) -> [string];
+    pure callback ink-view([InkSample], int) -> CanvasInk;
+    pure callback preview-erase([CanvasInk], float, float, float, float) -> [CanvasInk];
+    pure callback group-index([CanvasGroupView], string) -> int;
     callback add-widget(int,int,int,bool);
     callback duplicate-widget(string);
     callback widget-action(string,int,int);
@@ -672,7 +688,32 @@ export component Launcher inherits Window {
     }
 
     private property <int> dock-source-index: -1;
-    out property <bool> grid-navigation: !RobotWorkbench.visible && !root.search-context && !root.ai-active && canvas-focus.has-focus && !root.canvas-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open;
+    out property <bool> grid-navigation: !RobotWorkbench.visible && !root.search-context && !root.ai-active && canvas-focus.has-focus && !root.canvas-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.group-editor;
+    out property <bool> group-shortcuts: !RobotWorkbench.visible && !root.canvas-context && root.context-index < 0 && root.group-context-id == "" && !root.tool-active && !root.marquee-active && !root.panning && !root.dragging && root.home-visible && !root.busy && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.group-editor && !root.search-context;
+    out property <bool> canvas-shortcuts: root.group-shortcuts && canvas-focus.has-focus;
+    in-out property <bool> can-undo;
+    in-out property <bool> can-redo;
+    in-out property <bool> can-paste;
+    callback edit-canvas(int, [string], float, float);
+    callback canvas-command(int);
+    canvas-command(command) => {
+        if root.layout-locked && command != 3 { return; }
+        root.flush-canvas();
+        root.set-tool(root.tool-mode);
+        root.edit-canvas(command, root.selected-ids,
+            root.world-x(root.width / 2) / 1px, root.world-y(root.height / 2) / 1px);
+    }
+    callback select-tool(int);
+    select-tool(mode) => { root.set-tool(mode); }
+    private property <string> active-group-id;
+    callback cycle-group(int);
+    cycle-group(direction) => {
+        if root.groups.length == 0 { return; }
+        let current = root.group-index(root.groups, root.active-group-id);
+        let next = current < 0 ? (direction > 0 ? 0 : root.groups.length - 1)
+            : min(root.groups.length - 1, max(0, current + direction));
+        root.fit-group-view(root.groups[next].id);
+    }
     pure callback next-grid-item([AppTile],int,int) -> int;
     callback move-grid(int);
     move-grid(direction) => {
@@ -684,7 +725,7 @@ export component Launcher inherits Window {
         }
     }
     callback activate-grid();
-    activate-grid => { if root.focused-item >= 0 && root.focused-item < root.items.length { root.begin-drag(root.focused-item,false,0px,0px); root.end-drag(); } }
+    activate-grid => { root.selected-ids = []; if root.focused-item >= 0 && root.focused-item < root.items.length { root.begin-drag(root.focused-item,false,0px,0px); root.end-drag(); } }
     callback context-focused();
     context-focused => { if root.focused-item >= 0 && root.focused-item < root.items.length { root.context-index = root.focused-item; RobotWorkbench.common-actions = []; if root.items[root.focused-item].robot != "" { RobotWorkbench.context-actions(root.items[root.focused-item].robot); } root.context-x = (CanvasState.pan-x + root.items[root.focused-item].col * CanvasState.zoom) * 1px; root.context-y = (CanvasState.pan-y + root.items[root.focused-item].row * CanvasState.zoom) * 1px; } }
     private property <bool> snapping;
@@ -708,6 +749,45 @@ export component Launcher inherits Window {
     private property <float> pan-origin-y;
     private property <length> pan-start-x;
     private property <length> pan-start-y;
+    in-out property <[string]> selected-ids;
+    in-out property <[CanvasGroupView]> groups;
+    in-out property <[CanvasInk]> ink-strokes;
+    in-out property <int> tool-mode: 0;
+    in-out property <bool> ctrl-held;
+    in-out property <bool> shift-held;
+    private property <bool> marquee-active;
+    private property <bool> marquee-additive;
+    private property <[string]> marquee-selection;
+    private property <length> marquee-start-x;
+    private property <length> marquee-start-y;
+    private property <length> marquee-end-x;
+    private property <length> marquee-end-y;
+    private property <[InkSample]> ink-draft;
+    private property <[InkSample]> erase-draft;
+    private property <[CanvasInk]> erase-preview;
+    private property <bool> erase-preview-active;
+    private property <bool> tool-active;
+    callback add-ink([InkSample]);
+    callback erase-ink([InkSample]);
+    callback ink-finished();
+    ink-finished => {
+        root.ink-draft = [];
+        root.erase-preview-active = false;
+        root.busy = false;
+    }
+    callback save-group(string,string,string,[string]);
+    callback delete-group(string);
+    callback group-saved();
+    callback group-save-failed(string);
+    callback fit-group(string);
+    callback fit-group-action(string,float,float);
+    in-out property <bool> group-editor;
+    private property <string> group-edit-id;
+    private property <string> group-name-draft;
+    in-out property <string> group-keys-draft;
+    in-out property <bool> group-recording;
+    private property <string> group-error;
+    private property <string> group-context-id;
     callback set-add-position(float,float);
     callback show-all-items(float,float);
     callback reveal-item(int,int,int,int);
@@ -735,16 +815,141 @@ export component Launcher inherits Window {
             CanvasState.save-view(CanvasState.pan-x,CanvasState.pan-y,CanvasState.zoom);
         }
     }
+    function wheel-canvas(x: length, y: length, dx: length, dy: length) {
+        if root.dragging || root.panning || root.tool-active { return; }
+        if root.ctrl-held {
+            CanvasState.zoom-at(x / 1px, y / 1px, pow(1.0015, dy / 1px * root.canvas-speed));
+        } else if root.shift-held {
+            CanvasState.pan-x += (dy + dx) / 1px * root.canvas-speed;
+        } else {
+            CanvasState.pan-x += dx / 1px * root.canvas-speed;
+            CanvasState.pan-y += dy / 1px * root.canvas-speed;
+        }
+        root.view-dirty = true;
+        canvas-save-timer.restart();
+    }
     function cancel-canvas() {
         if root.panning { CanvasState.pan-x = root.pan-origin-x; CanvasState.pan-y = root.pan-origin-y; }
         root.panning = false;
+        root.marquee-active = false;
+        root.ink-draft = [];
+        root.erase-draft = [];
+        root.erase-preview-active = false;
+        root.tool-active = false;
+    }
+    function fit-group-view(id: string) {
+        root.active-group-id = id;
+        root.group-context-id = "";
+        root.canvas-context = false;
+        root.context-index = -1;
+        root.flush-canvas();
+        root.fit-group-action(id, root.width / 1px, root.height / 1px);
+    }
+    fit-group(id) => { root.fit-group-view(id); }
+    function open-group-editor(id: string) {
+        root.canvas-context = false;
+        root.context-index = -1;
+        root.dock-context = "";
+        root.group-context-id = "";
+        root.group-edit-id = id;
+        root.group-name-draft = "";
+        root.group-keys-draft = "";
+        root.group-recording = false;
+        root.group-error = "";
+        let index = root.group-index(root.groups, id);
+        if index >= 0 {
+            root.group-name-draft = root.groups[index].name;
+            root.group-keys-draft = root.groups[index].keys;
+        }
+        root.group-editor = true;
+    }
+    function group-member-count() -> int {
+        if root.group-edit-id == "" { return root.selected-ids.length; }
+        let index = root.group-index(root.groups, root.group-edit-id);
+        return index >= 0 ? root.groups[index].count : 0;
+    }
+    function set-tool(mode: int) {
+        root.tool-mode = mode;
+        root.cancel-canvas();
+        root.canvas-context = false;
+        root.context-index = -1;
+        root.group-context-id = "";
+        canvas-focus.focus();
+    }
+    function finish-marquee() {
+        if root.marquee-active && !root.marquee-additive
+            && abs(root.marquee-end-x - root.marquee-start-x) < 4px
+            && abs(root.marquee-end-y - root.marquee-start-y) < 4px {
+            root.selected-ids = [];
+        }
+        root.marquee-active = false;
+    }
+    function tool-pointer(event: PointerEvent, x: length, y: length) {
+        if root.busy { return; }
+        if root.layout-locked && root.tool-mode >= 2 { return; }
+        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+            root.flush-canvas();
+            root.cancel-drag();
+            root.canvas-context = false;
+            root.context-index = -1;
+            root.group-context-id = "";
+            if root.tool-mode == 1 {
+                root.pan-origin-x = CanvasState.pan-x; root.pan-origin-y = CanvasState.pan-y;
+                root.pan-start-x = x; root.pan-start-y = y; root.panning = true;
+            } else if root.tool-mode == 2 {
+                root.ink-draft = [{ x: root.world-x(x) / 1px, y: root.world-y(y) / 1px }];
+                root.tool-active = true;
+            } else if root.tool-mode == 3 {
+                root.erase-draft = [{ x: root.world-x(x) / 1px, y: root.world-y(y) / 1px }];
+                root.erase-preview = root.preview-erase(root.ink-strokes, root.world-x(x) / 1px, root.world-y(y) / 1px, root.world-x(x) / 1px, root.world-y(y) / 1px);
+                root.erase-preview-active = true;
+                root.tool-active = true;
+            }
+            canvas-focus.focus();
+        }
+        if event.kind == PointerEventKind.move {
+            if root.tool-mode == 1 && root.panning {
+                CanvasState.pan-x = root.pan-origin-x + (x - root.pan-start-x) / 1px * root.canvas-speed;
+                CanvasState.pan-y = root.pan-origin-y + (y - root.pan-start-y) / 1px * root.canvas-speed;
+            } else if root.tool-mode == 2 && root.tool-active {
+                if root.ink-draft.length < 2000 { root.ink-draft.push({ x: root.world-x(x) / 1px, y: root.world-y(y) / 1px }); }
+            } else if root.tool-mode == 3 && root.tool-active && root.erase-draft.length < 2000 {
+                let previous = root.erase-draft[root.erase-draft.length - 1];
+                root.erase-preview = root.preview-erase(root.erase-preview, previous.x, previous.y, root.world-x(x) / 1px, root.world-y(y) / 1px);
+                root.erase-draft.push({ x: root.world-x(x) / 1px, y: root.world-y(y) / 1px });
+            }
+        }
+        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+            if root.tool-mode == 1 && root.panning {
+                root.panning = false;
+                root.view-dirty = CanvasState.pan-x != root.pan-origin-x || CanvasState.pan-y != root.pan-origin-y;
+                root.flush-canvas();
+            } else if root.tool-mode == 2 && root.tool-active {
+                root.busy = true;
+                root.add-ink(root.ink-draft);
+                root.tool-active = false;
+            } else if root.tool-mode == 3 && root.tool-active {
+                root.busy = true;
+                root.erase-ink(root.erase-draft);
+                root.erase-draft = [];
+                root.tool-active = false;
+            }
+        }
+        if event.kind == PointerEventKind.cancel {
+            root.cancel-canvas();
+        }
     }
     function canvas-pointer(event: PointerEvent, x: length, y: length) {
         if event.kind == PointerEventKind.down {
             let index = root.canvas-item-at(x,y);
             if event.button == PointerEventButton.right {
                 root.cancel-drag();
+                root.marquee-active = false;
+                root.group-context-id = "";
                 root.canvas-context = index < 0;
+                if index >= 0 && !root.selection-has(root.selected-ids, root.items[index].id) {
+                    root.selected-ids = [root.items[index].id];
+                }
                 root.dock-context = ""; root.context-index = index; root.context-x = x; root.context-y = y;
                 RobotWorkbench.common-actions = [];
                 if root.items[index].robot != "" { RobotWorkbench.context-actions(root.items[index].robot); }
@@ -757,12 +962,25 @@ export component Launcher inherits Window {
             root.keyboard-grid = false; root.focused-item = index;
             if index < 0 {
                 root.flush-canvas();
-                root.pan-origin-x = CanvasState.pan-x; root.pan-origin-y = CanvasState.pan-y;
-                root.pan-start-x = x; root.pan-start-y = y; root.panning = true;
+                if root.tool-mode == 0 {
+                    root.marquee-additive = root.ctrl-held || root.shift-held;
+                    root.marquee-selection = root.selected-ids;
+                    if !root.marquee-additive { root.selected-ids = []; }
+                    root.marquee-active = true;
+                    root.marquee-start-x = x; root.marquee-start-y = y;
+                    root.marquee-end-x = x; root.marquee-end-y = y;
+                } else {
+                    root.pan-origin-x = CanvasState.pan-x; root.pan-origin-y = CanvasState.pan-y;
+                    root.pan-start-x = x; root.pan-start-y = y; root.panning = true;
+                }
+            } else if root.tool-mode == 0 && (root.ctrl-held || root.shift-held) {
+                root.selected-ids = root.selection-toggle(root.selected-ids,root.items[index].id);
             } else if root.ticktick-scrollbar-at(index,x,y) {
+                root.selected-ids = [];
                 root.ticktick-scrollbar-dragging = true; root.ticktick-scrollbar-index = index;
                 root.set-ticktick-scrollbar(index,y);
             } else {
+                root.selected-ids = [];
                 root.begin-drag(index,false,x,y);
                 if root.items[index].widget {
                     let local-x = root.world-x(x) - (root.items[index].col + root.grid-gap / 2) * 1px;
@@ -787,6 +1005,10 @@ export component Launcher inherits Window {
         }
         if event.kind == PointerEventKind.move {
             if root.placing-widget >= 0 { root.update-widget-placement(x,y); }
+            else if root.marquee-active {
+                root.marquee-end-x = x; root.marquee-end-y = y;
+                root.selected-ids = root.marquee-select(root.items,root.world-x(root.marquee-start-x) / 1px,root.world-y(root.marquee-start-y) / 1px,root.world-x(x) / 1px,root.world-y(y) / 1px,root.marquee-selection,root.marquee-additive);
+            }
             else if root.panning {
                 CanvasState.pan-x = root.pan-origin-x + (x - root.pan-start-x) / 1px * root.canvas-speed;
                 CanvasState.pan-y = root.pan-origin-y + (y - root.pan-start-y) / 1px * root.canvas-speed;
@@ -798,6 +1020,9 @@ export component Launcher inherits Window {
                 root.update-widget-placement(x,y);
                 if root.widget-placement-valid { root.busy = true; root.add-widget(root.placing-widget,root.widget-placement-x,root.widget-placement-y,false); }
                 root.placing-widget = -1; root.widget-placement-target = false;
+            } else if root.marquee-active {
+                root.marquee-end-x = x; root.marquee-end-y = y;
+                root.finish-marquee();
             } else if root.panning {
                 root.panning = false;
                 root.view-dirty = CanvasState.pan-x != root.pan-origin-x || CanvasState.pan-y != root.pan-origin-y;
@@ -809,6 +1034,7 @@ export component Launcher inherits Window {
         }
         if event.kind == PointerEventKind.cancel {
             root.cancel-canvas(); root.cancel-drag(); root.placing-widget = -1; root.widget-placement-target = false;
+            root.marquee-active = false;
             root.ticktick-scrollbar-dragging = false; root.ticktick-scrollbar-index = -1;
         }
     }
@@ -1075,11 +1301,13 @@ export component Launcher inherits Window {
     private property <int> shortcut-delete-action: -1;
     private property <string> shortcut-delete-keys;
     private property <int> shortcut-action;
-    private property <[string]> shortcut-actions: ["Focus Search anything", "Close the top layer", "Move left", "Move right", "Move up", "Move down", "Open / Choose", "Next field", "Previous field", "Open Settings", "Delete previous word", "Accept next word"];
+    private property <[string]> shortcut-actions: ["Focus Search anything", "Close the top layer", "Move left", "Move right", "Move up", "Move down", "Open / Choose", "Next field", "Previous field", "Open Settings", "Delete previous word", "Accept next word", "Undo", "Redo", "Cut", "Copy", "Paste", "Previous Group", "Next Group", "Select", "Hand", "Draw", "Eraser"];
     callback save-shortcut(int, string, string);
     callback delete-shortcut(int, string);
     callback shortcut-saved();
     shortcut-saved => { root.shortcut-editor = false; root.shortcut-recording = false; }
+    group-saved => { root.busy = false; root.group-editor = false; root.group-recording = false; root.group-error = ""; root.selected-ids = []; }
+    group-save-failed(error) => { root.busy = false; root.group-error = error; }
     private property <int> search-selection;
     private property <int> search-hover: -1;
     private property <int> search-detail-index: search-hover >= 0 && search-hover < root.search-results.length ? search-hover : search-selection;
@@ -1257,7 +1485,7 @@ export component Launcher inherits Window {
     in-out property <bool> picker;
     private property <int> context-index: -1;
     private property <bool> canvas-context;
-    changed launcher-visible => { if root.launcher-visible { root.load-local-widgets(root.items,true); } if !root.launcher-visible { root.cancel-canvas(); root.flush-canvas(); root.canvas-context = false; root.clear-ai(); root.ai-key-draft = ""; } }
+    changed launcher-visible => { if root.launcher-visible { root.load-local-widgets(root.items,true); } if !root.launcher-visible { root.cancel-canvas(); root.flush-canvas(); root.canvas-context = false; root.clear-ai(); root.ai-key-draft = ""; root.marquee-active = false; root.ink-draft = []; root.erase-draft = []; root.tool-active = false; } }
     private property <string> dock-context;
     private property <string> context-id;
     private property <int> editing: -1;
@@ -1705,6 +1933,19 @@ export component Launcher inherits Window {
         root.clear-ai();
         root.search-context = false;
         root.canvas-context = false;
+        root.group-context-id = "";
+        root.selected-ids = [];
+        root.tool-mode = 0;
+        root.marquee-active = false;
+        root.ink-draft = [];
+        root.erase-draft = [];
+        root.tool-active = false;
+        root.group-editor = false;
+        root.group-recording = false;
+        root.group-edit-id = "";
+        root.group-name-draft = "";
+        root.group-keys-draft = "";
+        root.group-error = "";
         root.placing-widget = -1; root.widget-placement-target = false;
         if root.folder-open { root.close-folder(); }
         root.cancel-drag();
@@ -1740,12 +1981,15 @@ export component Launcher inherits Window {
     close-top-layer => {
         if RobotWorkbench.visible { RobotWorkbench.visible = false; return; }
         if root.panning { root.cancel-canvas(); return; }
+        if root.tool-active || root.marquee-active { root.set-tool(root.tool-mode); return; }
         if AzanSettings.widget-id != "" { AzanSettings.close(); return; }
         if root.search-context { root.search-context = false; return; }
         if root.canvas-context { root.canvas-context = false; return; }
+        if root.group-context-id != "" { root.group-context-id = ""; return; }
         if root.ticktick-confirm-delete { root.ticktick-confirm-delete = false; return; }
         if root.ticktick-open { root.ticktick-open = false; root.ticktick-edit-id = ""; return; }
         if root.placing-widget >= 0 { root.placing-widget = -1; root.widget-placement-target = false; return; }
+        else if root.group-editor { root.group-editor = false; root.group-recording = false; }
         else if root.shortcut-editor { root.shortcut-editor = false; root.shortcut-recording = false; }
         else if root.drag-index >= 0 { root.cancel-drag(); }
         else if root.picker { root.icon-session += 1; root.icon-busy = false; root.picker = false;  }
@@ -1762,6 +2006,7 @@ export component Launcher inherits Window {
         else if root.folder-open { root.close-folder-view(); }
         else if root.settings && root.search-path-editor { root.search-path-editor = false; }
         else if root.settings { root.settings = false; search-input.focus(); }
+        else if root.selected-ids.length > 0 { root.selected-ids = []; }
         else if root.engine-menu { root.engine-menu = false; }
         else if english-panel.visible { root.english-dismissed = true; root.english-changed(); }
         else if root.activated-prefix-id != "" { root.search-text = ""; root.clear-ai(); root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); canvas-focus.focus(); }
@@ -1949,15 +2194,14 @@ export component Launcher inherits Window {
         visible: root.home-visible;
         background: Theme.canvas-surface;
         canvas-input := TouchArea {
-            enabled: !root.busy && !root.folder-open && !root.sheet && !root.alert && !root.picker && !root.settings && !root.ticktick-open && root.ticktick-popup-widget-id == "";
-            mouse-cursor: root.panning ? grabbing : root.canvas-item-at(self.mouse-x,self.mouse-y) < 0 ? grab : default;
+            enabled: !root.busy && !root.folder-open && !root.sheet && !root.alert && !root.picker && !root.settings && !root.ticktick-open && !root.group-editor && root.ticktick-popup-widget-id == "";
+            mouse-cursor: root.panning ? grabbing : root.tool-mode == 1 ? grab : default;
             scroll-event(event) => {
                 if root.dragging || root.panning { return accept; }
                 if root.scroll-ticktick(self.mouse-x,self.mouse-y,event.delta-y / CanvasState.zoom) { return accept; }
                 let index = root.canvas-item-at(self.mouse-x,self.mouse-y);
                 if index >= 0 && root.items[index].widget { return accept; }
-                CanvasState.zoom-at(self.mouse-x / 1px,self.mouse-y / 1px,pow(1.0015,event.delta-y / 1px * root.canvas-speed));
-                root.view-dirty = true; canvas-save-timer.restart();
+                root.wheel-canvas(self.mouse-x, self.mouse-y, event.delta-x, event.delta-y);
                 accept
             }
             pointer-event(event) => { root.canvas-pointer(event,self.mouse-x,self.mouse-y); }
@@ -2002,6 +2246,7 @@ export component Launcher inherits Window {
                 layout-locked: root.layout-locked;
                 resize-active: root.resizing && root.drag-index == index;
                 pressed: canvas-input.pressed && !root.dragging && root.drag-index == index;
+                selected: root.selection-has(root.selected-ids,canvas-world.display-items[index].id);
                 folder-preview: root.drag-on-canvas && root.merge-ready && root.merge-target == index;
                 drag-preview-item: root.drag-item;
                 hovered: (root.keyboard-grid && root.focused-item == index) || (root.drag-on-canvas ? root.merge-target == index : canvas-input.has-hover && root.canvas-item-at(canvas-input.absolute-position.x + canvas-input.mouse-x, canvas-input.absolute-position.y + canvas-input.mouse-y) == index);
@@ -2034,6 +2279,21 @@ export component Launcher inherits Window {
                 height: max(0px,item.span-y * 1px - root.grid-gap * 1px - (item.widget-kind == 18 || item.widget-kind == 19 ? 60px : 84px));
             }
 
+            for stroke in (root.erase-preview-active ? root.erase-preview : root.ink-strokes): Path {
+                x: stroke.x * 1px; y: stroke.y * 1px; fit: preserve;
+                width: stroke.width * 1px; height: stroke.height * 1px;
+                commands: stroke.path;
+                fill: transparent; stroke: Theme.ink; stroke-width: 2.5px;
+                stroke-line-cap: round; stroke-line-join: round;
+            }
+            if root.ink-draft.length > 0: Path {
+                property <CanvasInk> draft: root.ink-view(root.ink-draft, root.ink-draft.length);
+                x: draft.x * 1px; y: draft.y * 1px; fit: preserve;
+                width: draft.width * 1px; height: draft.height * 1px;
+                commands: draft.path;
+                fill: transparent; stroke: Theme.ink; stroke-width: 2.5px;
+                stroke-line-cap: round; stroke-line-join: round;
+            }
             if root.drag-on-canvas && !root.resizing && root.merge-target < 0 && !root.on-dock: Rectangle {
                 x: root.drop-x * 1px + root.grid-gap * 0.5px;
                 y: root.drop-y * 1px + root.grid-gap * 0.5px;
@@ -2050,6 +2310,90 @@ export component Launcher inherits Window {
                 border-width: 3px; border-radius: Theme.radius-preview;
                 border-color: root.widget-placement-valid ? Theme.placement-valid : Theme.placement-invalid;
                 background: self.border-color.with-alpha(0.188);
+            }
+        }
+        if root.marquee-active: Rectangle {
+            x: min(root.marquee-start-x,root.marquee-end-x);
+            y: min(root.marquee-start-y,root.marquee-end-y);
+            width: abs(root.marquee-end-x - root.marquee-start-x);
+            height: abs(root.marquee-end-y - root.marquee-start-y);
+            background: Theme.selection.with-alpha(0.10);
+            border-width: 1px; border-color: Theme.selection-border; border-radius: 4px;
+        }
+        for group in root.groups: Rectangle {
+            x: (CanvasState.pan-x + group.x * CanvasState.zoom) * 1px;
+            y: (CanvasState.pan-y + group.y * CanvasState.zoom) * 1px;
+            width: group.width * CanvasState.zoom * 1px;
+            height: group.height * CanvasState.zoom * 1px;
+            background: transparent;
+            border-width: 1px; border-color: Theme.group-border; border-radius: 12px;
+        }
+        if root.home-visible && root.tool-mode != 0: Rectangle {
+            width: parent.width; height: parent.height;
+            background: transparent;
+            tool-input := TouchArea {
+                mouse-cursor: root.tool-mode == 1 ? (root.panning ? grabbing : grab) : crosshair;
+                scroll-event(event) => {
+                    root.wheel-canvas(self.mouse-x, self.mouse-y, event.delta-x, event.delta-y);
+                    accept
+                }
+                pointer-event(event) => { root.tool-pointer(event,self.mouse-x,self.mouse-y); }
+            }
+            if root.tool-mode == 3 && tool-input.has-hover: Rectangle {
+                x: tool-input.mouse-x - 12px * CanvasState.zoom;
+                y: tool-input.mouse-y - 12px * CanvasState.zoom;
+                width: 24px * CanvasState.zoom; height: 24px * CanvasState.zoom;
+                border-radius: self.width / 2;
+                background: Theme.eraser-fill;
+                border-width: 1px; border-color: Theme.eraser-border;
+            }
+        }
+        for group in root.groups: Rectangle {
+            x: (CanvasState.pan-x + group.x * CanvasState.zoom) * 1px;
+            y: (CanvasState.pan-y + group.y * CanvasState.zoom) * 1px - 34px;
+            width: min(280px,max(72px,(group.name.character-count + (group.keys == "" ? 0 : group.keys.character-count + 2)) * 8px + 28px));
+            height: 28px;
+            background: Theme.group-chip;
+            border-width: 1px; border-color: Theme.group-border; border-radius: 8px;
+            OrbitText {
+                x: 10px; width: parent.width - 20px; height: parent.height;
+                text: group.keys == "" ? group.name : group.name + "   " + group.keys;
+                color: Theme.text; font-size: Theme.type-hint; font-weight: 600;
+                horizontal-alignment: root.text-is-rtl(group.name) ? right : left; vertical-alignment: center; overflow: elide;
+            }
+            group-label-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.fit-group-view(group.id); }
+                pointer-event(event) => {
+                    if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                        root.context-x = self.absolute-position.x + self.mouse-x;
+                        root.context-y = self.absolute-position.y + self.mouse-y;
+                        root.group-context-id = group.id;
+                        root.canvas-context = false; root.context-index = -1; root.dock-context = "";
+                    }
+                }
+            }
+        }
+    }
+    if root.home-visible && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.group-editor: Rectangle {
+        x: 16px; y: (root.height - self.height) / 2;
+        width: 48px; height: 184px;
+        background: Theme.dock-surface;
+        border-width: 1px; border-color: Theme.dock-border; border-radius: 16px;
+        for index in 4: Rectangle {
+            x: 4px; y: 4px + index * 44px; width: 40px; height: 40px;
+            border-radius: 10px;
+            background: root.tool-mode == index ? Theme.selection : tool-touch.has-hover ? Theme.hover-overlay : transparent;
+            accessible-role: button;
+            accessible-label: index == 0 ? "Select" : index == 1 ? "Hand" : index == 2 ? "Draw" : "Eraser";
+            accessible-action-default => { root.set-tool(index); }
+            Image {
+                x: 10px; y: 10px; width: 20px; height: 20px;
+                source: index == 0 ? @image-url("assets/tool-select.svg") : index == 1 ? @image-url("assets/tool-hand.svg") : index == 2 ? @image-url("assets/tool-draw.svg") : @image-url("assets/tool-eraser.svg");
+            }
+            tool-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.set-tool(index); }
             }
         }
     }
@@ -2163,6 +2507,7 @@ export component Launcher inherits Window {
             x: parent.width - self.width - Theme.search-padding;
             y: (Theme.search-min-height - self.height) / 2;
             label: root.shortcut-hints[0]; available-width: parent.width / 3;
+            visible: !(root.canvas-shortcuts && root.shortcut-hints[0] == "Ctrl+K");
         }
     }
     for index in 3: Rectangle {
@@ -3390,12 +3735,12 @@ export component Launcher inherits Window {
             }
         }
     }
-    if root.canvas-context || root.context-index >= 0 || root.dock-context != "": Rectangle {
+    if root.canvas-context || root.context-index >= 0 || root.dock-context != "" || root.group-context-id != "": Rectangle {
         width: root.width; height: root.height;
         background: transparent;
         TouchArea {
-            clicked => { root.canvas-context = false; root.context-index = -1; root.dock-context = ""; root.context-id = ""; }
-            pointer-event(event) => { if event.button == PointerEventButton.right && event.kind == PointerEventKind.down { root.canvas-context = false; root.context-index = -1; root.dock-context = ""; root.context-id = ""; } }
+            clicked => { root.canvas-context = false; root.context-index = -1; root.dock-context = ""; root.context-id = ""; root.group-context-id = ""; }
+            pointer-event(event) => { if event.button == PointerEventButton.right && event.kind == PointerEventKind.down { root.canvas-context = false; root.context-index = -1; root.dock-context = ""; root.context-id = ""; root.group-context-id = ""; } }
         }
         Rectangle {
             x: max(0px, min(root.context-x, parent.width - self.width));
@@ -3407,8 +3752,17 @@ export component Launcher inherits Window {
             drop-shadow-offset-y: 8px;
             context-options := VerticalLayout {
                 padding: 8px; spacing: 4px;
+                if root.group-context-id != "": MenuOption { width: 184px; label: "Fit Group"; clicked => { root.fit-group-view(root.group-context-id); } }
+                if root.group-context-id != "": MenuOption { width: 184px; label: "Edit Group"; enabled: !root.layout-locked; clicked => { root.open-group-editor(root.group-context-id); } }
+                if root.group-context-id != "": MenuOption { width: 184px; label: "Delete Group"; destructive: true; enabled: !root.layout-locked; clicked => { root.delete-group(root.group-context-id); root.group-context-id = ""; } }
+                if (root.canvas-context || root.context-index >= 0) && root.selected-ids.length > 0: MenuOption { width: 184px; label: "New Group"; enabled: !root.layout-locked; clicked => { root.open-group-editor(""); } }
                 if root.canvas-context: MenuOption { width: 184px; label: "Add item"; enabled: !root.layout-locked; clicked => { root.add-item("App"); } }
                 if root.canvas-context: MenuOption { width: 184px; label: "Show all items"; clicked => { root.flush-canvas(); root.show-all-items(root.width / 1px,root.height / 1px); root.canvas-context = false; } }
+                if root.canvas-context: MenuOption { width: 184px; label: "Undo"; enabled: root.can-undo && !root.layout-locked; clicked => { root.canvas-command(0); } }
+                if root.canvas-context: MenuOption { width: 184px; label: "Redo"; enabled: root.can-redo && !root.layout-locked; clicked => { root.canvas-command(1); } }
+                if (root.canvas-context || root.context-index >= 0) && root.selected-ids.length > 0: MenuOption { width: 184px; label: "Cut"; enabled: !root.layout-locked; clicked => { root.canvas-command(2); } }
+                if (root.canvas-context || root.context-index >= 0) && root.selected-ids.length > 0: MenuOption { width: 184px; label: "Copy"; clicked => { root.canvas-command(3); } }
+                if root.canvas-context: MenuOption { width: 184px; label: "Paste"; enabled: root.can-paste && !root.layout-locked; clicked => { root.canvas-command(4); } }
                 if root.context-index >= 0 && root.items[root.context-index].robot != "": MenuOption { width: 184px; label: "Duplicate"; enabled: !root.layout-locked; clicked => { RobotWorkbench.duplicate-robot(root.items[root.context-index].robot); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].robot != "": VerticalLayout {
                     for action in RobotWorkbench.common-actions: MenuOption { width: 184px; label: action.name; clicked => { RobotWorkbench.run-action(root.items[root.context-index].robot, action.id); root.context-index = -1; } }
@@ -3439,6 +3793,70 @@ export component Launcher inherits Window {
                 } }
                 if root.dock-context == "pinned": MenuOption { width: 184px; label: "Unpin"; enabled: !root.layout-locked; clicked => { root.busy = true; root.unpin-dock-item(root.context-id); root.dock-context = ""; } }
                 if root.dock-context == "recent": MenuOption { width: 184px; label: "Remove from Recent"; clicked => { root.busy = true; root.remove-recent-item(root.context-id); root.dock-context = ""; } }
+            }
+        }
+    }
+    if root.group-editor: Rectangle {
+        width: root.width; height: root.height;
+        background: Theme.backdrop;
+        TouchArea { clicked => { root.group-editor = false; root.group-recording = false; } }
+        Panel {
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            width: min(440px, parent.width - 32px); height: min(380px, parent.height - 32px);
+            background: Theme.sheet; border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-sheet;
+            drop-shadow-color: Theme.surface-shadow;
+            drop-shadow-blur: Theme.surface-shadow-blur;
+            drop-shadow-offset-y: 8px;
+            TouchArea { }
+            VerticalLayout {
+                padding: 20px; spacing: 14px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    OrbitText {
+                        text: root.group-edit-id == "" ? "New Group" : "Edit Group";
+                        color: Theme.text; font-size: Theme.type-title; font-weight: 600;
+                        vertical-alignment: center; horizontal-stretch: 1;
+                    }
+                    SettingsButton { label: "×"; option-width: 40px; height: 36px; accessible-label: "Close Group editor"; clicked => { root.group-editor = false; root.group-recording = false; } }
+                }
+                OrbitText {
+                    text: root.group-member-count() == 1 ? "1 item · its shortcut fits this item on screen." : root.group-member-count() + " items · its shortcut fits them on screen.";
+                    color: Theme.secondary; font-size: Theme.type-control;
+                }
+                SettingsField {
+                    label: "Name"; placeholder: "Work"; autofocus: true;
+                    text <=> root.group-name-draft;
+                    error: root.group-error;
+                    enabled: !root.busy && !root.group-recording;
+                    accepted => { if root.group-name-draft != "" && !root.group-recording { root.busy = true; root.save-group(root.group-edit-id,root.group-name-draft,root.group-keys-draft,root.selected-ids); } }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    SettingsButton {
+                        label: root.group-recording ? "Press shortcut…" : root.group-keys-draft == "" ? "Record shortcut" : "";
+                        shortcut: root.group-recording ? "" : root.group-keys-draft;
+                        option-width: 230px; height: 36px;
+                        enabled: !root.busy;
+                        clicked => { root.group-recording = true; root.group-error = ""; }
+                    }
+                    if root.group-keys-draft != "" && !root.group-recording: SettingsButton {
+                        label: "Clear"; option-width: 72px; height: 36px; enabled: !root.busy;
+                        clicked => { root.group-keys-draft = ""; root.group-error = ""; }
+                    }
+                }
+                OrbitText {
+                    text: "Use Ctrl, Alt or Super so typing in Search is never captured. Esc cancels recording.";
+                    color: Theme.secondary; font-size: Theme.type-hint; wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    SettingsButton { label: "Cancel"; clicked => { root.group-editor = false; root.group-recording = false; } }
+                    SettingsButton {
+                        label: "Save"; primary: true; option-width: 100px;
+                        enabled: !root.busy && !root.group-recording && root.group-name-draft != "";
+                        clicked => { root.busy = true; root.save-group(root.group-edit-id,root.group-name-draft,root.group-keys-draft,root.selected-ids); }
+                    }
+                }
             }
         }
     }
