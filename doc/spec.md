@@ -40,6 +40,8 @@ Completion verification (2026-11-10): formatting, Clippy, release build, 194 ena
 
 ## Current behavior
 
+Search bar Actions include `s` for Brave Search and `repo` for GitHub repositories owned by `lodaq`. Focused lists, including Search anything results, Scripts and Settings selects, use Ctrl+N/J/Down for down and Ctrl+P/K/Up for up; Ctrl+K retains its existing action when no list is focused.
+
 ### Canvas Groups and tools (authorized 2026-11-09)
 
 The 2026-11-10 shortcut amendment adds session-only Undo/Redo for Canvas content edits, with up to 20 previous states, and Cut/Copy/Paste for selected Canvas items. Paste preserves relative positions, finds free space and gives copied items fresh IDs; the first paste of cut items preserves their IDs. The clipboard and history clear on restart or import. View changes are not Undo steps. Lock layout blocks edits and history restoration, while Copy remains available. These actions also appear in Canvas Context menus. Icon files remain available because clipboard items and Undo states can still reference them.

@@ -3,7 +3,8 @@ import { RobotWorkbench, RobotPanel } from "robot-workbench.slint";
 export { CanvasState } from "canvas.slint";
 import { CanvasState } from "canvas.slint";
 export { TextDirection } from "controls.slint";
-import { OrbitText, TextDirection } from "controls.slint";
+export { KeyboardNavigation } from "controls.slint";
+import { OrbitText, TextDirection, KeyboardNavigation } from "controls.slint";
 export { AzanSettings } from "azan-settings.slint";
 import { AzanSettings, AzanSettingsSheet } from "azan-settings.slint";
 import { Theme } from "theme.slint";
@@ -1380,6 +1381,7 @@ export component Launcher inherits Window {
     }
     callback search-web(string,string);
     move-search-selection(direction) => {
+        KeyboardNavigation.list-focused = true;
         if root.script-active {
             if direction == 2 { root.script-selection = max(0, root.script-selection - 1); }
             if direction == 3 { root.script-selection = min(max(0, root.script-matches.length - 1), root.script-selection + 1); }
@@ -1982,7 +1984,7 @@ export component Launcher inherits Window {
         return local-x >= root.grid-gap * 0.5px && local-x < (root.items[index].span-x - root.grid-gap / 2) * 1px
             && local-y >= root.grid-gap * 0.5px && local-y < (root.items[index].span-y - root.grid-gap / 2) * 1px ? index : -1;
     }
-    canvas-focus := FocusScope { width: 0px; height: 0px; }
+    canvas-focus := FocusScope { width: 0px; height: 0px; changed has-focus => { if self.has-focus { KeyboardNavigation.list-focused = false; } } }
     finish-drag => { if root.drop-pending { root.cancel-drag(); } }
     reset-launcher => {
         RobotWorkbench.visible = false;
@@ -2501,6 +2503,7 @@ export component Launcher inherits Window {
                 horizontal-alignment: root.text-is-rtl(self.text) ? right : left;
                 single-line: false; wrap: word-wrap;
                 cursor-position-changed(point) => {
+                    KeyboardNavigation.list-focused = false;
                     root.search-edit-generation += 1;
                     root.search-cursor-x = point.x;
                     root.search-cursor-y = point.y;
@@ -2512,7 +2515,7 @@ export component Launcher inherits Window {
                         search-scroll.content-y = max(search-scroll.height - search-scroll.content-height, search-scroll.height - Theme.search-cursor-inset - self.y - point.y - root.search-cursor-height);
                     }
                 }
-                edited => { root.search-selection = 0; root.search-hover = -1; root.search-offset = 0px; if !root.ai-active { root.search(self.text); } }
+                edited => { KeyboardNavigation.list-focused = false; root.search-selection = 0; root.search-hover = -1; root.search-offset = 0px; if !root.ai-active { root.search(self.text); } }
                 accepted => { if self.text != "" || root.activated-prefix-id != "" { root.run-activated-prefix(); } }
                 key-pressed(event) => {
                     if event.text == Key.Backspace && self.text == "" && root.activated-prefix-id != "" {

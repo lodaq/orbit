@@ -5,6 +5,11 @@ export global TextDirection {
     pure callback lines(string) -> [string];
 }
 
+export global KeyboardNavigation {
+    in-out property <bool> control-held;
+    in-out property <bool> list-focused;
+}
+
 export component OrbitText inherits Text {
     horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left;
 }
@@ -481,7 +486,14 @@ export component SettingsSelect inherits Rectangle {
     focus := FocusScope {
         enabled: root.enabled;
         width: 0px; height: 0px;
+        changed has-focus => { KeyboardNavigation.list-focused = self.has-focus; }
         key-pressed(event) => {
+            if KeyboardNavigation.control-held && (event.text == "n" || event.text == "j" || event.text == Key.DownArrow) {
+                root.current-index = min(root.model.length - 1, root.current-index + 1); root.selected(); return accept;
+            }
+            if KeyboardNavigation.control-held && (event.text == "p" || event.text == "k" || event.text == Key.UpArrow) {
+                root.current-index = max(0, root.current-index - 1); root.selected(); return accept;
+            }
             if event.text == Key.UpArrow { root.current-index = max(0, root.current-index - 1); root.selected(); return accept; }
             if event.text == Key.DownArrow { root.current-index = min(root.model.length - 1, root.current-index + 1); root.selected(); return accept; }
             if event.text == "\n" || event.text == " " { choices.show(); return accept; }
@@ -493,7 +505,14 @@ export component SettingsSelect inherits Rectangle {
         forward-focus: popup-focus;
         popup-focus := FocusScope {
             width: parent.width; height: parent.height;
+            changed has-focus => { KeyboardNavigation.list-focused = self.has-focus; }
             key-pressed(event) => {
+                if KeyboardNavigation.control-held && (event.text == "n" || event.text == "j" || event.text == Key.DownArrow) {
+                    root.current-index = min(root.model.length - 1, root.current-index + 1); root.selected(); return accept;
+                }
+                if KeyboardNavigation.control-held && (event.text == "p" || event.text == "k" || event.text == Key.UpArrow) {
+                    root.current-index = max(0, root.current-index - 1); root.selected(); return accept;
+                }
                 if event.text == Key.UpArrow { root.current-index = max(0, root.current-index - 1); root.selected(); return accept; }
                 if event.text == Key.DownArrow { root.current-index = min(root.model.length - 1, root.current-index + 1); root.selected(); return accept; }
                 if event.text == "\n" || event.text == Key.Escape { choices.close(); focus.focus(); return accept; }

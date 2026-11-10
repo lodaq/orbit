@@ -48,6 +48,7 @@ The approved supplied UI update adds the reference launcher appearance, search a
 - `src/backup.rs`: the platform module’s backup export, validation and import, including the native chooser and retention of previous data.
 
 - `src/shortcuts.rs`: saved shortcut defaults, conflict validation, key recording, layout-independent modified letters and action routing.
+- Search Actions in `src/config.rs` include Brave Search (`s`) and account-scoped GitHub repositories (`repo`). `ui/controls.slint` shares list-focus and modifier state; focused lists use Ctrl+N/J/Down and Ctrl+P/K/Up.
 
 - `src/item-drop.rs`: shared item move rules for Canvas and Folder drops, stable ID lookup, shortcut-preserving folder extraction, empty folder cleanup, and regression tests.
 

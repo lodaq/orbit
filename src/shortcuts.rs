@@ -200,6 +200,9 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
     let Some(keys) = chord(key, modifiers) else {
         return false;
     };
+    let list_focused = launcher
+        .global::<crate::KeyboardNavigation>()
+        .get_list_focused();
     if launcher.global::<crate::RobotWorkbench>().get_visible() {
         if launcher
             .get_shortcuts()
@@ -255,9 +258,9 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
                     }
                     return true;
                 }
-                "Ctrl+N" | "Ctrl+J" | "Ctrl+P" | "Ctrl+K" => {
+                "Ctrl+N" | "Ctrl+J" | "Ctrl+Down" | "Ctrl+P" | "Ctrl+K" | "Ctrl+Up" => {
                     let selected = launcher.get_english_suggestion_selection();
-                    let down = keys == "Ctrl+N" || keys == "Ctrl+J";
+                    let down = matches!(keys.as_str(), "Ctrl+N" | "Ctrl+J" | "Ctrl+Down");
                     let next = if selected < 0 {
                         if down { 0 } else { count - 1 }
                     } else if down {
@@ -274,6 +277,24 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
                 }
                 _ => (),
             }
+        }
+    }
+    if list_focused
+        && launcher.get_search_navigation()
+        && !launcher.get_grid_navigation()
+        && (launcher.get_script_active() && launcher.get_scripts().row_count() > 0
+            || !launcher.get_script_active() && launcher.get_search_results().row_count() > 0)
+    {
+        match keys.as_str() {
+            "Ctrl+N" | "Ctrl+J" | "Ctrl+Down" => {
+                launcher.invoke_move_search_selection(3);
+                return true;
+            }
+            "Ctrl+P" | "Ctrl+K" | "Ctrl+Up" => {
+                launcher.invoke_move_search_selection(2);
+                return true;
+            }
+            _ => (),
         }
     }
     if launcher.get_grid_navigation() && *key == Key::Named(NamedKey::F10) && modifiers.shift_key()
@@ -295,6 +316,9 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         .iter()
         .find(|binding| binding.keys == keys)
         .map(|binding| binding.action);
+    if action == Some(0) && keys == "Ctrl+K" && list_focused {
+        return false;
+    }
     if (action.is_none() || matches!(action, Some(14 | 15)))
         && launcher.get_search_editing()
         && modifiers.control_key()

@@ -157,7 +157,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Search engine** | The website used for a web search when no local items match Search anything. Choose it in Settings → Search bar → General. |
 | **Prefix** | A named Search anything rule with a Token and selected Action. Tab or Space activates a matching Token; Enter sends the remaining search text to its Action. |
 | **Token** | The text that activates a Prefix in Search anything. |
-| **Action** | A named reusable command that receives a Prefix query. Actions include built-in site searches, TickTick task creation, and user shell scripts. |
+| **Action** | A named reusable command that receives a Prefix query. Actions include built-in site and repository searches, TickTick task creation, and user shell scripts. |
 | **Action description** | Text in Settings that explains what an Action does and how to use it. |
 | **Shell Action** | An Action that runs a user-provided shell script. It receives Search anything text as a separate argument, available as `$1` on Arch Linux and `$OrbitQuery` on Windows. |
 | **URL Action** | An Action that opens a URL after replacing `%s` with safely encoded Search anything text. |
@@ -165,6 +165,8 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Prefixes** | Settings tab for creating, editing and selecting Prefix Actions. |
 | **Actions** | Settings tab for creating and editing reusable Actions. |
 | **Default search engine** | The search engine used when Enter is pressed with no local matches; the select beside Search anything opens the engine list. |
+| **Browser Search** | Search Brave Search with a query from Search anything. |
+| **GitHub Repositories** | Search repositories owned by `lodaq` on GitHub. |
 | **Back to desktop** | Footer hint for Esc. |
 
 | **Choose icon** | Opens the native file chooser for a saved icon image. |

@@ -74,6 +74,8 @@ pub struct Config {
     #[serde(default)]
     site_searches_initialized: bool,
     #[serde(default)]
+    account_searches_initialized: bool,
+    #[serde(default)]
     search_word_shortcut_initialized: bool,
     #[serde(default)]
     search_completion_shortcut_initialized: bool,
@@ -472,6 +474,7 @@ impl Default for Config {
             scripts: Vec::new(),
             prefixes: default_prefixes(),
             site_searches_initialized: true,
+            account_searches_initialized: true,
             search_word_shortcut_initialized: true,
             search_completion_shortcut_initialized: true,
             settings_shortcut_initialized: true,
@@ -524,6 +527,18 @@ fn builtin_actions() -> Vec<UserAction> {
         ),
         ("ticktick", "TickTick", ActionKind::TickTick, ""),
         ("orbit-ai", "AI", ActionKind::Ai, ""),
+        (
+            "browser-search",
+            "Browser Search",
+            ActionKind::Url,
+            "https://search.brave.com/search?q=%s&source=desktop",
+        ),
+        (
+            "github-repo-search",
+            "GitHub Repositories",
+            ActionKind::Url,
+            "https://github.com/search?q=user%3Alodaq%20%s&type=repositories",
+        ),
     ]
     .into_iter()
     .map(|(id, name, kind, source)| UserAction {
@@ -538,6 +553,8 @@ fn builtin_actions() -> Vec<UserAction> {
             "perplexity" => "Search Perplexity for the remaining text after the Prefix Token.".into(),
             "claude" => "Open Claude with the remaining text after the Prefix Token.".into(),
             "wikipedia" => "Search Wikipedia for the remaining text after the Prefix Token.".into(),
+            "browser-search" => "Search in Brave for the remaining text after the Prefix Token.".into(),
+            "github-repo-search" => "Search your GitHub repositories for the remaining text after the Prefix Token.".into(),
             "ticktick" => "Enter a title, then optional !today, !high, !medium, !low, #tag, and ^List or ~List. Example: Buy milk !today #home ~Buy. Put a multiword list at the end, such as ~hall of fame. Omit the list to use Inbox.".into(),
             _ => String::new(),
         },
@@ -621,6 +638,13 @@ fn default_prefixes() -> Vec<Prefix> {
         ("wikipedia", "Wikipedia", "w", "wikipedia"),
         ("ticktick", "TickTick", "t", "ticktick"),
         ("orbit-ai", "AI", "ai", "orbit-ai"),
+        ("browser-search", "Browser Search", "s", "browser-search"),
+        (
+            "github-repo-search",
+            "GitHub Repositories",
+            "repo",
+            "github-repo-search",
+        ),
         ("chatgpt-ar", "ChatGPT", "ل", "chatgpt"),
         ("claude-ar", "Claude", "ؤ", "claude"),
         ("github", "GitHub", "gh", "github-search"),
@@ -817,6 +841,45 @@ impl Config {
             }
         }
         for prefix in defaults.prefixes {
+            let token_exists = self
+                .prefixes
+                .iter()
+                .any(|item| item.token.eq_ignore_ascii_case(&prefix.token));
+            let id_exists = self.prefixes.iter().any(|item| item.id == prefix.id);
+            if !token_exists && !id_exists {
+                self.prefixes.push(prefix);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn add_account_search_prefixes(&mut self) -> bool {
+        let defaults = Config::default();
+        let ids = ["browser-search", "github-repo-search"];
+        let mut changed = false;
+        for action in defaults
+            .user_actions
+            .into_iter()
+            .filter(|action| ids.contains(&action.id.as_str()))
+        {
+            if !self.user_actions.iter().any(|item| item.id == action.id) {
+                self.user_actions.push(action);
+                changed = true;
+            }
+        }
+        for prefix in defaults
+            .prefixes
+            .into_iter()
+            .filter(|prefix| ids.contains(&prefix.id.as_str()))
+        {
+            if !self.user_actions.iter().any(|action| {
+                action.id == prefix.action_id
+                    && action.kind == ActionKind::Url
+                    && action.source.contains("%s")
+            }) {
+                continue;
+            }
             let token_exists = self
                 .prefixes
                 .iter()
@@ -1199,6 +1262,11 @@ fn migrate(
         config.site_searches_initialized = true;
         changed = true;
     }
+    if !config.account_searches_initialized {
+        config.add_account_search_prefixes();
+        config.account_searches_initialized = true;
+        changed = true;
+    }
     let previous_shortcuts = config.shortcuts.len();
     config
         .shortcuts
@@ -1559,8 +1627,8 @@ mod tests {
                     .any(|action| action.id == action_id)
             );
         }
-        assert_eq!(config.prefixes.len(), 25);
-        assert_eq!(config.user_actions.len(), 19);
+        assert_eq!(config.prefixes.len(), 27);
+        assert_eq!(config.user_actions.len(), 21);
     }
 
     #[test]
