@@ -1402,7 +1402,12 @@ impl Apps {
                     .ok_or("Action is missing")?;
                 match &action.kind {
                     ActionKind::Url => {
-                        let url = url_action_url(&action.source, argument.trim())?;
+                        let query = argument.trim();
+                        let url = if action.id == "browser-search" {
+                            browser_search_url(&action.source, query)?
+                        } else {
+                            url_action_url(&action.source, query)?
+                        };
                         open_url(&url)
                             .map_err(|error| format!("Couldn't open {}: {error}", action.name))
                     }
@@ -3632,6 +3637,23 @@ fn url_action_url(template: &str, query: &str) -> Result<String, String> {
         return Err("URL Action template must contain %s".into());
     }
     Ok(template.replace("%s", &url_encode(query)))
+}
+
+fn browser_search_url(template: &str, query: &str) -> Result<String, String> {
+    let lower = query.to_ascii_lowercase();
+    if lower.starts_with("https://") || lower.starts_with("http://") {
+        return Ok(query.to_owned());
+    }
+    let host = query.split(['/', '?', '#']).next().unwrap_or("");
+    if !query.is_empty()
+        && !query.chars().any(char::is_whitespace)
+        && host.contains('.')
+        && !host.starts_with('.')
+        && !host.ends_with('.')
+    {
+        return Ok(format!("https://{query}"));
+    }
+    url_action_url(template, query)
 }
 
 fn match_prefix(prefixes: &[Prefix], text: &str) -> Option<PrefixMatch> {

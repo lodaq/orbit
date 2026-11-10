@@ -40,7 +40,7 @@ Completion verification (2026-11-10): formatting, Clippy, release build, 194 ena
 
 ## Current behavior
 
-Search bar Actions include `s` for Brave Search and `repo` for GitHub repositories owned by `lodaq`. Focused lists, including Search anything results, Scripts and Settings selects, use Ctrl+N/J/Down for down and Ctrl+P/K/Up for up; Ctrl+K retains its existing action when no list is focused.
+Search bar Actions include `s` for Browser Search: URL-like input opens directly (`repo.new` opens `https://repo.new`), and other text searches with Brave. `repo` searches GitHub repositories owned by `lodaq`. Focused lists, including Search anything results, Scripts and Settings selects, use Ctrl+N/J/Down for down and Ctrl+P/K/Up for up; Ctrl+K retains its existing action when no list is focused.
 
 ### Canvas Groups and tools (authorized 2026-11-09)
 

@@ -553,7 +553,7 @@ fn builtin_actions() -> Vec<UserAction> {
             "perplexity" => "Search Perplexity for the remaining text after the Prefix Token.".into(),
             "claude" => "Open Claude with the remaining text after the Prefix Token.".into(),
             "wikipedia" => "Search Wikipedia for the remaining text after the Prefix Token.".into(),
-            "browser-search" => "Search in Brave for the remaining text after the Prefix Token.".into(),
+            "browser-search" => "Open a web address directly or search other text in Brave.".into(),
             "github-repo-search" => "Search your GitHub repositories for the remaining text after the Prefix Token.".into(),
             "ticktick" => "Enter a title, then optional !today, !high, !medium, !low, #tag, and ^List or ~List. Example: Buy milk !today #home ~Buy. Put a multiword list at the end, such as ~hall of fame. Omit the list to use Inbox.".into(),
             _ => String::new(),

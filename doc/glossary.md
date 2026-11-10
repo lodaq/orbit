@@ -165,7 +165,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Prefixes** | Settings tab for creating, editing and selecting Prefix Actions. |
 | **Actions** | Settings tab for creating and editing reusable Actions. |
 | **Default search engine** | The search engine used when Enter is pressed with no local matches; the select beside Search anything opens the engine list. |
-| **Browser Search** | Search Brave Search with a query from Search anything. |
+| **Browser Search** | Open a web address directly, or search other text with Brave Search. |
 | **GitHub Repositories** | Search repositories owned by `lodaq` on GitHub. |
 | **Back to desktop** | Footer hint for Esc. |
 
