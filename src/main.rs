@@ -5,11 +5,15 @@ mod ai;
 mod apps;
 mod azan;
 mod canvas;
+#[path = "canvas-edit.rs"]
+mod canvas_edit;
 mod config;
 mod daemon;
 #[path = "english-assistance.rs"]
 mod english_assistance;
 mod icons;
+#[path = "ink.rs"]
+mod ink;
 #[path = "internet-usage.rs"]
 mod internet_usage;
 #[path = "item-drop.rs"]
@@ -20,6 +24,18 @@ mod platform;
 #[path = "platform-windows.rs"]
 mod platform;
 mod recent;
+#[path = "robot-data.rs"]
+pub mod robot_data;
+#[path = "robot-native.rs"]
+mod robot_native;
+#[path = "robot-provider.rs"]
+mod robot_provider;
+#[path = "robot-runtime.rs"]
+pub mod robot_runtime;
+#[path = "robot-tools.rs"]
+pub mod robot_tools;
+#[path = "robot-workbench.rs"]
+mod robot_workbench;
 #[path = "search-cursor.rs"]
 mod search_cursor;
 #[path = "search-edit.rs"]
@@ -27,6 +43,8 @@ mod search_edit;
 mod shortcuts;
 mod spatial;
 mod storage;
+#[path = "t3-providers.rs"]
+mod t3_providers;
 #[path = "text-direction.rs"]
 mod text_direction;
 mod ticktick;

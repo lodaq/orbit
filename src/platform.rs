@@ -646,14 +646,10 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
                 focus_after_show(&launcher);
             }
             match event {
-                WindowEvent::MouseWheel {
-                    phase: winit::event::TouchPhase::Started,
-                    ..
-                } => {
-                    launcher.invoke_start_page_scroll();
-                }
                 WindowEvent::ModifiersChanged(state) => {
                     modifiers = state.state();
+                    launcher.set_ctrl_held(modifiers.control_key());
+                    launcher.set_shift_held(modifiers.shift_key());
                 }
                 WindowEvent::KeyboardInput { event, .. }
                     if event.state == ElementState::Pressed =>
@@ -666,6 +662,8 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
                     let generation = focus_generation.get().wrapping_add(1);
                     focus_generation.set(generation);
                     if !active {
+                        launcher.set_ctrl_held(false);
+                        launcher.set_shift_held(false);
                         launcher.invoke_cancel_pointer();
                         let focus_generation = focus_generation.clone();
                         let weak = weak.clone();
@@ -752,6 +750,21 @@ pub fn launch_action(action: &SystemAction) -> Result<(), Box<dyn std::error::Er
 pub fn open(address: &str) -> Result<(), Box<dyn std::error::Error>> {
     detached(Command::new("xdg-open").arg(address))?;
     Ok(())
+}
+
+pub fn configure_robot_process(command: &mut Command) {
+    command.process_group(0);
+}
+
+pub fn stop_robot_process(child: &mut std::process::Child) {
+    // Kill the group so inherited pipes do not keep tool reader workers alive.
+    let _ = Command::new("/bin/kill")
+        .args(["-KILL", "--", &format!("-{}", child.id())])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn detached(command: &mut Command) -> io::Result<()> {

@@ -147,12 +147,14 @@ export component AddField inherits VerticalLayout {
     in property <bool> accept-newlines;
     in property <length> multiline-height: Theme.field-multiline-height;
     in property <bool> secret;
+    in property <bool> autofocus: false;
     callback accepted;
     callback edited;
     spacing: Theme.space-2;
     alignment: start;
     horizontal-stretch: 1;
     forward-focus: input-field;
+    init => { if root.autofocus { input-field.focus(); } }
 
     if root.label != "": OrbitText {
         text: root.label;

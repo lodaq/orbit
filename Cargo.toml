@@ -16,6 +16,8 @@ ctrlc = { version = "=3.5.2", features = ["termination"] }
 slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "unstable-winit-030"] }
 # Read and write saved data and parse Hyprland's monitor information.
 serde_json = "1"
+# Match native account directories and detect changed T3 Code connections without storing secrets.
+sha2 = "0.10"
 # Derive the saved data format instead of parsing each field by hand.
 serde = { version = "1", features = ["derive"] }
 

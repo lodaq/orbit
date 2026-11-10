@@ -1,6 +1,6 @@
 use crate::{
-    AppTile, AzanSettings, CompletedReference, Launcher, LocalWidgets, PageItems, WidgetDataEntry,
-    WidgetView, widget_data as data, widget_views as widgets,
+    AppTile, AzanSettings, CompletedReference, Launcher, LocalWidgets, WidgetDataEntry, WidgetView,
+    widget_data as data, widget_views as widgets,
 };
 use slint::{ComponentHandle, Model};
 use std::{path::Path, sync::mpsc};
@@ -352,10 +352,9 @@ fn connect_widgets(ui: &Launcher, sender: &mpsc::Sender<Work>) {
             })
     });
     let send = sender.clone();
-    ui.on_load_local_widgets(move |tiles, pages, opened| {
-        let specs = pages
+    ui.on_load_local_widgets(move |tiles, opened| {
+        let specs = tiles
             .iter()
-            .flat_map(|page: PageItems| page.items.iter().collect::<Vec<_>>())
             .filter_map(|tile: AppTile| {
                 widgets::category(tile.widget_kind)
                     .filter(|_| tile.widget)

@@ -15,6 +15,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     crate::ai::connect(&launcher);
     let _widgets = crate::widget_data_ui::connect(&launcher);
     apps::connect(&launcher);
+    crate::robot_workbench::connect(&launcher);
     let weak = launcher.as_weak();
     launcher.on_hide_launcher(move || {
         if let Some(launcher) = weak.upgrade()

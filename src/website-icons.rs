@@ -39,11 +39,7 @@ pub fn connect(launcher: &Launcher) -> Cache {
         let session = weak.upgrade().map(|ui| ui.get_website_icon_session());
         let weak = weak.clone();
         std::thread::spawn(move || {
-            let fetched = platform::fetch_icon(&url).and_then(|(extension, data)| {
-                apps::decode_icon(&data, &format!("preview.{extension}"))
-                    .ok()
-                    .map(|preview| ((extension, data), preview))
-            });
+            let fetched = platform::fetch_icon(&url);
             if sequence.load(Ordering::Relaxed) != request {
                 return;
             }

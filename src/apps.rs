@@ -3,8 +3,8 @@ use crate::config::{
     ActionKind, App, Config, Icon, Item, Launch, Prefix, SystemAction, UserAction,
 };
 use crate::{
-    ActionChoice, AppTile, FolderPreview, InstalledAppTile, Launcher, add_item, config, platform,
-    recent,
+    ActionChoice, AppTile, CanvasGroupView, FolderPreview, InstalledAppTile, Launcher, add_item,
+    config, platform, recent,
 };
 use crate::{PrefixChoice, PrefixMatch, UserActionChoice};
 use slint::{ComponentHandle, Rgba8Pixel, SharedPixelBuffer};
@@ -39,17 +39,33 @@ const RECENT_DOCK_LIMIT: usize = 5;
 
 type UrlOpener<'a> = dyn Fn(&str) -> Result<(), Box<dyn std::error::Error>> + 'a;
 
+#[derive(Clone, Default)]
+struct ResultRef {
+    id: String,
+    source: i32,
+    folder_id: String,
+}
+
+impl From<AppTile> for ResultRef {
+    fn from(tile: AppTile) -> Self {
+        Self {
+            id: tile.id.into(),
+            source: tile.source,
+            folder_id: tile.folder_id.into(),
+        }
+    }
+}
+
 enum Action {
     Canvas(crate::canvas::Mutation),
-    Move(String, usize),
-    ReorderPage(i32),
-    Geometry(usize, usize),
-    Widget(usize, Option<usize>),
+    Widget(usize, i32, i32, bool),
+    AddPosition(i32, i32),
+    ShowAll(f32, f32),
     ChangeWidget(String, usize, usize),
     DuplicateWidget(String),
     SelectTickTickList(String, String),
     TransferData(bool),
-    SaveAppearance(i32, i32, i32, usize, usize),
+    SaveAppearance(i32, i32, i32),
     SaveBackgroundFolder(String),
     ChooseBackgroundImage,
     ChangeBackground,
@@ -59,10 +75,14 @@ enum Action {
     SaveAi(crate::ai::Settings),
     SaveEnglishModel(String, String, String, String),
     SaveLayoutLocked(bool),
-    DeletePage,
     SaveShortcut(i32, String, String),
     DeleteShortcut(i32, String),
-    Page(usize),
+    SaveGroup(String, String, String, Vec<String>),
+    DeleteGroup(String),
+    FitGroup(String, f32, f32),
+    AddInk(Vec<crate::config::InkPoint>),
+    EraseInk(Vec<crate::config::InkPoint>),
+    EditCanvas(i32, Vec<String>, i32, i32),
     Search(String),
     SearchWeb(String, String),
     RunPrefix(String, String),
@@ -71,24 +91,25 @@ enum Action {
     SavePrefix(String, String, String, String),
     DeletePrefix(String),
     FilterInstalled(String),
-    OpenResult(i32, usize),
-    SaveSearchResult(i32, usize, i32, usize, i32, bool),
-    OpenDock(usize, usize, i32),
-    Pin(usize),
+    OpenResult(ResultRef),
+    SaveSearchResult(ResultRef, i32, i32, bool),
+    OpenDock(ResultRef),
+    Pin(String),
     Unpin(String),
     RemoveRecent(String),
-    Save(i32, String, String, String, u64),
-    SaveWebsite(i32, String, String, crate::website_icons::Draft, u64),
+    Save(String, String, String, String, u64),
+    SaveWebsite(String, String, String, crate::website_icons::Draft, u64),
     ChoosePath(bool, u64),
-    SavePath(i32, String, bool, String, u64),
-    SaveFolder(i32, String, u64),
-    Delete(usize),
-    Open(usize),
-    OpenFolder(usize),
+    SavePath(String, String, bool, String, u64),
+    SaveFolder(String, String, u64),
+    AddRobot(String, String),
+    RenameRobot(String, String),
+    Delete(String),
+    Open(String),
+    OpenFolder(String),
     CloseFolder,
-    LaunchFolder(usize, usize),
-    AddPage,
-    Drop(String, usize, usize, String),
+    LaunchFolder(String, String),
+    Drop(String, i32, i32, String),
     AddPredefined(String, u64),
     AddInstalledApp(String, u64),
     RefreshInstalledApps(u64),
@@ -100,10 +121,12 @@ enum Action {
 }
 
 struct Apps {
+    edits: crate::canvas_edit::History,
     config: Config,
-    page: usize,
+    add_position: (i32, i32),
     icons: HashMap<String, SharedPixelBuffer<Rgba8Pixel>>,
-    open_folder: Option<usize>,
+    open_folder: Option<String>,
+    pending_reveal: Option<String>,
     inventory: Inventory,
     installed_filter: String,
     query: String,
@@ -120,27 +143,28 @@ struct SearchPathResult {
 impl Action {
     fn changes_layout(&self) -> bool {
         match self {
-            Self::Move(..)
-            | Self::ReorderPage(..)
-            | Self::Geometry(..)
-            | Self::Widget(..)
+            Self::EditCanvas(command, ..) => *command != 3,
+            Self::Widget(..)
             | Self::ChangeWidget(..)
             | Self::DuplicateWidget(..)
             | Self::SaveAppearance(..)
-            | Self::DeletePage
             | Self::Pin(..)
             | Self::Unpin(..)
             | Self::Delete(..)
-            | Self::AddPage
             | Self::SaveSearchResult(..)
             | Self::Drop(..)
+            | Self::SaveGroup(..)
+            | Self::DeleteGroup(..)
+            | Self::AddInk(..)
+            | Self::EraseInk(..)
+            | Self::AddRobot(..)
             | Self::AddPredefined(..)
             | Self::AddInstalledApp(..)
             | Self::TransferData(true) => true,
-            Self::Save(index, ..)
-            | Self::SaveWebsite(index, ..)
-            | Self::SavePath(index, ..)
-            | Self::SaveFolder(index, ..) => *index < 0,
+            Self::Save(id, ..)
+            | Self::SaveWebsite(id, ..)
+            | Self::SavePath(id, ..)
+            | Self::SaveFolder(id, ..) => id.is_empty(),
             _ => false,
         }
     }
@@ -164,6 +188,7 @@ pub fn connect(launcher: &Launcher) {
     let (send, receive) = mpsc::channel();
     let requests = Arc::new(RequestSequence::default());
     crate::spatial::connect(launcher);
+    crate::ink::connect(launcher);
     let canvas_sender = send.clone();
     crate::canvas::connect(launcher, move |change| {
         let _ = canvas_sender.send(Action::Canvas(change));
@@ -173,25 +198,16 @@ pub fn connect(launcher: &Launcher) {
     crate::ticktick_ui::connect(launcher);
     let weak = launcher.as_weak();
     std::thread::spawn(move || {
-        let (mut config, banner) = config::load();
-        let mut next = config.clone();
-        let canvas_warning = crate::canvas::prepare(&mut next)
-            .and_then(|changed| {
-                if changed {
-                    next.save()
-                        .map_err(|error| format!("Couldn't save canvas: {error}"))?;
-                    config = next;
-                }
-                Ok(())
-            })
-            .err();
+        let (config, banner) = config::load();
         let (recent, recent_banner) = recent::Recent::load();
         let (inventory, inventory_banner) = Inventory::load();
         let mut apps = Apps {
-            page: config.active_page,
+            edits: Default::default(),
+            add_position: (0, 0),
             config,
             icons: HashMap::new(),
             open_folder: None,
+            pending_reveal: None,
             inventory,
             installed_filter: String::new(),
             query: String::new(),
@@ -209,27 +225,17 @@ pub fn connect(launcher: &Launcher) {
         } else {
             banner
         };
-        apps.update(&weak, false);
+        let canvas = apps.config.canvas.clone();
+        let _ = weak.upgrade_in_event_loop(move |ui| crate::canvas::sync(&ui, &canvas, true));
+        apps.update(&weak);
         finish(&weak, banner, false, false, None, true);
-        if let Some(message) = canvas_warning {
-            let _ = weak
-                .upgrade_in_event_loop(move |ui| crate::toast::warning(&ui.as_weak(), &message));
-        }
         for action in receive {
             if let Action::Canvas(change) = action {
-                let adding = matches!(change, crate::canvas::Mutation::Add(..));
                 let result = crate::canvas::apply(&mut apps.config, change);
                 let canvas = apps.config.canvas.clone();
                 let _ = weak.upgrade_in_event_loop(move |launcher| {
-                    let error = result.err().unwrap_or_default();
-                    crate::canvas::sync(&launcher, &canvas, !error.is_empty());
-                    let state = launcher.global::<crate::CanvasState>();
-                    state.set_saving(false);
-                    state.set_error(error.clone().into());
-                    if adding && error.is_empty() {
-                        launcher.set_sheet(false);
-                    }
-                    if !adding && !error.is_empty() {
+                    crate::canvas::sync(&launcher, &canvas, result.is_err());
+                    if let Err(error) = result {
                         crate::toast::error(&launcher.as_weak(), &error);
                     }
                 });
@@ -245,7 +251,7 @@ pub fn connect(launcher: &Launcher) {
                 _ => None,
             };
             let launching = recent_id.is_some()
-                || matches!(action, Action::OpenResult(page, _) if page < 0)
+                || matches!(action, Action::OpenResult(ref item) if item.source < 0)
                 || matches!(action, Action::SearchWeb(..))
                 || matches!(action, Action::RunPrefix(..));
             let saving = matches!(
@@ -257,8 +263,9 @@ pub fn connect(launcher: &Launcher) {
                     | Action::SaveWebsite(..)
                     | Action::SavePath(..)
                     | Action::SaveFolder(..)
+                    | Action::AddRobot(..)
+                    | Action::RenameRobot(..)
                     | Action::Delete(_)
-                    | Action::AddPage
                     | Action::Drop(..)
                     | Action::AddPredefined(..)
                     | Action::AddInstalledApp(..)
@@ -272,10 +279,14 @@ pub fn connect(launcher: &Launcher) {
                     | Action::DeleteNamedCommand(..)
                     | Action::SavePrefix(..)
                     | Action::DeletePrefix(..)
+                    | Action::SaveGroup(..)
+                    | Action::DeleteGroup(..)
             );
             let save_search_result = matches!(action, Action::SaveSearchResult(..));
             let drag_drop = matches!(action, Action::Drop(..) | Action::SaveSearchResult(..));
             let save_shortcut = matches!(action, Action::SaveShortcut(..));
+            let save_group = matches!(action, Action::SaveGroup(..));
+            let ink_action = matches!(action, Action::AddInk(..) | Action::EraseInk(..));
             let save_action = matches!(
                 action,
                 Action::SaveNamedCommand(..) | Action::DeleteNamedCommand(..)
@@ -285,8 +296,8 @@ pub fn connect(launcher: &Launcher) {
             let reset_after_save = saving
                 && !matches!(
                     action,
-                    Action::AddPage
-                        | Action::Drop(..)
+                    Action::Drop(..)
+                        | Action::RenameRobot(..)
                         | Action::SaveSearchPath(..)
                         | Action::DeleteSearchPath(..)
                         | Action::AddFileSearchExclusion(..)
@@ -297,35 +308,76 @@ pub fn connect(launcher: &Launcher) {
                         | Action::DeleteNamedCommand(..)
                         | Action::SavePrefix(..)
                         | Action::DeletePrefix(..)
+                        | Action::SaveGroup(..)
+                        | Action::DeleteGroup(..)
                 );
             let choosing = matches!(action, Action::ChoosePath(..));
             let update = !choosing
                 && (!launching || matches!(action, Action::OpenResult(..) | Action::OpenDock(..)));
-            let page_only = matches!(action, Action::Page(_));
             let refreshing = matches!(action, Action::RefreshInstalledApps(_));
             let filtering = matches!(action, Action::FilterInstalled(_));
             let searching = matches!(action, Action::Search(..));
             let appearance = match &action {
-                Action::SaveAppearance(margin, size, gap, ..) => Some((*margin, *size, *gap)),
+                Action::SaveAppearance(size, gap, speed) => Some((*size, *gap, *speed)),
                 _ => None,
             };
+            let reveal_added = match &action {
+                Action::Save(id, ..)
+                | Action::SaveWebsite(id, ..)
+                | Action::SavePath(id, ..)
+                | Action::SaveFolder(id, ..) => id.is_empty(),
+                Action::AddRobot(..) | Action::AddPredefined(..) | Action::AddInstalledApp(..) => {
+                    true
+                }
+                _ => false,
+            };
             let action_feedback = success_message(&action);
-            let result = apps
-                .apply(action, &requests, &weak)
-                .and_then(|()| crate::spatial::reconcile(&mut apps.config));
+            let before = ((action.changes_layout()
+                || matches!(
+                    action,
+                    Action::Save(..)
+                        | Action::SaveWebsite(..)
+                        | Action::SavePath(..)
+                        | Action::SaveFolder(..)
+                        | Action::RenameRobot(..)
+                        | Action::SelectTickTickList(..)
+                ))
+                && !matches!(
+                    action,
+                    Action::EditCanvas(0 | 1, ..) | Action::TransferData(..)
+                ))
+            .then(|| crate::canvas_edit::State::capture(&apps.config));
+            let result = apps.apply(action, &requests, &weak);
+            if result.is_ok()
+                && let Some(before) = before
+            {
+                apps.edits.record(before, &apps.config);
+            }
             if request.is_some_and(|request| !requests.is_current(request)) {
                 continue;
             }
+            let group_error = if save_group {
+                result.as_ref().err().cloned()
+            } else {
+                None
+            };
             let success = result.is_ok();
-            if success && let Some((margin, size, gap)) = appearance {
+            if success
+                && reveal_added
+                && let Some(item) = apps.config.items.last()
+            {
+                let id = item.id().to_string();
+                apps.reveal(&id, &weak);
+            }
+            if success && let Some((size, gap, speed)) = appearance {
                 let _ = weak.upgrade_in_event_loop(move |launcher| {
-                    launcher.invoke_appearance_saved(margin, size, gap);
+                    launcher.invoke_appearance_saved(size, gap, speed);
                 });
             }
             if refreshing && !success {
                 apps.inventory
                     .fail(result.as_ref().err().cloned().unwrap_or_default());
-                apps.update(&weak, false);
+                apps.update(&weak);
             }
             let recent_changed = success && recent_id.is_some_and(|id| apps.recent.record(&id));
             // RemoveRecent is applied in Apps::apply; save it here without removing twice.
@@ -344,7 +396,12 @@ pub fn connect(launcher: &Launcher) {
             } else if success && searching {
                 apps.update_search_results(&weak);
             } else if success && (update || recent_changed || recent_removed) {
-                apps.update(&weak, page_only);
+                apps.update(&weak);
+            }
+            if success {
+                apps.publish_reveal(&weak);
+            } else {
+                apps.pending_reveal = None;
             }
             if save_search_result && success {
                 let _ =
@@ -355,6 +412,18 @@ pub fn connect(launcher: &Launcher) {
             }
             if save_shortcut && success {
                 let _ = weak.upgrade_in_event_loop(|launcher| launcher.invoke_shortcut_saved());
+            }
+            if ink_action {
+                let _ = weak.upgrade_in_event_loop(|ui| ui.invoke_ink_finished());
+            }
+            if save_group {
+                let _ = weak.upgrade_in_event_loop(move |launcher| {
+                    if let Some(error) = group_error {
+                        launcher.invoke_group_save_failed(error.into());
+                    } else {
+                        launcher.invoke_group_saved();
+                    }
+                });
             }
             if save_action && success {
                 let _ = weak.upgrade_in_event_loop(|launcher| launcher.invoke_action_saved());
@@ -390,6 +459,17 @@ pub fn connect(launcher: &Launcher) {
 }
 
 fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSequence>) {
+    let sender = send.clone();
+    launcher.on_edit_canvas(move |command, selection, x, y| {
+        use slint::Model;
+        let selection = selection.iter().map(|id| id.to_string()).collect();
+        let _ = sender.send(Action::EditCanvas(
+            command,
+            selection,
+            x.round() as i32,
+            y.round() as i32,
+        ));
+    });
     let prefix_ui = launcher.as_weak();
     launcher.on_match_prefix(move |text| {
         use slint::Model;
@@ -428,14 +508,8 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             .unwrap_or(0) as i32
     });
     let sender = send.clone();
-    launcher.on_save_appearance(move |margin, size, gap, columns, rows| {
-        let _ = sender.send(Action::SaveAppearance(
-            margin,
-            size,
-            gap,
-            columns as usize,
-            rows as usize,
-        ));
+    launcher.on_save_appearance(move |size, gap, speed| {
+        let _ = sender.send(Action::SaveAppearance(size, gap, speed));
     });
     let sender = send.clone();
     launcher.on_save_background_folder(move |path| {
@@ -574,16 +648,16 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         let _ = sender.send(Action::DeletePrefix(id.into()));
     });
     let sender = send.clone();
-    launcher.on_open_result(move |page, index| {
-        let _ = sender.send(Action::OpenResult(page, index as usize));
+    launcher.on_open_result(move |item| {
+        let _ = sender.send(Action::OpenResult(item.into()));
     });
     let sender = send.clone();
-    launcher.on_open_dock_item(move |page, index, folder_app| {
-        let _ = sender.send(Action::OpenDock(page as usize, index as usize, folder_app));
+    launcher.on_open_dock_item(move |item| {
+        let _ = sender.send(Action::OpenDock(item.into()));
     });
     let sender = send.clone();
-    launcher.on_pin_item(move |index| {
-        let _ = sender.send(Action::Pin(index as usize));
+    launcher.on_pin_item(move |id| {
+        let _ = sender.send(Action::Pin(id.into()));
     });
     let sender = send.clone();
     launcher.on_unpin_dock_item(move |id| {
@@ -594,15 +668,11 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         let _ = sender.send(Action::RemoveRecent(id.into()));
     });
     let sender = send.clone();
-    launcher.on_open_page(move |index| {
-        let _ = sender.send(Action::Page(index as usize));
-    });
-    let sender = send.clone();
     let requests_for_save = requests.clone();
     launcher.on_save_app(move |index, name, command, svg| {
         let request = requests_for_save.issue();
         let _ = sender.send(Action::Save(
-            index,
+            index.into(),
             name.into(),
             command.into(),
             svg.into(),
@@ -657,7 +727,7 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     launcher.on_save_website(move |index, name, url, value, automatic| {
         let request = requests_for_website.issue();
         let _ = sender.send(Action::SaveWebsite(
-            index,
+            index.into(),
             name.into(),
             url.to_string(),
             crate::website_icons::draft(&website_icons, &url, value.into(), automatic),
@@ -675,7 +745,7 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     launcher.on_save_path(move |index, path, directory, svg| {
         let request = requests_for_save_path.issue();
         let _ = sender.send(Action::SavePath(
-            index,
+            index.into(),
             path.into(),
             directory,
             svg.into(),
@@ -686,21 +756,25 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     let requests_for_folder = requests.clone();
     launcher.on_save_folder(move |index, name| {
         let request = requests_for_folder.issue();
-        let _ = sender.send(Action::SaveFolder(index, name.into(), request));
+        let _ = sender.send(Action::SaveFolder(index.into(), name.into(), request));
     });
     let requests_for_cancel = requests;
     launcher.on_cancel_add(move || requests_for_cancel.cancel());
     let sender = send.clone();
     launcher.on_delete_item(move |index| {
-        let _ = sender.send(Action::Delete(index as usize));
+        let _ = sender.send(Action::Delete(index.into()));
     });
     let sender = send.clone();
     launcher.on_open_item(move |index| {
-        let _ = sender.send(Action::Open(index as usize));
+        let _ = sender.send(Action::Open(index.into()));
     });
     let sender = send.clone();
-    launcher.on_delete_page(move || {
-        let _ = sender.send(Action::DeletePage);
+    launcher.on_add_robot(move |profile, name| {
+        let _ = sender.send(Action::AddRobot(profile.into(), name.into()));
+    });
+    let sender = send.clone();
+    launcher.on_rename_robot(move |profile, name| {
+        let _ = sender.send(Action::RenameRobot(profile.into(), name.into()));
     });
     let sender = send.clone();
     launcher.on_save_shortcut(move |action, existing, keys| {
@@ -711,27 +785,64 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         let _ = sender.send(Action::DeleteShortcut(action, keys.into()));
     });
     let sender = send.clone();
-    launcher.on_add_page(move || {
-        let _ = sender.send(Action::AddPage);
-    });
-    let sender = send.clone();
-    launcher.on_move_item(move |id, page| {
-        let _ = sender.send(Action::Move(id.into(), page as usize));
-    });
-    let sender = send.clone();
-    launcher.on_reorder_page(move |direction| {
-        let _ = sender.send(Action::ReorderPage(direction));
-    });
-    let sender = send.clone();
-    launcher.on_geometry(move |columns, rows| {
-        let _ = sender.send(Action::Geometry(columns as usize, rows as usize));
-    });
-    let sender = send.clone();
-    launcher.on_add_widget(move |variant, slot| {
-        let _ = sender.send(Action::Widget(
-            variant as usize,
-            (slot >= 0).then_some(slot as usize),
+    launcher.on_save_group(move |id, name, keys, items| {
+        use slint::Model;
+        let items = items
+            .iter()
+            .map(|item| item.to_string())
+            .collect::<Vec<_>>();
+        let _ = sender.send(Action::SaveGroup(
+            id.into(),
+            name.into(),
+            keys.into(),
+            items,
         ));
+    });
+    let sender = send.clone();
+    launcher.on_delete_group(move |id| {
+        let _ = sender.send(Action::DeleteGroup(id.into()));
+    });
+    let sender = send.clone();
+    launcher.on_fit_group_action(move |id, width, height| {
+        let _ = sender.send(Action::FitGroup(id.into(), width, height));
+    });
+    let sender = send.clone();
+    launcher.on_add_ink(move |points| {
+        use slint::Model;
+        let _ = sender.send(Action::AddInk(
+            points
+                .iter()
+                .map(|point| crate::config::InkPoint {
+                    x: point.x,
+                    y: point.y,
+                })
+                .collect(),
+        ));
+    });
+    let sender = send.clone();
+    launcher.on_erase_ink(move |points| {
+        use slint::Model;
+        let _ = sender.send(Action::EraseInk(
+            points
+                .iter()
+                .map(|point| crate::config::InkPoint {
+                    x: point.x,
+                    y: point.y,
+                })
+                .collect(),
+        ));
+    });
+    let sender = send.clone();
+    launcher.on_set_add_position(move |x, y| {
+        let _ = sender.send(Action::AddPosition(x.round() as i32, y.round() as i32));
+    });
+    let sender = send.clone();
+    launcher.on_show_all_items(move |width, height| {
+        let _ = sender.send(Action::ShowAll(width, height));
+    });
+    let sender = send.clone();
+    launcher.on_add_widget(move |variant, col, row, auto| {
+        let _ = sender.send(Action::Widget(variant as usize, col, row, auto));
     });
     let sender = send.clone();
     launcher.on_widget_action(move |id, width, height| {
@@ -763,28 +874,16 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         let _ = sender.send(Action::SelectTickTickList(widget.into(), project.into()));
     });
     let sender = send.clone();
-    launcher.on_save_search_result(move |source, index, child, page, target, pin| {
-        let _ = sender.send(Action::SaveSearchResult(
-            source,
-            index as usize,
-            child,
-            page as usize,
-            target,
-            pin,
-        ));
+    launcher.on_save_search_result(move |item, col, row, pin| {
+        let _ = sender.send(Action::SaveSearchResult(item.into(), col, row, pin));
     });
     let sender = send.clone();
-    launcher.on_drop_item(move |id, page, target, into| {
-        let _ = sender.send(Action::Drop(
-            id.into(),
-            page as usize,
-            target.max(0) as usize,
-            into.into(),
-        ));
+    launcher.on_drop_item(move |id, col, row, into| {
+        let _ = sender.send(Action::Drop(id.into(), col, row, into.into()));
     });
     let sender = send.clone();
     launcher.on_open_folder(move |index| {
-        let _ = sender.send(Action::OpenFolder(index as usize));
+        let _ = sender.send(Action::OpenFolder(index.into()));
     });
     let sender = send.clone();
     launcher.on_close_folder(move || {
@@ -792,36 +891,28 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     });
     let sender = send.clone();
     launcher.on_launch_folder_app(move |folder, app| {
-        let _ = sender.send(Action::LaunchFolder(folder as usize, app as usize));
+        let _ = sender.send(Action::LaunchFolder(folder.into(), app.into()));
     });
 }
 
 impl Apps {
     fn recent_id(&self, action: &Action) -> Option<String> {
-        let (page, index, folder_app) = match action {
-            Action::Open(index) => (self.page, *index, -1),
-            Action::OpenResult(page, index) => ((*page).try_into().ok()?, *index, -1),
-            Action::OpenDock(page, index, folder_app) => (*page, *index, *folder_app),
-            Action::LaunchFolder(folder, index) => (self.page, *folder, *index as i32),
+        let id = match action {
+            Action::Open(id) | Action::LaunchFolder(_, id) => id,
+            Action::OpenResult(item) | Action::OpenDock(item) if item.source >= 0 => &item.id,
             _ => return None,
         };
-        let item = self.config.pages.get(page)?.items.get(index)?;
-        if folder_app >= 0 {
-            let Item::Folder { apps, .. } = item else {
-                return None;
-            };
-            return Some(apps.get(folder_app as usize)?.id.clone());
-        }
-        (!matches!(item, Item::Folder { .. } | Item::Widget { .. })).then(|| item.id().into())
+        let tile = self.dock_tile(id)?;
+        (!tile.folder && !tile.widget && tile.robot.is_empty()).then(|| id.clone())
     }
 
     fn load_icons(&mut self) -> Result<(), String> {
         let mut error = None;
         let mut icons = Vec::new();
-        for page in &self.config.pages {
-            for item in &page.items {
+        {
+            for item in &self.config.items {
                 match item {
-                    Item::Widget { .. } => {}
+                    Item::Widget { .. } | Item::Robot { .. } => {}
                     Item::App(app) => icons.push((app.id.clone(), app.icon.clone())),
                     Item::Website { id, icon, .. } => icons.push((id.clone(), icon.clone())),
                     Item::Folder { apps, .. } => {
@@ -895,22 +986,10 @@ impl Apps {
         if self.config.layout_locked && action.changes_layout() {
             return Err("Unlock layout to make changes".into());
         }
-        if crate::canvas::is_page(&self.config, self.page)
-            && matches!(
-                &action,
-                Action::Widget(..)
-                    | Action::DuplicateWidget(..)
-                    | Action::Save(-1, ..)
-                    | Action::SaveWebsite(-1, ..)
-                    | Action::SavePath(-1, ..)
-                    | Action::SaveFolder(-1, ..)
-                    | Action::AddPredefined(..)
-                    | Action::AddInstalledApp(..)
-            )
-        {
-            return Err("Use Add box on the Canvas".into());
-        }
         match action {
+            Action::EditCanvas(command, selection, x, y) => {
+                self.edit_canvas(command, &selection, x, y, weak)
+            }
             Action::Canvas(change) => crate::canvas::apply(&mut self.config, change),
             Action::SaveLayoutLocked(locked) => {
                 if self.config.layout_locked != locked {
@@ -923,6 +1002,21 @@ impl Apps {
                 }
                 Ok(())
             }
+            Action::SaveGroup(id, name, keys, selected) => {
+                self.save_group(&id, name, keys, &selected)
+            }
+            Action::DeleteGroup(id) => {
+                let mut config = self.config.clone();
+                let before = config.groups.len();
+                config.groups.retain(|group| group.id != id);
+                if config.groups.len() == before {
+                    return Err("Group is missing".into());
+                }
+                self.commit(config)
+            }
+            Action::FitGroup(id, width, height) => self.fit_group(&id, width, height, weak),
+            Action::AddInk(points) => self.add_ink(points),
+            Action::EraseInk(points) => self.erase_ink(&points),
             Action::Search(query) => {
                 self.query = query.to_lowercase();
                 if !self.query.is_empty() {
@@ -1179,161 +1273,116 @@ impl Apps {
                 self.load_installed_icons();
                 Ok(())
             }
-            Action::SaveSearchResult(source, index, child, page, target, pin) => {
-                let item = self.search_result_item(source, index, child)?;
-                let page = if !pin
-                    && self.page < self.config.horizontal_pages()
-                    && page == self.config.horizontal_pages()
-                {
-                    self.config.pages.len()
-                } else {
-                    page
-                };
+            Action::SaveSearchResult(reference, col, row, pin) => {
+                let item = self.search_result_item(&reference)?;
+                let id = item.id().to_string();
                 let mut config = self.config.clone();
-                if !crate::item_drop::place_search_result(&mut config, item, page, target, pin)? {
+                let rect = crate::spatial::Rect {
+                    col,
+                    row,
+                    width: crate::spatial::item_span(1, config.item_size, config.grid_gap),
+                    height: crate::spatial::item_span(1, config.item_size, config.grid_gap),
+                };
+                if !crate::item_drop::place_search_result(&mut config, item, Some(rect), pin) {
                     return Ok(());
                 }
-                config
-                    .save()
-                    .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-                self.config = config;
-                self.page = self.config.active_page;
-                self.load_icons()?;
-                Ok(())
+                self.commit(config)?;
+                if !pin {
+                    self.reveal(&id, weak);
+                }
+                self.load_icons()
             }
-            Action::Pin(index) => {
-                let Some(item) = self.config.pages[self.page].items.get(index) else {
+            Action::Pin(id) => {
+                if self.config.pinned.contains(&id) {
+                    return self.unpin(&id, weak);
+                }
+                let Some(item) = self
+                    .config
+                    .items
+                    .iter()
+                    .find(|item| item.id() == id)
+                    .cloned()
+                else {
                     return Ok(());
                 };
                 let mut config = self.config.clone();
-                if config.pinned.iter().any(|id| id == item.id()) {
-                    config.pinned.retain(|id| id != item.id());
-                } else if config.pinned.len() < crate::config::PINNED_LIMIT {
-                    config.pinned.push(item.id().into());
-                } else {
-                    return Err("Dock is full".into());
+                if !crate::item_drop::place_search_result(&mut config, item, None, true) {
+                    return Err("Item cannot be pinned; the Dock may be full".into());
                 }
-                config
-                    .save()
-                    .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-                self.config = config;
-                Ok(())
+                self.commit(config)
             }
-            Action::Unpin(id) => {
-                let mut config = self.config.clone();
-                config.pinned.retain(|pinned| pinned != &id);
-                if config.pinned.len() != self.config.pinned.len() {
-                    config
-                        .save()
-                        .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-                    self.config = config;
-                }
-                Ok(())
-            }
+            Action::Unpin(id) => self.unpin(&id, weak),
             Action::RemoveRecent(id) => {
                 self.recent.remove(&id);
                 Ok(())
             }
-            Action::OpenResult(page, index) => {
-                if page == -1 {
-                    let (_, name, action) = ACTIONS.get(index).ok_or("Action is missing")?;
-                    return platform::launch_action(action)
-                        .map_err(|error| format!("Couldn't start '{name}': {error}"));
+            Action::OpenResult(reference) | Action::OpenDock(reference) => {
+                if reference.source < 0 {
+                    let app = self.cached_search_result(&reference)?;
+                    return self
+                        .launch(&app)
+                        .map_err(|error| format!("Couldn't open '{}': {error}", app.name));
                 }
-                if page == -2 {
-                    let app = self
-                        .inventory
-                        .apps()
-                        .get(index)
-                        .ok_or("Installed app is missing")?;
-                    return platform::launch(&app.command)
-                        .map_err(|error| format!("Couldn't start '{}': {error}", app.name));
+                if !reference.folder_id.is_empty() {
+                    return self.launch_folder_app(&reference.folder_id, &reference.id);
                 }
-                if page == -3 || page == -4 {
-                    let Some(path) = self
-                        .search_paths
-                        .as_ref()
-                        .and_then(|paths| paths.get(index))
-                    else {
-                        return Ok(());
-                    };
-                    return platform::open(&path.path)
-                        .map_err(|error| format!("Couldn't open '{}': {error}", path.name));
-                }
-                let Some(item) = self
-                    .config
-                    .pages
-                    .get(page as usize)
-                    .and_then(|page| page.items.get(index))
-                else {
-                    return Ok(());
-                };
-                let folder = matches!(item, Item::Folder { .. });
-                let previous = self.page;
-                self.page = page as usize;
-                if folder {
-                    self.open_folder = Some(index);
-                    Ok(())
-                } else {
-                    let result = self.open_item(index, weak);
-                    if result.is_err() {
-                        self.page = previous;
-                    }
-                    result
-                }
+                self.open_item(&reference.id, weak)
             }
-            Action::OpenDock(page, index, folder_app) => {
-                if folder_app < 0 {
-                    self.apply_with_url_opener(
-                        Action::OpenResult(page as i32, index),
-                        requests,
-                        weak,
-                        open_url,
-                    )
-                } else {
-                    self.launch_folder_app(page, index, folder_app as usize)
-                }
+            Action::Save(index, name, command, svg, request) => {
+                self.save(&index, name, command, svg, requests, request)
             }
-            Action::Page(mut index) => {
-                if index == self.config.horizontal_pages() && !self.config.canvas.enabled {
-                    let mut next = self.config.clone();
-                    match crate::canvas::prepare(&mut next) {
-                        Ok(_) => {
-                            next.save().map_err(|error| error.to_string())?;
-                            self.config = next;
-                            index = self.config.horizontal_pages();
-                        }
-                        Err(message) => {
-                            let _ = weak.upgrade_in_event_loop(move |ui| {
-                                crate::toast::warning(&ui.as_weak(), &message)
-                            });
-                        }
+            Action::SaveFolder(index, name, request) => {
+                self.save_folder(&index, name, requests, request)
+            }
+            Action::RenameRobot(profile, name) => {
+                let mut config = self.config.clone();
+                let mut changed = false;
+                for item in &mut config.items {
+                    if let Item::Robot {
+                        profile: saved,
+                        name: label,
+                        ..
+                    } = item
+                        && *saved == profile
+                        && *label != name
+                    {
+                        label.clone_from(&name);
+                        changed = true;
                     }
                 }
-                if index < self.config.horizontal_pages() + 2 {
-                    self.config.ensure_vertical_pages();
-                }
-                if index < self.config.pages.len() && index != self.page {
-                    self.page = index;
-                    self.config.active_page = index;
-                    self.config.save().map_err(|error| error.to_string())?;
+                if changed {
+                    config.save().map_err(|e| e.to_string())?;
+                    self.config = config;
                 }
                 Ok(())
             }
-            Action::Save(index, name, command, svg, request) => {
-                self.save(index, name, command, svg, requests, request)
+            Action::AddRobot(profile, name) => {
+                let db = crate::robot_data::Database::open(
+                    &platform::config_path()
+                        .map_err(|e| e.to_string())?
+                        .with_file_name("robots.db"),
+                )
+                .map_err(|e| e.to_string())?;
+                db.profile(&profile).map_err(|e| e.to_string())?;
+                self.store(
+                    "",
+                    Item::Robot {
+                        id: format!(
+                            "robot-{}",
+                            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+                        ),
+                        name,
+                        profile,
+                    },
+                )
             }
-            Action::SaveFolder(index, name, request) => {
-                self.save_folder(index, name, requests, request)
-            }
-            Action::Delete(index) => self.delete(index),
-            Action::Open(index) => self.open_item(index, weak),
+            Action::Delete(index) => self.delete(&index, weak),
+            Action::Open(index) => self.open_item(&index, weak),
             Action::SelectTickTickList(widget_id, project_id) => {
                 let mut config = self.config.clone();
                 let widget = config
-                    .pages
+                    .items
                     .iter_mut()
-                    .flat_map(|page| &mut page.items)
                     .find(|item| item.id() == widget_id)
                     .ok_or("Widget is missing")?;
                 if let Item::Widget {
@@ -1358,162 +1407,59 @@ impl Apps {
                 self.open_folder = None;
                 Ok(())
             }
-            Action::LaunchFolder(folder, index) => self.launch_folder_app(self.page, folder, index),
-            Action::AddPage => self.add_page(),
-            Action::DeletePage => self.delete_page(),
-            Action::Move(id, page) => {
-                let page = if page == self.config.horizontal_pages() {
-                    self.config.pages.len()
-                } else {
-                    page
+            Action::LaunchFolder(folder, id) => self.launch_folder_app(&folder, &id),
+            Action::AddPosition(col, row) => {
+                self.add_position = (col, row);
+                Ok(())
+            }
+            Action::ShowAll(width, height) => {
+                let Some(view) = crate::canvas::fit(&self.config.positions, width, height) else {
+                    return Ok(());
                 };
-                let rect =
-                    self.config
-                        .positions
-                        .get(&id)
-                        .copied()
-                        .unwrap_or(crate::spatial::Rect {
-                            width: crate::spatial::item_span(
-                                1,
-                                self.config.item_size,
-                                self.config.grid_gap,
-                            ),
-                            height: crate::spatial::item_span(
-                                1,
-                                self.config.item_size,
-                                self.config.grid_gap,
-                            ),
-                            ..crate::spatial::Rect::cell(0, self.config.columns)
-                        });
-                let mut occupied = crate::spatial::occupied(&self.config, page);
-                occupied.remove(&id);
-                let target = crate::spatial::find_first_fit(
-                    &occupied,
-                    rect.width,
-                    rect.height,
-                    self.config.columns,
-                    self.config.rows,
-                )
-                .ok_or("Page is full")?;
-                let target = target.row * self.config.columns + target.col;
-                self.drop_item(&id, page, target, "")
-            }
-            Action::ReorderPage(direction) => {
-                let destination = self.page as i32 + direction;
-                if self.page >= self.config.horizontal_pages()
-                    || destination < 0
-                    || destination as usize >= self.config.horizontal_pages()
-                {
-                    return Ok(());
-                }
-                let mut config = self.config.clone();
-                config.pages.swap(self.page, destination as usize);
-                config.active_page = destination as usize;
-                config.save().map_err(|e| e.to_string())?;
-                self.config = config;
-                self.page = destination as usize;
+                crate::canvas::apply(&mut self.config, crate::canvas::Mutation::View(view))?;
+                let canvas = self.config.canvas.clone();
+                let _ =
+                    weak.upgrade_in_event_loop(move |ui| crate::canvas::sync(&ui, &canvas, true));
                 Ok(())
             }
-            Action::Geometry(columns, rows) => {
-                if self.config.columns == columns && self.config.rows == rows {
-                    return Ok(());
-                }
-                let mut config = self.config.clone();
-                config.columns = columns.max(1);
-                config.rows = rows.max(1);
-                config.active_page = self.page;
-                crate::spatial::reconcile(&mut config)?;
-                self.page = config.active_page;
-                self.config = config;
-                Ok(())
-            }
-            Action::Widget(variant, slot) => {
-                if !(7..crate::spatial::WIDGETS.len()).contains(&variant) {
+            Action::Widget(variant, col, row, auto) => {
+                let (col, row) = if auto { self.add_position } else { (col, row) };
+                if !matches!(variant, 7..=18 | 20) {
                     return Err("Unknown widget type".into());
                 }
                 let id = new_id()?;
-                let text = crate::spatial::WIDGETS[variant].to_owned();
                 let mut config = self.config.clone();
                 let (width, height) = crate::spatial::WIDGET_SPANS[variant];
-                let width = crate::spatial::widget_span(width, config.item_size, config.grid_gap);
-                let height = crate::spatial::widget_span(height, config.item_size, config.grid_gap);
-                let destination = if let Some(slot) = slot {
-                    let rect = crate::spatial::Rect {
-                        row: slot / config.columns.max(1),
-                        col: slot % config.columns.max(1),
-                        width,
-                        height,
-                    };
-                    crate::spatial::can_place(
-                        rect,
-                        &crate::spatial::occupied(&config, self.page),
-                        config.columns,
-                        config.rows,
-                    )
-                    .then_some((self.page, rect))
+                let rect = crate::spatial::Rect {
+                    col,
+                    row,
+                    width: crate::spatial::widget_span(width, config.item_size, config.grid_gap),
+                    height: crate::spatial::widget_span(height, config.item_size, config.grid_gap),
+                };
+                let occupied = crate::spatial::occupied(&config);
+                let rect = if auto {
+                    crate::spatial::nearby(&occupied, rect)?
                 } else {
-                    (self.page..config.pages.len())
-                        .chain(0..self.page)
-                        .filter(|page| {
-                            *page == self.page
-                                || (self.page < config.horizontal_pages()
-                                    && *page < config.horizontal_pages())
-                        })
-                        .find_map(|page| {
-                            crate::spatial::find_first_fit(
-                                &crate::spatial::occupied(&config, page),
-                                width,
-                                height,
-                                config.columns,
-                                config.rows,
-                            )
-                            .map(|rect| (page, rect))
-                        })
-                }
-                .or_else(|| {
-                    if self.page >= config.horizontal_pages() || config.horizontal_pages() >= 9 {
-                        return None;
-                    }
-                    let rect = crate::spatial::find_first_fit(
-                        &Default::default(),
-                        width,
-                        height,
-                        config.columns,
-                        config.rows,
-                    )?;
-                    let new_page = config.insert_page();
-                    Some((new_page, rect))
-                })
-                .ok_or("Not enough free space")?;
-                let (destination_page, rect) = destination;
+                    crate::spatial::place(&occupied, &id, rect)
+                        .ok_or("Widget does not fit here")?;
+                    rect
+                };
                 config.positions.insert(id.clone(), rect);
-                config.pages[destination_page].items.push(Item::Widget {
-                    id,
+                config.items.push(Item::Widget {
+                    id: id.clone(),
                     name: crate::spatial::WIDGETS[variant].into(),
-                    text,
+                    text: crate::spatial::WIDGETS[variant].into(),
                     variant,
                     ticktick_project_id: String::new(),
                     min_number: 1,
                     max_number: 100,
                 });
-                crate::spatial::reconcile(&mut config)?;
-                config.save().map_err(|e| e.to_string())?;
-                self.config = config;
-                self.page = destination_page;
+                self.commit(config)?;
+                self.reveal(&id, weak);
                 Ok(())
             }
             Action::DuplicateWidget(id) => {
-                let Some(source) = self
-                    .config
-                    .pages
-                    .iter()
-                    .flat_map(|page| &page.items)
-                    .find(|item| item.id() == id)
-                    .cloned()
-                else {
-                    return Ok(());
-                };
-                let Item::Widget {
+                let Some(Item::Widget {
                     name,
                     text,
                     variant,
@@ -1521,74 +1467,26 @@ impl Apps {
                     min_number,
                     max_number,
                     ..
-                } = source
+                }) = self
+                    .config
+                    .items
+                    .iter()
+                    .find(|item| item.id() == id)
+                    .cloned()
                 else {
                     return Ok(());
                 };
-                let new_id = new_id()?;
                 let mut config = self.config.clone();
-                let (width, height) = crate::spatial::WIDGET_SPANS[variant];
-                let source_rect =
-                    config
-                        .positions
-                        .get(&id)
-                        .copied()
-                        .unwrap_or(crate::spatial::Rect {
-                            width: crate::spatial::widget_span(
-                                width,
-                                config.item_size,
-                                config.grid_gap,
-                            ),
-                            height: crate::spatial::widget_span(
-                                height,
-                                config.item_size,
-                                config.grid_gap,
-                            ),
-                            ..Default::default()
-                        });
-                let source_page = config
-                    .pages
-                    .iter()
-                    .position(|page| page.items.iter().any(|item| item.id() == id))
-                    .unwrap_or(self.page);
-                let mut destination = None;
-                for page in source_page..config.pages.len() {
-                    if page != source_page
-                        && (source_page >= config.horizontal_pages()
-                            || page >= config.horizontal_pages())
-                    {
-                        continue;
-                    }
-                    let occupied = crate::spatial::occupied(&config, page);
-                    if let Some(rect) = crate::spatial::find_first_fit(
-                        &occupied,
-                        source_rect.width,
-                        source_rect.height,
-                        config.columns,
-                        config.rows,
-                    ) {
-                        destination = Some((page, rect));
-                        break;
-                    }
-                }
-                if destination.is_none()
-                    && source_page < config.horizontal_pages()
-                    && config.horizontal_pages() < 9
-                {
-                    let new_page = config.insert_page();
-                    destination = crate::spatial::find_first_fit(
-                        &Default::default(),
-                        source_rect.width,
-                        source_rect.height,
-                        config.columns,
-                        config.rows,
-                    )
-                    .map(|rect| (new_page, rect));
-                }
-                let (page, rect) = destination.ok_or("Not enough free space")?;
-                config.positions.insert(new_id.clone(), rect);
-                config.pages[page].items.push(Item::Widget {
-                    id: new_id,
+                let rect = config
+                    .positions
+                    .get(&id)
+                    .copied()
+                    .ok_or("Widget is missing")?;
+                let rect = crate::spatial::nearby(&crate::spatial::occupied(&config), rect)?;
+                let id = new_id()?;
+                config.positions.insert(id.clone(), rect);
+                config.items.push(Item::Widget {
+                    id: id.clone(),
                     name,
                     text,
                     variant,
@@ -1596,19 +1494,16 @@ impl Apps {
                     min_number,
                     max_number,
                 });
-                config.active_page = page;
-                config.save().map_err(|e| e.to_string())?;
-                self.config = config;
-                self.page = page;
+                self.commit(config)?;
+                self.reveal(&id, weak);
                 Ok(())
             }
             Action::ChangeWidget(id, width, height) => {
                 let mut config = self.config.clone();
                 if let Some(rect) = config.positions.get(&id).copied() {
                     let variant = config
-                        .pages
+                        .items
                         .iter()
-                        .flat_map(|page| &page.items)
                         .find_map(|item| {
                             if let Item::Widget {
                                 id: item_id,
@@ -1644,28 +1539,17 @@ impl Apps {
                         height,
                         ..rect
                     };
-                    let page = config
-                        .pages
-                        .iter()
-                        .position(|page| page.items.iter().any(|item| item.id() == id))
-                        .unwrap_or(self.page);
-                    let positions = crate::spatial::place(
-                        &crate::spatial::occupied(&config, page),
-                        &id,
-                        rect,
-                        config.columns,
-                        config.rows,
-                    )
-                    .ok_or("Widget does not fit here")?;
+                    let positions =
+                        crate::spatial::place(&crate::spatial::occupied(&config), &id, rect)
+                            .ok_or("Widget does not fit here")?;
                     config.positions.extend(positions);
                 }
                 config.save().map_err(|e| e.to_string())?;
                 self.config = config;
                 Ok(())
             }
-            Action::SaveAppearance(margin, size, gap, columns, rows) => {
+            Action::SaveAppearance(size, gap, speed) => {
                 let mut config = self.config.clone();
-                config.page_margin = margin.clamp(0, 64);
                 let old_gap = config.grid_gap.clamp(0, 64) as u64;
                 let new_gap = gap.clamp(0, 64) as u64;
                 let old_pitch =
@@ -1675,17 +1559,22 @@ impl Apps {
                 let new_pitch = crate::spatial::cell_pitch(size.clamp(80, 176), gap) as u64;
                 if old_pitch != new_pitch {
                     let widgets: HashSet<_> = config
-                        .pages
+                        .items
                         .iter()
-                        .flat_map(|page| &page.items)
                         .filter_map(|item| match item {
                             Item::Widget { id, .. } => Some(id.as_str()),
                             _ => None,
                         })
                         .collect();
                     for (id, rect) in &mut config.positions {
-                        rect.col = (rect.col as u64 * new_pitch / old_pitch) as usize;
-                        rect.row = (rect.row as u64 * new_pitch / old_pitch) as usize;
+                        rect.col = i32::try_from(
+                            i64::from(rect.col) * new_pitch as i64 / old_pitch as i64,
+                        )
+                        .map_err(|_| "Canvas position is too far away for that item size")?;
+                        rect.row = i32::try_from(
+                            i64::from(rect.row) * new_pitch as i64 / old_pitch as i64,
+                        )
+                        .map_err(|_| "Canvas position is too far away for that item size")?;
                         if widgets.contains(id.as_str()) {
                             rect.width = (rect.width.saturating_sub(old_gap as usize) as u64
                                 * new_size
@@ -1703,8 +1592,7 @@ impl Apps {
                 }
                 config.item_size = size.clamp(80, 176);
                 config.grid_gap = gap.clamp(0, 64);
-                config.columns = columns.max(1);
-                config.rows = rows.max(1);
+                config.canvas_speed = speed.clamp(1, 10);
                 crate::spatial::reconcile(&mut config)?;
                 config.save().map_err(|error| error.to_string())?;
                 self.config = config;
@@ -1791,7 +1679,7 @@ impl Apps {
                 }
                 Ok(())
             }
-            Action::Drop(id, page, target, into) => self.drop_item(&id, page, target, &into),
+            Action::Drop(id, col, row, into) => self.drop_item(&id, col, row, &into, weak),
             Action::AddPredefined(action, request) => {
                 self.add_system_action(&action, requests, request)
             }
@@ -1822,27 +1710,23 @@ impl Apps {
             Action::AddFileSearchExclusion(name) => self.edit_file_search_exclusion(&name, false),
             Action::RemoveFileSearchExclusion(name) => self.edit_file_search_exclusion(&name, true),
             Action::SaveWebsite(index, name, url, draft, request) => {
-                self.save_website(index, name, url, draft, requests, request)
+                self.save_website(&index, name, url, draft, requests, request)
             }
             Action::TransferData(import) => {
+                let _robots = if import {
+                    Some(crate::robot_workbench::before_import()?)
+                } else {
+                    None
+                };
                 let mut result = platform::transfer_data(import);
                 if import && matches!(&result, Ok(Some(_))) {
                     self.config = config::load().0;
-                    let mut next = self.config.clone();
-                    match crate::canvas::prepare(&mut next) {
-                        Ok(true) => match next.save() {
-                            Ok(()) => self.config = next,
-                            Err(error) => result = Err(error.to_string()),
-                        },
-                        Ok(false) => {}
-                        Err(error) => result = Err(error),
-                    }
+                    self.edits = Default::default();
                     let canvas = self.config.canvas.clone();
                     let _ = weak
                         .upgrade_in_event_loop(move |ui| crate::canvas::sync(&ui, &canvas, true));
                     self.recent = recent::Recent::load().0;
                     self.inventory = Inventory::load().0;
-                    self.page = 0;
                     self.open_folder = None;
                     self.query.clear();
                     self.installed_filter.clear();
@@ -1908,13 +1792,13 @@ impl Apps {
                 Ok(())
             }
             Action::SavePath(index, path, directory, svg, _) => {
-                self.save_path(index, path, directory, svg)
+                self.save_path(&index, path, directory, svg)
             }
         }
     }
 
-    fn open_item(&mut self, index: usize, _weak: &slint::Weak<Launcher>) -> Result<(), String> {
-        let Some(item) = self.config.pages[self.page].items.get(index) else {
+    fn open_item(&mut self, id: &str, _weak: &slint::Weak<Launcher>) -> Result<(), String> {
+        let Some(item) = self.config.items.iter().find(|item| item.id() == id) else {
             return Ok(());
         };
         match item {
@@ -1927,33 +1811,36 @@ impl Apps {
             Item::File { name, path, .. } | Item::Directory { name, path, .. } => {
                 platform::open(path).map_err(|error| format!("Couldn't open '{}': {error}", name))
             }
+            Item::Robot { profile, .. } => {
+                let profile = profile.clone();
+                let _ = _weak.upgrade_in_event_loop(move |ui| {
+                    ui.global::<crate::RobotWorkbench>().set_adding(false);
+                    ui.global::<crate::RobotWorkbench>()
+                        .invoke_open(profile.into(), false);
+                });
+                Ok(())
+            }
             Item::Widget { variant: 7, .. } => Ok(()),
-            Item::Folder { .. } | Item::Widget { .. } => Ok(()),
+            Item::Folder { .. } => {
+                self.open_folder = Some(id.into());
+                Ok(())
+            }
+            Item::Widget { .. } => Ok(()),
         }
     }
 
-    fn launch_folder_app(
-        &mut self,
-        page: usize,
-        folder: usize,
-        index: usize,
-    ) -> Result<(), String> {
-        let Some(Item::Folder { apps, .. }) = self
-            .config
-            .pages
-            .get(page)
-            .and_then(|contents| contents.items.get(folder))
+    fn launch_folder_app(&self, folder: &str, id: &str) -> Result<(), String> {
+        let Some(Item::Folder { apps, .. }) =
+            self.config.items.iter().find(|item| item.id() == folder)
         else {
-            return Ok(());
+            return Err("Folder is missing".into());
         };
-        let Some(app) = apps.get(index) else {
-            return Ok(());
-        };
-        let result = self.launch(app);
-        if result.is_ok() {
-            self.page = page;
-        }
-        result.map_err(|error| format!("Couldn't start '{}': {error}", app.name))
+        let app = apps
+            .iter()
+            .find(|app| app.id == id)
+            .ok_or("Item is missing")?;
+        self.launch(app)
+            .map_err(|error| format!("Couldn't start '{}': {error}", app.name))
     }
 
     fn launch(&self, app: &App) -> Result<(), Box<dyn std::error::Error>> {
@@ -1996,7 +1883,7 @@ impl Apps {
         if !requests.is_current(request) {
             return Ok(());
         }
-        self.store(-1, Item::App(app))
+        self.store("", Item::App(app))
     }
 
     fn add_installed_app(
@@ -2024,42 +1911,54 @@ impl Apps {
         if !requests.is_current(request) {
             return Ok(());
         }
-        self.store(-1, Item::App(app))?;
+        self.store("", Item::App(app))?;
         let _ = self.load_icon(&item_id, &installed.icon);
         Ok(())
     }
 
-    fn search_result_item(&self, page: i32, index: usize, child: i32) -> Result<Item, String> {
-        if page >= 0 {
-            let item = self
-                .config
-                .pages
-                .get(page as usize)
-                .and_then(|page| page.items.get(index))
-                .ok_or("Item is missing")?;
-            return match item {
-                Item::Folder { apps, .. } if child >= 0 => apps
-                    .get(child as usize)
-                    .cloned()
-                    .map(App::into_item)
-                    .ok_or("Item is missing".into()),
-                _ => Ok(item.clone()),
-            };
+    fn search_result_item(&self, reference: &ResultRef) -> Result<Item, String> {
+        if reference.source < 0 {
+            return self.cached_search_result(reference).map(App::into_item);
         }
-        self.cached_search_result(page, index).map(App::into_item)
+        if !reference.folder_id.is_empty() {
+            let Some(Item::Folder { apps, .. }) = self
+                .config
+                .items
+                .iter()
+                .find(|item| item.id() == reference.folder_id)
+            else {
+                return Err("Folder is missing".into());
+            };
+            return apps
+                .iter()
+                .find(|app| app.id == reference.id)
+                .cloned()
+                .map(App::into_item)
+                .ok_or("Item is missing".into());
+        }
+        self.config
+            .items
+            .iter()
+            .find(|item| item.id() == reference.id)
+            .cloned()
+            .ok_or("Item is missing".into())
     }
 
-    fn cached_search_result(&self, page: i32, index: usize) -> Result<App, String> {
-        let (name, icon, launch) = match page {
+    fn cached_search_result(&self, reference: &ResultRef) -> Result<App, String> {
+        let (name, icon, launch) = match reference.source {
             -1 => {
-                let (_, name, action) = ACTIONS.get(index).ok_or("Action is missing")?;
+                let (_, name, action) = ACTIONS
+                    .iter()
+                    .find(|(id, _, _)| *id == reference.id)
+                    .ok_or("Action is missing")?;
                 ((*name).into(), Icon::Letter, Launch::Action(action.clone()))
             }
             -2 => {
                 let app = self
                     .inventory
                     .apps()
-                    .get(index)
+                    .iter()
+                    .find(|app| app.id == reference.id)
                     .ok_or("Installed app is missing")?;
                 (
                     app.name.clone(),
@@ -2071,7 +1970,7 @@ impl Apps {
                 let path = self
                     .search_paths
                     .as_ref()
-                    .and_then(|paths| paths.get(index))
+                    .and_then(|paths| paths.iter().find(|path| path.path == reference.id))
                     .ok_or("Path is missing")?;
                 let launch = if path.directory {
                     Launch::Directory(path.path.clone())
@@ -2288,33 +2187,22 @@ impl Apps {
         if self.query.is_empty() {
             return results;
         }
-        let all = self
-            .config
-            .pages
-            .iter()
-            .enumerate()
-            .flat_map(|(page, contents)| {
-                contents
-                    .items
-                    .iter()
-                    .enumerate()
-                    .map(move |(index, item)| (page, index, item))
-            });
+        let all = self.config.items.iter();
         let mut seen = HashSet::new();
-        for (index, (_, name, _)) in ACTIONS.iter().enumerate() {
+        for (id, name, _) in ACTIONS.iter() {
             if name.to_lowercase().contains(&self.query) {
                 seen.insert(name.trim().to_lowercase());
                 results.push(Tile {
                     name: (*name).into(),
-                    page: -1,
-                    index: index as i32,
+                    id: (*id).into(),
+                    source: -1,
                     artwork: "action".into(),
                     app: true,
                     ..Tile::default()
                 });
             }
         }
-        for (page, index, item) in all.clone() {
+        for item in all.clone() {
             let mut push = |tile: Tile| {
                 let key = tile.name.trim().to_lowercase();
                 if let Some(existing) = results
@@ -2339,15 +2227,15 @@ impl Apps {
                         }
                     }
                 }
-                Item::Widget { .. } => {}
+                Item::Widget { .. } | Item::Robot { .. } => {}
                 _ if item.name().to_lowercase().contains(&self.query) => {
-                    push(self.tile(item, page, index));
+                    push(self.tile(item));
                 }
                 _ => {}
             }
         }
         let mut seen_commands = HashSet::new();
-        for (index, app) in self.inventory.apps().iter().enumerate() {
+        for app in self.inventory.apps() {
             let name = app.name.trim().to_lowercase();
             let cmd = app.command.trim();
             if app.name.to_lowercase().contains(&self.query)
@@ -2358,17 +2246,16 @@ impl Apps {
                     id: app.id.clone(),
                     name: app.name.clone(),
                     icon: self.icons.get(&app.id).cloned(),
-                    page: -2,
-                    index: index as i32,
+                    source: -2,
                     command: Some(app.command.clone()),
                     app: true,
                     ..Tile::default()
                 });
             }
         }
-        for (index, path) in self.search_paths.iter().flatten().enumerate() {
+        for path in self.search_paths.iter().flatten() {
             if path.name.to_lowercase().contains(&self.query)
-                && !all.clone().any(|(_, _, item)| match item {
+                && !all.clone().any(|item| match item {
                     Item::File { path: p, .. } | Item::Directory { path: p, .. } => p == &path.path,
                     _ => false,
                 })
@@ -2376,8 +2263,8 @@ impl Apps {
                 results.push(Tile {
                     name: path.name.clone(),
                     path: path.path.clone(),
-                    page: if path.directory { -4 } else { -3 },
-                    index: index as i32,
+                    source: if path.directory { -4 } else { -3 },
+                    id: path.path.clone(),
                     file: !path.directory,
                     directory: path.directory,
                     ..Tile::default()
@@ -2409,7 +2296,7 @@ impl Apps {
 
     fn save(
         &mut self,
-        index: i32,
+        id: &str,
         name: String,
         command: String,
         svg: String,
@@ -2419,92 +2306,184 @@ impl Apps {
         if !add_item::valid_name(&name) {
             return Err("Name is empty".into());
         }
-        let existing = if index >= 0 {
-            self.config.pages[self.page].items.get(index as usize)
-        } else {
-            None
-        };
+        let existing = self.existing(id)?;
         let app = prepare_app(existing, name, command, svg)?;
         if matches!(existing, Some(Item::App(old)) if old == &app) {
             return Ok(());
         }
-        let id = app.id.clone();
+        let item_id = app.id.clone();
         let icon = app.icon.clone();
-        self.load_icon(&id, &icon)?;
+        self.load_icon(&item_id, &icon)?;
         if !requests.is_current(request) {
             return Ok(());
         }
-        self.store(index, Item::App(app))?;
+        self.store(id, Item::App(app))?;
         if matches!(icon, Icon::Letter | Icon::Text(_)) {
-            self.icons.remove(&id);
+            self.icons.remove(&item_id);
         }
         Ok(())
     }
 
-    fn store(&mut self, index: i32, app: Item) -> Result<(), String> {
-        let items = &mut self.config.pages[self.page].items;
-        if index >= 0 && items.get(index as usize) == Some(&app) {
-            return Ok(());
+    fn existing(&self, id: &str) -> Result<Option<&Item>, String> {
+        if id.is_empty() {
+            return Ok(None);
         }
-        let previous = if index >= 0 {
-            Some(std::mem::replace(&mut items[index as usize], app))
-        } else {
-            items.push(app);
-            None
-        };
-        if let Err(error) = self.config.save() {
-            let items = &mut self.config.pages[self.page].items;
-            if let Some(previous) = previous {
-                items[index as usize] = previous;
-            } else {
-                items.pop();
-            }
-            return Err(format!("Couldn't save config.json: {error}"));
-        }
-        Ok(())
+        self.config
+            .items
+            .iter()
+            .find(|item| item.id() == id)
+            .map(Some)
+            .ok_or("Item changed before it could be saved".into())
     }
 
-    fn delete(&mut self, index: usize) -> Result<(), String> {
-        if self.config.pages[self.page].items.get(index).is_none() {
-            return Ok(());
-        }
+    fn edit_canvas(
+        &mut self,
+        command: i32,
+        selection: &[String],
+        x: i32,
+        y: i32,
+        weak: &slint::Weak<Launcher>,
+    ) -> Result<(), String> {
         let mut config = self.config.clone();
-        let item = config.pages[self.page].items.remove(index);
-        let item_id = item.id().to_string();
-        config.pinned.retain(|id| id != &item_id);
-        let icon = match &item {
-            Item::Website {
-                icon: Icon::File(name),
-                ..
-            } => Some(name.clone()),
-            _ => None,
-        };
-        if let Item::Folder { apps, .. } = &item {
-            for (offset, app) in apps.iter().enumerate() {
-                config.pages[self.page]
-                    .items
-                    .insert(index + offset, app.clone().into_item());
+        let mut reload_icons = false;
+        let selected = match command {
+            0 | 1 => {
+                let Some(target) = self.edits.target(command == 1) else {
+                    return Ok(());
+                };
+                target.restore(&mut config);
+                reload_icons = config.items != self.config.items;
+                let current = crate::canvas_edit::State::capture(&self.config);
+                self.commit(config)?;
+                self.edits.finish(current, command == 1);
+                Vec::new()
             }
+            2 | 3 => {
+                let Some(clipboard) =
+                    crate::canvas_edit::Clipboard::capture(&config, selection, command == 2)
+                else {
+                    return Ok(());
+                };
+                if command == 2 {
+                    clipboard.cut(&mut config);
+                    self.commit(config)?;
+                }
+                self.edits.clipboard = Some(clipboard);
+                if command == 3 {
+                    return Ok(());
+                }
+                Vec::new()
+            }
+            4 => {
+                let Some(clipboard) = &self.edits.clipboard else {
+                    return Ok(());
+                };
+                let selected = clipboard.paste(&mut config, x, y)?;
+                reload_icons = true;
+                self.commit(config)?;
+                self.edits.clipboard.as_mut().unwrap().pasted();
+                selected
+            }
+            _ => return Err("Unknown Canvas action".into()),
+        };
+        if reload_icons && let Err(error) = self.load_icons() {
+            crate::toast::error(weak, error);
         }
+        if command == 4
+            && let Some(id) = selected.first()
+        {
+            self.reveal(id, weak);
+        }
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            ui.set_selected_ids(
+                std::rc::Rc::new(slint::VecModel::from(
+                    selected
+                        .into_iter()
+                        .map(slint::SharedString::from)
+                        .collect::<Vec<_>>(),
+                ))
+                .into(),
+            );
+        });
+        Ok(())
+    }
+
+    fn commit(&mut self, mut config: Config) -> Result<(), String> {
+        crate::spatial::reconcile(&mut config)?;
         config
             .save()
             .map_err(|error| format!("Couldn't save config.json: {error}"))?;
         self.config = config;
-        self.icons.remove(&item_id);
-        if self.recent.remove(&item_id)
+        Ok(())
+    }
+
+    fn store(&mut self, id: &str, item: Item) -> Result<(), String> {
+        let mut config = self.config.clone();
+        if id.is_empty() {
+            let span = crate::spatial::item_span(1, config.item_size, config.grid_gap);
+            let rect = crate::spatial::nearby(
+                &crate::spatial::occupied(&config),
+                crate::spatial::Rect {
+                    col: self.add_position.0,
+                    row: self.add_position.1,
+                    width: span,
+                    height: span,
+                },
+            )?;
+            config.positions.insert(item.id().into(), rect);
+            config.items.push(item);
+        } else {
+            let current = config
+                .items
+                .iter_mut()
+                .find(|item| item.id() == id)
+                .ok_or("Item changed before it could be saved")?;
+            if current == &item {
+                return Ok(());
+            }
+            *current = item;
+        }
+        self.commit(config)
+    }
+
+    fn delete(&mut self, id: &str, weak: &slint::Weak<Launcher>) -> Result<(), String> {
+        let Some(index) = self.config.items.iter().position(|item| item.id() == id) else {
+            return Ok(());
+        };
+        let mut config = self.config.clone();
+        let item = config.items.remove(index);
+        config.positions.remove(id);
+        config.pinned.retain(|pinned| pinned != id);
+        let mut revealed = None;
+        if let Item::Folder { apps, .. } = &item {
+            let anchor = self.config.positions.get(id).copied().unwrap_or_default();
+            for app in apps {
+                let child = app.clone().into_item();
+                if !config.pinned.contains(&app.id) {
+                    let rect = crate::spatial::nearby(&crate::spatial::occupied(&config), anchor)?;
+                    config.positions.insert(app.id.clone(), rect);
+                    revealed = Some(app.id.clone());
+                }
+                config.items.push(child);
+            }
+        }
+        self.commit(config)?;
+        if let Some(id) = revealed {
+            self.reveal(&id, weak);
+        }
+        self.icons.remove(id);
+        if self.recent.remove(id)
             && let Err(error) = self.recent.save()
         {
             eprintln!("orbit: {error}");
         }
-        if let Some(name) = icon {
-            platform::remove_icon(&name);
-        }
+        // Saved icons may still be referenced by Undo or the Canvas clipboard.
         Ok(())
     }
 
     fn save_website(
         &mut self,
-        index: i32,
+        id: &str,
         name: String,
         url: String,
         draft: crate::website_icons::Draft,
@@ -2517,23 +2496,14 @@ impl Apps {
         if !add_item::valid_url(&url) {
             return Err("Enter a valid HTTP or HTTPS URL.".into());
         }
-        let existing = (index >= 0)
-            .then(|| self.config.pages[self.page].items.get(index as usize))
-            .flatten();
-        let id = match existing {
+        let existing = self.existing(id)?;
+        let item_id = match existing {
             Some(Item::Website { id, .. }) => id.clone(),
             Some(_) => return Err("Website is missing".into()),
             None => new_id()?,
         };
         let unchanged_url =
             matches!(existing, Some(Item::Website { url: old, .. }) if old == url.trim());
-        let old_icon = match existing {
-            Some(Item::Website {
-                icon: Icon::File(name),
-                ..
-            }) => Some(name.clone()),
-            _ => None,
-        };
         let current = match existing {
             Some(Item::Website { icon, .. })
                 if unchanged_url
@@ -2556,33 +2526,27 @@ impl Apps {
             return Ok(());
         }
         let item = Item::Website {
-            id: id.clone(),
+            id: item_id.clone(),
             name: name.trim().into(),
             url: url.trim().into(),
             icon: icon.clone(),
         };
-        if let Err(error) = self.store(index, item) {
+        if let Err(error) = self.store(id, item) {
             if new_file && let Icon::File(file) = &icon {
                 platform::remove_icon(file);
             }
             return Err(error);
         }
-        if let Some(old_icon) = old_icon
-            && !old_icon.starts_with("chosen-")
-            && !matches!(&icon, Icon::File(file) if file == &old_icon)
-        {
-            platform::remove_icon(&old_icon);
-        }
         if matches!(icon, Icon::Letter | Icon::Text(_)) {
-            self.icons.remove(&id);
+            self.icons.remove(&item_id);
         }
-        self.load_icon(&id, &icon)?;
+        self.load_icon(&item_id, &icon)?;
         Ok(())
     }
 
     fn save_path(
         &mut self,
-        index: i32,
+        id: &str,
         path: String,
         directory: bool,
         svg: String,
@@ -2609,10 +2573,8 @@ impl Apps {
         if !add_item::valid_name(&name) {
             return Err("Name is empty".into());
         }
-        let existing = (index >= 0)
-            .then(|| self.config.pages[self.page].items.get(index as usize))
-            .flatten();
-        let id = match existing {
+        let existing = self.existing(id)?;
+        let item_id = match existing {
             Some(Item::File { id, .. }) if !directory => id.clone(),
             Some(Item::Directory { id, .. }) if directory => id.clone(),
             Some(_) => return Err("Item is missing".into()),
@@ -2621,32 +2583,32 @@ impl Apps {
         let name = name.trim().to_string();
         let path = path.to_string();
         let icon = crate::icons::parse(&svg)?;
-        self.load_icon(&id, &icon)?;
+        self.load_icon(&item_id, &icon)?;
         if matches!(icon, Icon::Letter | Icon::Text(_)) {
-            self.icons.remove(&id);
+            self.icons.remove(&item_id);
         }
         let item = if directory {
             Item::Directory {
-                id,
+                id: item_id,
                 name,
                 path,
                 icon,
             }
         } else {
             Item::File {
-                id,
+                id: item_id,
                 name,
                 path,
                 icon,
             }
         };
-        self.store(index, item)?;
+        self.store(id, item)?;
         Ok(())
     }
 
     fn save_folder(
         &mut self,
-        index: i32,
+        id: &str,
         name: String,
         requests: &RequestSequence,
         request: u64,
@@ -2654,51 +2616,34 @@ impl Apps {
         if !add_item::valid_name(&name) {
             return Err("Name is empty".into());
         }
-        let mut config = self.config.clone();
-        if index >= 0 {
-            let Some(Item::Folder { name: old_name, .. }) =
-                config.pages[self.page].items.get_mut(index as usize)
-            else {
-                return Err("Folder is missing".into());
-            };
-            *old_name = name.trim().into();
-        } else {
-            config.pages[self.page].items.push(Item::Folder {
+        let item = match self.existing(id)? {
+            Some(Item::Folder { id, apps, .. }) => Item::Folder {
+                id: id.clone(),
+                name: name.trim().into(),
+                apps: apps.clone(),
+            },
+            Some(_) => return Err("Folder is missing".into()),
+            None => Item::Folder {
                 id: new_id()?,
                 name: name.trim().into(),
                 apps: Vec::new(),
-            });
-        }
+            },
+        };
         if !requests.is_current(request) {
             return Ok(());
         }
-        config
-            .save()
-            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-        self.config = config;
-        Ok(())
-    }
-
-    fn delete_page(&mut self) -> Result<(), String> {
-        if self.config.pages.len() == 1 {
-            return Ok(());
-        }
-        let mut config = self.config.clone();
-        let Some(destination) = config.remove_page(self.page) else {
-            return Ok(());
-        };
-        config.active_page = destination;
-        config
-            .save()
-            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-        self.config = config;
-        self.page = destination;
-        self.open_folder = None;
-        Ok(())
+        self.store(id, item)
     }
 
     fn save_shortcut(&mut self, action: i32, existing: String, keys: String) -> Result<(), String> {
         let mut config = self.config.clone();
+        if config
+            .groups
+            .iter()
+            .any(|group| !keys.is_empty() && group.keys == keys)
+        {
+            return Err("Shortcut is already used by a Group.".into());
+        }
         let binding = crate::shortcuts::Shortcut { action, keys };
         if existing.is_empty() {
             config.shortcuts.push(binding);
@@ -2719,65 +2664,187 @@ impl Apps {
         Ok(())
     }
 
-    fn add_page(&mut self) -> Result<(), String> {
-        if self.page >= self.config.horizontal_pages() || self.config.horizontal_pages() >= 9 {
+    fn save_group(
+        &mut self,
+        id: &str,
+        name: String,
+        keys: String,
+        selected: &[String],
+    ) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 60 {
+            return Err("Enter a Group name (60 characters or fewer).".into());
+        }
+        let keys = keys.trim();
+        let mut config = self.config.clone();
+        if config
+            .groups
+            .iter()
+            .any(|group| group.id != id && group.name.trim().to_lowercase() == name.to_lowercase())
+        {
+            return Err("A Group with that name already exists.".into());
+        }
+        crate::shortcuts::validate_group_keys(keys, id, &config.shortcuts, &config.groups)?;
+        if id.is_empty() {
+            let existing: std::collections::HashSet<_> = config
+                .items
+                .iter()
+                .map(|item| item.id().to_string())
+                .collect();
+            let mut members = Vec::new();
+            for item in selected {
+                if existing.contains(item) && !members.contains(item) {
+                    members.push(item.clone());
+                }
+            }
+            if members.is_empty() {
+                return Err("Select at least one Canvas item for the Group.".into());
+            }
+            config.groups.push(crate::config::CanvasGroup {
+                id: new_id()?,
+                name: name.into(),
+                items: members,
+                keys: keys.into(),
+            });
+        } else {
+            let group = config
+                .groups
+                .iter_mut()
+                .find(|group| group.id == id)
+                .ok_or("Group changed before it could be saved.")?;
+            group.name = name.into();
+            group.keys = keys.into();
+        }
+        self.commit(config)
+    }
+
+    fn fit_group(
+        &mut self,
+        id: &str,
+        width: f32,
+        height: f32,
+        weak: &slint::Weak<Launcher>,
+    ) -> Result<(), String> {
+        let group = self
+            .config
+            .groups
+            .iter()
+            .find(|group| group.id == id)
+            .ok_or("Group is missing")?;
+        let positions = group
+            .items
+            .iter()
+            .filter_map(|id| {
+                self.config
+                    .positions
+                    .get(id)
+                    .map(|rect| (id.clone(), *rect))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let view = crate::canvas::fit(&positions, width, height)
+            .ok_or("Group has no items on the Canvas")?;
+        crate::canvas::apply(&mut self.config, crate::canvas::Mutation::View(view))?;
+        let canvas = self.config.canvas.clone();
+        weak.upgrade_in_event_loop(move |ui| crate::canvas::sync(&ui, &canvas, true))
+            .map_err(|error| error.to_string())
+    }
+
+    fn add_ink(&mut self, mut points: Vec<crate::config::InkPoint>) -> Result<(), String> {
+        crate::ink::normalize(&mut points);
+        if points.len() < 2 {
             return Ok(());
         }
+        let total = self
+            .config
+            .ink
+            .iter()
+            .map(|stroke| stroke.points.len())
+            .sum::<usize>()
+            + points.len();
+        if total > crate::ink::MAX_POINTS {
+            return Err("Canvas ink limit reached; erase some strokes first.".into());
+        }
         let mut config = self.config.clone();
-        let page = config.insert_page();
-        config.active_page = page;
-        config
-            .save()
-            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-        self.config = config;
-        self.page = page;
+        config.ink.push(crate::config::InkStroke {
+            id: new_id()?,
+            points,
+        });
+        self.commit(config)
+    }
+
+    fn erase_ink(&mut self, points: &[crate::config::InkPoint]) -> Result<(), String> {
+        let mut config = self.config.clone();
+        if crate::ink::erase(&mut config.ink, points, 12.0) {
+            self.commit(config)?;
+        }
+        Ok(())
+    }
+
+    fn unpin(&mut self, id: &str, weak: &slint::Weak<Launcher>) -> Result<(), String> {
+        if !self.config.pinned.iter().any(|pinned| pinned == id) {
+            return Ok(());
+        }
+        let reference = self.dock_tile(id).ok_or("Item is missing")?;
+        let item = self.search_result_item(&ResultRef {
+            id: id.into(),
+            source: 0,
+            folder_id: reference.folder_id,
+        })?;
+        let mut config = self.config.clone();
+        let span = crate::spatial::item_span(1, config.item_size, config.grid_gap);
+        let rect = crate::spatial::Rect {
+            col: self.add_position.0,
+            row: self.add_position.1,
+            width: span,
+            height: span,
+        };
+        if !crate::item_drop::place_search_result(&mut config, item, Some(rect), false) {
+            return Err("Couldn't return item to Canvas".into());
+        }
+        self.commit(config)?;
+        self.reveal(id, weak);
         Ok(())
     }
 
     fn drop_item(
         &mut self,
         id: &str,
-        page: usize,
-        target: usize,
+        col: i32,
+        row: i32,
         into: &str,
+        weak: &slint::Weak<Launcher>,
     ) -> Result<(), String> {
-        let page = if page == self.config.horizontal_pages()
-            && self.page < self.config.horizontal_pages()
-            && into != "@dock"
-        {
-            self.config.pages.len()
-        } else {
-            page
-        };
-        let final_page = if page == self.config.pages.len() {
-            self.config.horizontal_pages()
-        } else {
-            page
-        };
-        let keep_open = self
-            .open_folder
-            .and_then(|index| self.config.pages[self.page].items.get(index))
-            .is_some_and(|item| self.page == page && item.id() == into);
         let mut config = self.config.clone();
-        if !crate::item_drop::apply(&mut config, id, page, target, into, new_id()?) {
+        if !crate::item_drop::apply(&mut config, id, col, row, into, new_id()?) {
             return Ok(());
         }
-        config.active_page = final_page.min(config.pages.len() - 1);
-        config
-            .save()
-            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-        self.config = config;
-        self.page = final_page.min(self.config.pages.len() - 1);
-        self.config.active_page = self.page;
-        self.open_folder = self.config.pages[self.page]
-            .items
-            .iter()
-            .position(|item| item.id() == into && matches!(item, Item::Folder { .. }))
-            .filter(|_| keep_open);
+        self.commit(config)?;
+        if self.open_folder.as_deref() != Some(into) {
+            self.open_folder = None;
+        }
+        if into.is_empty() {
+            self.reveal(id, weak);
+        }
         Ok(())
     }
 
-    fn tile(&self, item: &Item, page: usize, index: usize) -> Tile {
+    fn reveal(&mut self, id: &str, _weak: &slint::Weak<Launcher>) {
+        self.pending_reveal = Some(id.into());
+    }
+
+    fn publish_reveal(&mut self, weak: &slint::Weak<Launcher>) {
+        let Some(id) = self.pending_reveal.take() else {
+            return;
+        };
+        let Some(rect) = self.config.positions.get(&id).copied() else {
+            return;
+        };
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            ui.invoke_reveal_item(rect.col, rect.row, rect.width as i32, rect.height as i32)
+        });
+    }
+
+    fn tile(&self, item: &Item) -> Tile {
         let mut tile = Tile::new(
             item,
             &self.icons,
@@ -2792,84 +2859,52 @@ impl Apps {
             .unwrap_or(crate::spatial::Rect {
                 width: crate::spatial::item_span(1, self.config.item_size, self.config.grid_gap),
                 height: crate::spatial::item_span(1, self.config.item_size, self.config.grid_gap),
-                ..crate::spatial::Rect::cell(index, self.config.columns)
+                ..Default::default()
             });
-        tile.page = page as i32;
-        tile.index = index as i32;
         tile.pinned = self.config.pinned.iter().any(|id| id == item.id());
         tile
     }
 
     fn dock_tile(&self, id: &str) -> Option<Tile> {
-        for (page, contents) in self.config.pages.iter().enumerate() {
-            for (index, item) in contents.items.iter().enumerate() {
-                if item.id() == id {
-                    return Some(self.tile(item, page, index));
-                }
-                if let Item::Folder { apps, .. } = item
-                    && let Some(folder_app) = apps.iter().position(|app| app.id == id)
-                {
-                    let mut tile = Tile::new(
-                        &apps[folder_app].clone().into_item(),
-                        &self.icons,
-                        self.config.item_size,
-                        self.config.grid_gap,
-                    );
-                    tile.page = page as i32;
-                    tile.index = index as i32;
-                    tile.folder_app_index = Some(folder_app as i32);
-                    tile.pinned = self.config.pinned.iter().any(|pinned| pinned == id);
-                    return Some(tile);
-                }
+        for item in &self.config.items {
+            if item.id() == id {
+                return Some(self.tile(item));
+            }
+            if let Item::Folder { apps, .. } = item
+                && let Some(app) = apps.iter().find(|app| app.id == id)
+            {
+                let mut tile = Tile::new(
+                    &app.clone().into_item(),
+                    &self.icons,
+                    self.config.item_size,
+                    self.config.grid_gap,
+                );
+                tile.folder_id = item.id().into();
+                tile.pinned = self.config.pinned.iter().any(|pinned| pinned == id);
+                return Some(tile);
             }
         }
         None
     }
 
-    fn update(&self, weak: &slint::Weak<Launcher>, page_only: bool) {
+    fn update(&self, weak: &slint::Weak<Launcher>) {
         let canvas = self.config.canvas.clone();
         let _ = weak
             .upgrade_in_event_loop(move |launcher| crate::canvas::sync(&launcher, &canvas, false));
-        let page_items = |page: usize| {
-            self.config
-                .pages
-                .get(page)
-                .map_or_else(Vec::new, |contents| {
-                    contents
-                        .items
-                        .iter()
-                        .enumerate()
-                        .map(|(index, item)| self.tile(item, page, index))
-                        .collect::<Vec<_>>()
-                })
-        };
-        let previews: Vec<_> = (0..self.config.pages.len()).map(page_items).collect();
-        let margin = self.config.page_margin;
+        let items = self
+            .config
+            .items
+            .iter()
+            .map(|item| self.tile(item))
+            .collect::<Vec<_>>();
         let size = self.config.item_size;
         let gap = self.config.grid_gap;
+        let canvas_speed = self.config.canvas_speed;
         let smooth_cursor = self.config.smooth_cursor;
         let english = self.config.english_assistance.clone();
         let ai = self.config.ai.clone();
         let layout_locked = self.config.layout_locked;
         let search_engine_index = self.config.default_search_engine_index() as i32;
-        let saved_columns = self.config.columns as i32;
-        let saved_rows = self.config.rows as i32;
-        let items = page_items(self.page);
-        let horizontal = self.config.horizontal_pages();
-        let previous = self
-            .page
-            .checked_sub(1)
-            .filter(|_| self.page < horizontal)
-            .map(page_items)
-            .unwrap_or_default();
-        let next = if self.page + 1 < horizontal {
-            page_items(self.page + 1)
-        } else {
-            Vec::new()
-        };
-        let vertical = (page_items(horizontal), page_items(horizontal + 1));
-        let page = self.page as i32;
-        let count = horizontal as i32;
         let app_search_paths = self
             .config
             .app_search_paths
@@ -2894,12 +2929,57 @@ impl Apps {
             .iter()
             .map(|path| path.as_str().into())
             .collect::<Vec<slint::SharedString>>();
-        if page_only {
-            let _ = weak.upgrade_in_event_loop(move |launcher| {
-                set_page_items(&launcher, items, previous, next, vertical, page, count);
-            });
-            return;
-        }
+        let can_undo = self.edits.target(false).is_some();
+        let can_redo = self.edits.target(true).is_some();
+        let can_paste = self.edits.clipboard.is_some();
+        let groups = self
+            .config
+            .groups
+            .iter()
+            .filter_map(|group| {
+                let mut bounds: Option<(f32, f32, f32, f32)> = None;
+                for id in &group.items {
+                    let Some(rect) = self.config.positions.get(id) else {
+                        continue;
+                    };
+                    let (left, top) = (rect.col as f32, rect.row as f32);
+                    let (right, bottom) = (left + rect.width as f32, top + rect.height as f32);
+                    bounds = Some(match bounds {
+                        Some((l, t, r, b)) => {
+                            (l.min(left), t.min(top), r.max(right), b.max(bottom))
+                        }
+                        None => (left, top, right, bottom),
+                    });
+                }
+                let (x, y, right, bottom) = bounds?;
+                Some(CanvasGroupView {
+                    id: group.id.as_str().into(),
+                    name: group.name.as_str().into(),
+                    keys: group.keys.as_str().into(),
+                    x,
+                    y,
+                    width: right - x,
+                    height: bottom - y,
+                    count: group.items.len() as i32,
+                })
+            })
+            .collect::<Vec<_>>();
+        let ink = self
+            .config
+            .ink
+            .iter()
+            .map(|stroke| {
+                let ink = crate::ink::view(&stroke.points);
+                (
+                    ink.x,
+                    ink.y,
+                    ink.width,
+                    ink.height,
+                    ink.path,
+                    stroke.points.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
         let dock: Vec<_> = self
             .config
             .pinned
@@ -3006,7 +3086,7 @@ impl Apps {
                     })
             })
             .collect();
-        let shortcut_groups = (0..14)
+        let shortcut_groups = (0..25)
             .map(|action| {
                 (
                     action,
@@ -3021,23 +3101,25 @@ impl Apps {
         let installed_status = self.inventory.status().to_string();
         let installed_apps_loaded = self.inventory.loaded();
         let installed_apps_match = !installed_apps.is_empty();
-        let folder = self.open_folder.and_then(|index| {
-            let Item::Folder { name, apps, .. } = self.config.pages[self.page].items.get(index)?
+        let folder = self.open_folder.as_ref().and_then(|id| {
+            let Item::Folder { name, apps, .. } =
+                self.config.items.iter().find(|item| item.id() == id)?
             else {
                 return None;
             };
             Some((
-                index as i32,
+                id.clone(),
                 name.clone(),
                 apps.iter()
                     .map(|app| {
-                        let item = app.clone().into_item();
-                        Tile::new(
-                            &item,
+                        let mut tile = Tile::new(
+                            &app.clone().into_item(),
                             &self.icons,
                             self.config.item_size,
                             self.config.grid_gap,
-                        )
+                        );
+                        tile.folder_id = id.clone();
+                        tile
                     })
                     .collect::<Vec<_>>(),
             ))
@@ -3065,7 +3147,7 @@ impl Apps {
                     }
                 })
                 .collect();
-            set_page_items(&launcher, items, previous, next, vertical, page, count);
+            set_items(&launcher, items);
             launcher.set_dock_items(
                 std::rc::Rc::new(slint::VecModel::from(
                     dock.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
@@ -3101,9 +3183,9 @@ impl Apps {
             );
             launcher
                 .set_installed_apps(std::rc::Rc::new(slint::VecModel::from(installed_apps)).into());
-            launcher.set_page_margin(margin);
             launcher.set_item_size(size);
             launcher.set_grid_gap(gap);
+            launcher.set_canvas_speed(canvas_speed);
             launcher.set_background_folder_input(background_folder.into());
             if let Some(image) = background_image {
                 launcher.set_background_image(slint::Image::from_rgba8(image));
@@ -3133,22 +3215,6 @@ impl Apps {
             launcher.set_layout_locked(layout_locked);
             launcher.set_default_search_engine_index(search_engine_index);
             launcher.invoke_default_search_engine_saved(search_engine_index);
-            launcher.set_saved_columns(saved_columns);
-            launcher.set_saved_rows(saved_rows);
-            launcher.set_page_previews(
-                std::rc::Rc::new(slint::VecModel::from(
-                    previews
-                        .into_iter()
-                        .map(|items| crate::PageItems {
-                            items: std::rc::Rc::new(slint::VecModel::from(
-                                items.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
-                            ))
-                            .into(),
-                        })
-                        .collect::<Vec<_>>(),
-                ))
-                .into(),
-            );
             launcher.set_shortcuts(crate::shortcuts::model(shortcuts));
             launcher
                 .set_shortcut_hints(std::rc::Rc::new(slint::VecModel::from(shortcut_hints)).into());
@@ -3190,8 +3256,36 @@ impl Apps {
             launcher.set_directory_search_paths(
                 std::rc::Rc::new(slint::VecModel::from(directory_search_paths)).into(),
             );
+            launcher.set_groups(std::rc::Rc::new(slint::VecModel::from(groups)).into());
+            launcher.set_can_undo(can_undo);
+            launcher.set_can_redo(can_redo);
+            launcher.set_can_paste(can_paste);
+            launcher.set_ink_strokes(
+                std::rc::Rc::new(slint::VecModel::from(
+                    ink.into_iter()
+                        .map(|(x, y, width, height, path, samples)| crate::CanvasInk {
+                            x,
+                            y,
+                            width,
+                            height,
+                            path,
+                            samples: std::rc::Rc::new(slint::VecModel::from(
+                                samples
+                                    .into_iter()
+                                    .map(|point| crate::InkSample {
+                                        x: point.x,
+                                        y: point.y,
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ))
+                            .into(),
+                        })
+                        .collect::<Vec<_>>(),
+                ))
+                .into(),
+            );
             if let Some((index, name, items)) = folder {
-                launcher.set_folder_index(index);
+                launcher.set_folder_id(index.into());
                 launcher.set_folder_name(name.into());
                 let items = items.into_iter().map(Tile::into_slint).collect::<Vec<_>>();
                 launcher.set_folder_items(std::rc::Rc::new(slint::VecModel::from(items)).into());
@@ -3208,35 +3302,13 @@ impl Apps {
     }
 }
 
-fn set_page_items(
-    launcher: &Launcher,
-    items: Vec<Tile>,
-    previous: Vec<Tile>,
-    next: Vec<Tile>,
-    vertical: (Vec<Tile>, Vec<Tile>),
-    page: i32,
-    count: i32,
-) {
-    let model = |items: Vec<Tile>| {
+fn set_items(launcher: &Launcher, items: Vec<Tile>) {
+    launcher.set_items(
         std::rc::Rc::new(slint::VecModel::from(
             items.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
         ))
-        .into()
-    };
-    launcher.set_items(model(items));
-    launcher.set_previous_items(model(previous));
-    launcher.set_next_items(model(next));
-    launcher.set_top_items(model(vertical.0));
-    launcher.set_bottom_items(model(vertical.1));
-    launcher.set_current_page(page);
-    launcher.set_page_names(slint::ModelRc::new(slint::VecModel::from(
-        (0..count)
-            .map(|index| format!("Page {}", index + 1).into())
-            .chain((count < 9).then(|| "New page".into()))
-            .collect::<Vec<slint::SharedString>>(),
-    )));
-    launcher.set_page_count(count);
-    launcher.invoke_finish_drag();
+        .into(),
+    );
 }
 
 fn prepare_app(
@@ -3304,10 +3376,18 @@ pub(crate) fn decode_icon(
             image.height(),
         ));
     }
-    slint::Image::load_from_data(data, Some(extension))
-        .map_err(|_| "Couldn't read website icon")?
-        .to_rgba8()
-        .ok_or_else(|| "Couldn't read website icon".into())
+    let image = slint::Image::load_from_data(data, Some(extension))
+        .map_err(|_| "Couldn't read website icon")?;
+    if extension == "svg" {
+        // Small intrinsic SVG dimensions must not turn a scalable icon into a tiny bitmap.
+        i_slint_core::graphics::image_to_rgba8_with_target_size(
+            &image,
+            i_slint_core::graphics::IntSize::new(80, 80),
+        )
+    } else {
+        image.to_rgba8()
+    }
+    .ok_or_else(|| "Couldn't read website icon".into())
 }
 
 fn read_background_image(path: &std::path::Path) -> Option<SharedPixelBuffer<Rgba8Pixel>> {
@@ -3348,25 +3428,27 @@ fn success_message(action: &Action) -> Option<&'static str> {
         Action::Pin(_) => Some("Added to Dock"),
         Action::Unpin(_) => Some("Removed from Dock"),
         Action::RemoveRecent(_) => Some("Removed from Recent"),
-        Action::Save(index, ..) => Some(if *index < 0 { "App added" } else { "App saved" }),
-        Action::SaveWebsite(index, ..) => Some(if *index < 0 {
+        Action::Save(index, ..) => Some(if index.is_empty() {
+            "App added"
+        } else {
+            "App saved"
+        }),
+        Action::SaveWebsite(index, ..) => Some(if index.is_empty() {
             "Website added"
         } else {
             "Website saved"
         }),
-        Action::SavePath(index, ..) => Some(if *index < 0 {
+        Action::SavePath(index, ..) => Some(if index.is_empty() {
             "Item added"
         } else {
             "Item saved"
         }),
-        Action::SaveFolder(index, ..) => Some(if *index < 0 {
+        Action::SaveFolder(index, ..) => Some(if index.is_empty() {
             "Folder added"
         } else {
             "Folder saved"
         }),
         Action::Delete(_) => Some("Item removed"),
-        Action::AddPage => Some("Page added"),
-        Action::DeletePage => Some("Page deleted"),
         Action::Drop(..) => Some("Item moved"),
         Action::Widget(..) => Some("Widget added"),
         Action::ChangeWidget(..) => Some("Widget resized"),
@@ -3713,9 +3795,8 @@ struct Tile {
     max_span_x: i32,
     max_span_y: i32,
     id: String,
-    page: i32,
-    index: i32,
-    folder_app_index: Option<i32>,
+    source: i32,
+    folder_id: String,
     pinned: bool,
     artwork: String,
     name: String,
@@ -3731,6 +3812,7 @@ struct Tile {
     directory: bool,
     folder: bool,
     preview_icons: Vec<FolderIcon>,
+    robot: String,
 }
 
 #[derive(Default)]
@@ -3754,6 +3836,9 @@ impl Tile {
             ..Self::default()
         };
         match item {
+            Item::Robot { profile, .. } => {
+                tile.robot = profile.clone();
+            }
             Item::Widget {
                 variant,
                 ticktick_project_id,
@@ -3817,7 +3902,7 @@ impl Tile {
             Item::Website { icon, .. } | Item::File { icon, .. } | Item::Directory { icon, .. } => {
                 Some(icon)
             }
-            Item::Folder { .. } | Item::Widget { .. } => None,
+            Item::Folder { .. } | Item::Widget { .. } | Item::Robot { .. } => None,
         };
         if let Some(icon) = icon {
             tile.icon_value = serde_json::to_string(icon).unwrap_or_default();
@@ -3865,8 +3950,8 @@ impl Tile {
             self.grid_gap,
         );
         AppTile {
-            row: self.rect.row as i32,
-            col: self.rect.col as i32,
+            row: self.rect.row,
+            col: self.rect.col,
             span_x: self.rect.width.max(1) as i32,
             span_y: self.rect.height.max(1) as i32,
             widget: self.widget,
@@ -3882,9 +3967,8 @@ impl Tile {
             max_span_x: max_span_x as i32,
             max_span_y: max_span_y as i32,
             id: self.id.into(),
-            page: self.page,
-            index: self.index,
-            folder_app_index: self.folder_app_index.unwrap_or(-1),
+            source: self.source,
+            folder_id: self.folder_id.into(),
             pinned: self.pinned,
             artwork: self.artwork.into(),
             text_icon: !self.letter.is_empty(),
@@ -3924,6 +4008,7 @@ impl Tile {
             file: self.file,
             directory: self.directory,
             folder: self.folder,
+            robot: self.robot.into(),
             preview_icons: std::rc::Rc::new(slint::VecModel::from(
                 self.preview_icons
                     .into_iter()
@@ -3954,10 +4039,12 @@ mod tests {
         let mut config = Config::default();
         config.layout_locked = true;
         let mut apps = Apps {
+            edits: Default::default(),
             config,
-            page: 0,
+            add_position: (0, 0),
             icons: HashMap::new(),
             open_folder: None,
+            pending_reveal: None,
             inventory: Inventory::default(),
             installed_filter: String::new(),
             query: String::new(),
@@ -3967,32 +4054,28 @@ mod tests {
         let before = serde_json::to_value(&apps.config).unwrap();
         let requests = RequestSequence::default();
         for action in [
-            Action::Move("item".into(), 1),
-            Action::ReorderPage(1),
-            Action::Geometry(800, 600),
-            Action::Widget(7, None),
+            Action::Widget(7, -100, 500, true),
             Action::ChangeWidget("widget".into(), 200, 200),
             Action::DuplicateWidget("widget".into()),
-            Action::SaveAppearance(10, 80, 0, 800, 600),
-            Action::DeletePage,
-            Action::Pin(0),
+            Action::SaveAppearance(80, 0, 5),
+            Action::Pin("item".into()),
             Action::Unpin("item".into()),
-            Action::Delete(0),
-            Action::AddPage,
-            Action::Drop("item".into(), 1, 0, "".into()),
+            Action::Delete("item".into()),
+            Action::Drop("item".into(), -100, 0, "".into()),
+            Action::AddRobot("robot".into(), "Robot".into()),
             Action::AddPredefined("lock".into(), 0),
             Action::AddInstalledApp("app".into(), 0),
             Action::TransferData(true),
-            Action::Save(-1, "".into(), "".into(), "".into(), 0),
+            Action::Save("".into(), "".into(), "".into(), "".into(), 0),
             Action::SaveWebsite(
-                -1,
+                "".into(),
                 "".into(),
                 "".into(),
                 crate::website_icons::Draft::default(),
                 0,
             ),
-            Action::SavePath(-1, "".into(), false, "".into(), 0),
-            Action::SaveFolder(-1, "".into(), 0),
+            Action::SavePath("".into(), "".into(), false, "".into(), 0),
+            Action::SaveFolder("".into(), "".into(), 0),
         ] {
             assert_eq!(
                 apps.apply(action, &requests, &weak).unwrap_err(),
@@ -4002,19 +4085,26 @@ mod tests {
         }
         for action in [
             Action::Search("test".into()),
-            Action::Page(0),
-            Action::Open(0),
-            Action::SelectTickTickList("widget".into(), "list".into()),
-            Action::Save(0, "".into(), "".into(), "".into(), 0),
-            Action::SaveWebsite(
+            Action::Open("missing".into()),
+            Action::Save(
+                "existing".into(),
+                "name".into(),
+                "true".into(),
+                "".into(),
                 0,
-                "".into(),
-                "".into(),
+            ),
+            Action::SaveWebsite(
+                "existing".into(),
+                "name".into(),
+                "https://example.test".into(),
                 crate::website_icons::Draft::default(),
                 0,
             ),
-            Action::SavePath(0, "".into(), false, "".into(), 0),
-            Action::SaveFolder(0, "".into(), 0),
+            Action::SavePath("existing".into(), "/tmp".into(), true, "".into(), 0),
+            Action::SaveFolder("existing".into(), "name".into(), 0),
+            Action::SelectTickTickList("widget".into(), "list".into()),
+            Action::AddPosition(-100, 200),
+            Action::ShowAll(800.0, 600.0),
             Action::SaveLayoutLocked(false),
         ] {
             assert!(!action.changes_layout());
@@ -4027,10 +4117,12 @@ mod tests {
         let mut config = Config::default();
         config.default_search_engine = "google-search".into();
         let mut apps = Apps {
+            edits: Default::default(),
             config,
-            page: 0,
+            add_position: (0, 0),
             icons: HashMap::new(),
             open_folder: None,
+            pending_reveal: None,
             inventory: Inventory::default(),
             installed_filter: String::new(),
             query: String::new(),
@@ -4071,7 +4163,7 @@ mod tests {
     #[test]
     fn folder_apps_can_enter_recent_and_open_from_the_dock() {
         let mut config = Config::default();
-        config.pages[0].items.push(Item::Folder {
+        config.items.push(Item::Folder {
             id: "folder".into(),
             name: "Folder".into(),
             apps: vec![App {
@@ -4083,10 +4175,12 @@ mod tests {
         });
         config.pinned.push("nested".into());
         let apps = Apps {
+            edits: Default::default(),
             config,
-            page: 0,
+            add_position: (0, 0),
             icons: HashMap::new(),
             open_folder: None,
+            pending_reveal: None,
             inventory: Inventory::default(),
             installed_filter: String::new(),
             query: String::new(),
@@ -4094,18 +4188,215 @@ mod tests {
             recent: recent::Recent::default(),
         };
 
-        assert_eq!(apps.recent_id(&Action::Open(0)), None);
+        assert_eq!(apps.recent_id(&Action::Open("folder".into())), None);
         assert_eq!(
-            apps.recent_id(&Action::LaunchFolder(0, 0)),
+            apps.recent_id(&Action::LaunchFolder("folder".into(), "nested".into())),
             Some("nested".into())
         );
         assert_eq!(
-            apps.recent_id(&Action::OpenDock(0, 0, 0)),
+            apps.recent_id(&Action::OpenDock(ResultRef {
+                id: "nested".into(),
+                folder_id: "folder".into(),
+                source: 0
+            })),
             Some("nested".into())
         );
         let tile = apps.dock_tile("nested").unwrap();
-        assert_eq!(tile.folder_app_index, Some(0));
+        assert_eq!(tile.folder_id, "folder");
         assert!(tile.pinned);
+    }
+
+    #[test]
+    fn stable_references_survive_reordering_and_missing_edits_do_not_create_items() {
+        let item = |id: &str| {
+            Item::App(App {
+                id: id.into(),
+                name: id.into(),
+                icon: Icon::Letter,
+                launch: Launch::Command("true".into()),
+            })
+        };
+        let mut config = Config::default();
+        config.items = vec![item("first"), item("second")];
+        let mut apps = Apps {
+            edits: Default::default(),
+            config,
+            add_position: (-1200, 5000),
+            icons: HashMap::new(),
+            open_folder: None,
+            pending_reveal: None,
+            inventory: Inventory::default(),
+            installed_filter: String::new(),
+            query: String::new(),
+            search_paths: None,
+            recent: recent::Recent::default(),
+        };
+        let reference = ResultRef {
+            id: "first".into(),
+            ..Default::default()
+        };
+        apps.config.items.reverse();
+        assert_eq!(apps.search_result_item(&reference).unwrap().id(), "first");
+        assert_eq!(
+            apps.recent_id(&Action::OpenResult(reference.clone())),
+            Some("first".into())
+        );
+        apps.config.items.retain(|item| item.id() != "first");
+        let before = serde_json::to_value(&apps.config).unwrap();
+        assert!(apps.search_result_item(&reference).is_err());
+        assert!(apps.store("first", item("first")).is_err());
+        assert_eq!(serde_json::to_value(&apps.config).unwrap(), before);
+    }
+
+    #[test]
+    fn invalid_resize_and_colliding_moves_leave_saved_state_unchanged() {
+        let mut config = Config::default();
+        config.items.push(Item::Widget {
+            id: "widget".into(),
+            name: "Random Quote".into(),
+            text: String::new(),
+            variant: 9,
+            ticktick_project_id: String::new(),
+            min_number: 1,
+            max_number: 100,
+        });
+        config.items.push(Item::App(App {
+            id: "neighbor".into(),
+            name: "Neighbor".into(),
+            icon: Icon::Letter,
+            launch: Launch::Command("true".into()),
+        }));
+        let span = crate::spatial::widget_span(2, config.item_size, config.grid_gap);
+        config.positions.insert(
+            "widget".into(),
+            crate::spatial::Rect {
+                col: -1000,
+                row: 4000,
+                width: span,
+                height: span,
+            },
+        );
+        config.positions.insert(
+            "neighbor".into(),
+            crate::spatial::Rect {
+                col: -1000 + span as i32,
+                row: 4000,
+                width: span,
+                height: span,
+            },
+        );
+        let mut apps = Apps {
+            edits: Default::default(),
+            config,
+            add_position: (0, 0),
+            icons: HashMap::new(),
+            open_folder: None,
+            pending_reveal: None,
+            inventory: Inventory::default(),
+            installed_filter: String::new(),
+            query: String::new(),
+            search_paths: None,
+            recent: recent::Recent::default(),
+        };
+        let before = serde_json::to_value(&apps.config).unwrap();
+        let weak = slint::Weak::default();
+        let requests = RequestSequence::default();
+        assert!(
+            apps.apply(
+                Action::ChangeWidget("widget".into(), span + 1, span),
+                &requests,
+                &weak
+            )
+            .is_err()
+        );
+        assert!(
+            apps.apply(
+                Action::ChangeWidget("widget".into(), span - 1, span),
+                &requests,
+                &weak
+            )
+            .is_err()
+        );
+        apps.apply(
+            Action::Drop("widget".into(), -1000 + span as i32, 4000, String::new()),
+            &requests,
+            &weak,
+        )
+        .unwrap();
+        assert_eq!(serde_json::to_value(&apps.config).unwrap(), before);
+        assert!(apps.pending_reveal.is_none());
+    }
+
+    #[test]
+    fn cached_result_ids_survive_inventory_reordering() {
+        let installed = |id: &str| crate::config::InstalledApp {
+            id: id.into(),
+            name: id.into(),
+            command: "true".into(),
+            icon: Icon::Letter,
+        };
+        let mut inventory = Inventory::default();
+        inventory.replace(vec![installed("first"), installed("second")]);
+        let mut apps = Apps {
+            edits: Default::default(),
+            config: Config::default(),
+            add_position: (0, 0),
+            icons: HashMap::new(),
+            open_folder: None,
+            pending_reveal: None,
+            inventory,
+            installed_filter: String::new(),
+            query: "first".into(),
+            search_paths: None,
+            recent: recent::Recent::default(),
+        };
+        let tile = apps.compute_search_results().remove(0);
+        assert_eq!(tile.source, -2);
+        let reference = ResultRef {
+            id: tile.id,
+            source: tile.source,
+            folder_id: String::new(),
+        };
+        apps.inventory
+            .replace(vec![installed("second"), installed("first")]);
+        let item = apps.search_result_item(&reference).unwrap();
+        assert_eq!(item.name(), "first");
+        assert!(
+            matches!(item, Item::App(App { launch: Launch::Installed(id), .. }) if id == "first")
+        );
+    }
+
+    #[test]
+    fn cancelled_adds_leave_items_and_canvas_positions_unchanged() {
+        let mut apps = Apps {
+            edits: Default::default(),
+            config: Config::default(),
+            add_position: (-1200, 5000),
+            icons: HashMap::new(),
+            open_folder: None,
+            pending_reveal: None,
+            inventory: Inventory::default(),
+            installed_filter: String::new(),
+            query: String::new(),
+            search_paths: None,
+            recent: recent::Recent::default(),
+        };
+        let requests = RequestSequence::default();
+        let request = requests.issue();
+        requests.cancel();
+        let before = serde_json::to_value(&apps.config).unwrap();
+        apps.save(
+            "",
+            "Cancelled".into(),
+            "true".into(),
+            "".into(),
+            &requests,
+            request,
+        )
+        .unwrap();
+        apps.save_folder("", "Cancelled".into(), &requests, request)
+            .unwrap();
+        assert_eq!(serde_json::to_value(&apps.config).unwrap(), before);
     }
 
     #[test]
@@ -4119,83 +4410,6 @@ mod tests {
         assert!(activated.badge_width > 52);
         assert!(match_prefix(&config.prefixes, "youtube cats").is_none());
         assert!(match_prefix(&config.prefixes, "yout cats").is_none());
-    }
-
-    #[test]
-    fn touchpad_page_swipes_use_the_dominant_axis_after_initial_drift() {
-        init_ui_for_test();
-        for (first, movement, expected) in [
-            ((0.0, 0.0), (-65.0, 0.0), 1),
-            ((0.0, 1.0), (-65.0, 2.0), 1),
-            ((0.0, -1.0), (65.0, -2.0), 0),
-            ((1.0, 0.0), (2.0, 65.0), 2),
-            ((-1.0, 0.0), (-2.0, -65.0), 3),
-        ] {
-            let ui = Launcher::new().unwrap();
-            ui.set_page_count(2);
-            ui.set_current_page(if expected == 0 { 1 } else { 0 });
-            let opened = std::rc::Rc::new(std::cell::Cell::new(-1));
-            let result = opened.clone();
-            ui.on_open_page(move |page| result.set(page));
-            ui.show().unwrap();
-            ui.set_launcher_visible(true);
-            for (delta_x, delta_y) in [first, movement] {
-                ui.window()
-                    .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
-                        position: slint::LogicalPosition::new(400.0, 300.0),
-                        delta_x,
-                        delta_y,
-                    });
-            }
-            assert_eq!(opened.get(), expected);
-        }
-    }
-
-    #[test]
-    fn fresh_touchpad_swipes_do_not_wait_for_the_previous_momentum_timeout() {
-        init_ui_for_test();
-        let ui = Launcher::new().unwrap();
-        ui.set_page_count(4);
-        let weak = ui.as_weak();
-        ui.on_open_page(move |page| {
-            let ui = weak.upgrade().unwrap();
-            ui.set_current_page(page);
-            ui.set_busy(false);
-            ui.invoke_finish_drag();
-        });
-        ui.show().unwrap();
-        ui.set_launcher_visible(true);
-        let scroll = |delta_x| {
-            ui.window()
-                .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
-                    position: slint::LogicalPosition::new(400.0, 300.0),
-                    delta_x,
-                    delta_y: 0.0,
-                })
-        };
-        let advance = |milliseconds| {
-            for _ in 0..milliseconds / 10 {
-                i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(10));
-            }
-        };
-        ui.invoke_start_page_scroll();
-        scroll(-65.0);
-        assert_eq!(ui.get_current_page(), 1);
-        advance(250);
-        scroll(-65.0);
-        assert_eq!(ui.get_current_page(), 1);
-        ui.invoke_start_page_scroll();
-        scroll(-65.0);
-        assert_eq!(ui.get_current_page(), 2);
-        advance(50);
-        scroll(-65.0);
-        assert_eq!(ui.get_current_page(), 2);
-        ui.invoke_start_page_scroll();
-        scroll(65.0);
-        assert_eq!(ui.get_current_page(), 1);
-        advance(400);
-        scroll(-65.0);
-        assert_eq!(ui.get_current_page(), 2);
     }
 
     #[test]
@@ -4238,8 +4452,6 @@ mod tests {
         assert!(!ui.get_home_visible());
         assert!(!ui.get_search_results_visible());
         assert!(!ui.get_grid_navigation());
-        ui.set_page_count(2);
-        ui.invoke_page_key(1);
         assert!(!ui.get_busy());
         ui.set_search_text("hello".into());
         assert!(!ui.get_home_visible());
@@ -4261,10 +4473,7 @@ mod tests {
         assert!(ui.get_launcher_visible());
         assert!(!receive.try_iter().any(|action| matches!(
             action,
-            Action::RunPrefix(..)
-                | Action::SearchWeb(..)
-                | Action::OpenResult(..)
-                | Action::Page(..)
+            Action::RunPrefix(..) | Action::SearchWeb(..) | Action::OpenResult(..)
         )));
         ui.set_ai_answer("answer".into());
         ui.invoke_reset_launcher();
@@ -4356,10 +4565,12 @@ mod tests {
             let (action_id, query) = &actions[0];
             assert_eq!(query, argument);
             let mut apps = Apps {
+                edits: Default::default(),
                 config,
-                page: 0,
+                add_position: (0, 0),
                 icons: HashMap::new(),
                 open_folder: None,
+                pending_reveal: None,
                 inventory: Inventory::default(),
                 installed_filter: String::new(),
                 query: String::new(),
@@ -4574,7 +4785,7 @@ mod tests {
         let launcher = Launcher::new().unwrap();
 
         let mut config = Config::default();
-        config.pages[0].items.push(Item::App(App {
+        config.items.push(Item::App(App {
             id: "whatsapp-saved".into(),
             name: "WhatsApp Personal".into(),
             icon: Icon::Letter,
@@ -4611,10 +4822,12 @@ mod tests {
         ]);
 
         let mut apps = Apps {
+            edits: Default::default(),
             config,
-            page: 0,
+            add_position: (0, 0),
             icons: HashMap::new(),
             open_folder: None,
+            pending_reveal: None,
             inventory,
             installed_filter: String::new(),
             query: "whatsapp".into(),
@@ -4622,7 +4835,7 @@ mod tests {
             recent: recent::Recent::default(),
         };
 
-        apps.update(&launcher.as_weak(), false);
+        apps.update(&launcher.as_weak());
         let results = launcher.get_search_results();
         assert_eq!(
             results.row_count(),
@@ -4635,17 +4848,17 @@ mod tests {
         );
 
         apps.query = "telegram".into();
-        apps.update(&launcher.as_weak(), false);
+        apps.update(&launcher.as_weak());
         let results = launcher.get_search_results();
         assert_eq!(results.row_count(), 1, "Telegram Desktop must appear once");
         assert_eq!(
-            results.row_data(0).unwrap().page,
+            results.row_data(0).unwrap().source,
             -2,
             "Must be an installed app result"
         );
 
         apps.query = "duplicate".into();
-        apps.update(&launcher.as_weak(), false);
+        apps.update(&launcher.as_weak());
         assert_eq!(
             launcher.get_search_results().row_count(),
             1,

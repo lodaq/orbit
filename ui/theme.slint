@@ -1,4 +1,8 @@
 export global Theme {
+    out property <color> robot-background: #17212A;
+    out property <color> robot-sidebar: #131B23;
+    out property <color> robot-composer: #1D2934;
+    out property <length> robot-radius: 8px;
     out property <length> focus-title-size: 24px;
     out property <color> priority-high: #F18C98;
     out property <color> priority-medium: #E8BC70;
@@ -6,18 +10,17 @@ export global Theme {
     out property <color> adhkar-accent: #ffc477;
     out property <length> adhkar-reading-size: 22px;
     out property <color> launcher-background: #0B0D19;
+    out property <float> background-opacity: 0.9;
     out property <color> placement-valid: #71DDCF;
     out property <color> placement-invalid: #EE9A8B;
-    out property <color> page-inactive: #657097;
     out property <color> folder-preview: #8597DC;
     out property <length> radius-preview: 12px;
-    out property <length> radius-page: 24px;
     out property <length> radius-dock: 24px;
     out property <color> hover-overlay: #FFFFFF0C;
     out property <color> separator: #FFFFFF14;
     out property <color> dock-surface: #171A29D9;
     out property <color> dock-border: #C6D0FF70;
-    out property <color> page-surface: #324D6B12;
+    out property <color> canvas-surface: #324D6B80;
     out property <color> widget-surface: #1B2138;
     out property <length> radius-widget: 22px;
     out property <brush> widget-background: @linear-gradient(135deg, #252C46 0%, #1A2036 100%);
@@ -118,7 +121,7 @@ export global Theme {
     out property <color> search-focus-border: #8FAEFF;
     out property <color> search-prefix-background: #6975E829;
 
-    // Four-pixel spacing scale keeps controls aligned across sheets and pages.
+    // Four-pixel spacing scale keeps controls aligned across sheets and controls.
     out property <length> space-1: 4px;
     out property <length> space-2: 8px;
     out property <length> space-3: 12px;
@@ -161,4 +164,10 @@ export global Theme {
     out property <color> warning: #F0C879;
     out property <color> error-background: #392633;
     out property <color> backdrop: #060814B8;
+    out property <color> selection-border: #8F9EE8;
+    out property <color> group-border: #D7DEFF4D;
+    out property <color> group-chip: #171A29E6;
+    out property <color> ink: #E6E9F5;
+    out property <color> eraser-fill: #FFFFFF1F;
+    out property <color> eraser-border: #FFFFFF99;
 }

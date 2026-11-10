@@ -20,6 +20,7 @@ pub fn defaults() -> Vec<Shortcut> {
         "Enter",
         "Tab",
         "Shift+Tab",
+        "Ctrl+S",
     ]
     .iter()
     .enumerate()
@@ -35,18 +36,73 @@ pub fn defaults() -> Vec<Shortcut> {
         action: 13,
         keys: "Ctrl+E".into(),
     }))
+    .chain(canvas_defaults())
+    .collect()
+}
+
+pub fn canvas_defaults() -> Vec<Shortcut> {
+    [
+        (14, "Ctrl+Z"),
+        (15, "Ctrl+Shift+Z"),
+        (16, "Ctrl+X"),
+        (17, "Ctrl+C"),
+        (18, "Ctrl+V"),
+        (19, "Ctrl+H"),
+        (20, "Ctrl+J"),
+        (20, "Ctrl+L"),
+        (21, "1"),
+        (22, "2"),
+        (23, "3"),
+        (24, "4"),
+    ]
+    .into_iter()
+    .map(|(action, keys)| Shortcut {
+        action,
+        keys: keys.into(),
+    })
     .collect()
 }
 
 pub fn valid(bindings: &[Shortcut]) -> bool {
     bindings.iter().enumerate().all(|(index, binding)| {
-        (0..14).contains(&binding.action)
+        matches!(binding.action, 0..=9 | 12..=24)
             && !binding.keys.is_empty()
             && binding.keys.len() < 80
             && !bindings[..index]
                 .iter()
                 .any(|other| other.keys == binding.keys)
     })
+}
+
+// Group shortcuts carry a modifier so they never take a plain keystroke from search typing.
+pub fn validate_group_keys(
+    keys: &str,
+    id: &str,
+    bindings: &[Shortcut],
+    groups: &[crate::config::CanvasGroup],
+) -> Result<(), String> {
+    if keys.is_empty() {
+        return Ok(());
+    }
+    if keys.len() >= 80 {
+        return Err("Shortcut is too long".into());
+    }
+    let modified = keys
+        .split('+')
+        .any(|part| matches!(part, "Ctrl" | "Alt" | "Super"));
+    if !modified {
+        return Err("Use Ctrl, Alt or Super in a Group shortcut".into());
+    }
+    if bindings.iter().any(|binding| binding.keys == keys) {
+        return Err("Shortcut is already used by an action".into());
+    }
+    if groups
+        .iter()
+        .any(|group| group.id != id && group.keys == keys)
+    {
+        return Err("Shortcut is already used by another Group".into());
+    }
+    Ok(())
 }
 
 pub fn model(bindings: Vec<Shortcut>) -> slint::ModelRc<ShortcutEntry> {
@@ -144,6 +200,17 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
     let Some(keys) = chord(key, modifiers) else {
         return false;
     };
+    if launcher.global::<crate::RobotWorkbench>().get_visible() {
+        if launcher
+            .get_shortcuts()
+            .iter()
+            .any(|binding| binding.action == 1 && binding.keys == keys)
+        {
+            launcher.invoke_close_top_layer();
+            return true;
+        }
+        return false;
+    }
     if !launcher
         .global::<crate::AzanSettings>()
         .get_widget_id()
@@ -162,6 +229,15 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
     if launcher.get_shortcut_recording() {
         launcher.set_shortcut_draft(keys.into());
         launcher.set_shortcut_recording(false);
+        return true;
+    }
+    if launcher.get_group_recording() {
+        if keys == "Escape" {
+            launcher.set_group_keys_draft("".into());
+        } else {
+            launcher.set_group_keys_draft(keys.into());
+        }
+        launcher.set_group_recording(false);
         return true;
     }
     if launcher.get_english_active()
@@ -205,14 +281,13 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         launcher.invoke_context_focused();
         return true;
     }
-    if launcher.get_grid_navigation()
-        && matches!(key, Key::Named(NamedKey::PageUp | NamedKey::PageDown))
+    if launcher.get_group_shortcuts()
+        && let Some(group) = launcher
+            .get_groups()
+            .iter()
+            .find(|group| group.keys == keys)
     {
-        launcher.invoke_page_key(if *key == Key::Named(NamedKey::PageUp) {
-            -1
-        } else {
-            1
-        });
+        launcher.invoke_fit_group(group.id);
         return true;
     }
     let action = launcher
@@ -220,7 +295,7 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         .iter()
         .find(|binding| binding.keys == keys)
         .map(|binding| binding.action);
-    if action.is_none()
+    if (action.is_none() || matches!(action, Some(14 | 15)))
         && launcher.get_search_editing()
         && modifiers.control_key()
         && matches!(key, Key::Character(text) if text.eq_ignore_ascii_case("z") || text.eq_ignore_ascii_case("y"))
@@ -241,15 +316,19 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         return true;
     }
     match action {
+        0 if keys == "Ctrl+K" && launcher.get_canvas_shortcuts() => launcher.invoke_cycle_group(-1),
         0 => launcher.invoke_focus_search(),
         1 => launcher.invoke_close_top_layer(),
+        14..=24 if !launcher.get_canvas_shortcuts() => return false,
+        14..=18 => launcher.invoke_canvas_command(action - 14),
+        19 => launcher.invoke_cycle_group(-1),
+        20 => launcher.invoke_cycle_group(1),
+        21..=24 => launcher.invoke_select_tool(action - 21),
         2..=5 => {
             if launcher.get_search_navigation() {
                 launcher.invoke_move_search_selection(action - 2);
             } else if launcher.get_grid_navigation() {
                 launcher.invoke_move_grid(action - 2);
-            } else if action < 4 && !launcher.get_search_focused() && !launcher.get_ai_active() {
-                launcher.invoke_page_key(if action == 2 { -1 } else { 1 });
             } else {
                 return false;
             }
@@ -283,8 +362,6 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
                 .dispatch_event(slint::platform::WindowEvent::KeyReleased { text: text.into() });
         }
         9 => launcher.set_settings(!launcher.get_settings()),
-        10 if !launcher.get_layout_locked() => launcher.invoke_add_page(),
-        11 if !launcher.get_layout_locked() => launcher.invoke_confirm_delete_page(),
         12 if launcher.get_search_editing() => {
             if launcher.get_search_text().is_empty() {
                 let text = slint::platform::Key::Backspace.into();
@@ -344,6 +421,27 @@ mod tests {
             .dispatch_event(WindowEvent::KeyPressed { text: text.into() });
         ui.window()
             .dispatch_event(WindowEvent::KeyReleased { text: text.into() });
+    }
+
+    #[test]
+    fn ctrl_s_toggles_settings() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = Launcher::new().unwrap();
+        ui.set_shortcuts(model(defaults()));
+        ui.show().unwrap();
+        assert!(!ui.get_settings());
+        assert!(handle(
+            &ui,
+            &Key::Character("s".into()),
+            ModifiersState::CONTROL
+        ));
+        assert!(ui.get_settings());
+        assert!(handle(
+            &ui,
+            &Key::Character("s".into()),
+            ModifiersState::CONTROL
+        ));
+        assert!(!ui.get_settings());
     }
 
     #[test]
@@ -547,6 +645,26 @@ mod tests {
     }
 
     #[test]
+    fn retired_arrangement_actions_are_rejected_without_renumbering_search_actions() {
+        for action in [10, 11] {
+            assert!(!valid(&[Shortcut {
+                action,
+                keys: "Ctrl+P".into()
+            }]));
+        }
+        assert!(valid(&[
+            Shortcut {
+                action: 12,
+                keys: "Ctrl+W".into()
+            },
+            Shortcut {
+                action: 13,
+                keys: "Ctrl+E".into()
+            }
+        ]));
+    }
+
+    #[test]
     fn previous_word_default_is_valid_and_can_be_removed() {
         let mut bindings = defaults();
         assert!(valid(&bindings));
@@ -558,7 +676,7 @@ mod tests {
         bindings.retain(|entry| entry.action != 12);
         assert!(valid(&bindings));
         assert!(!valid(&[Shortcut {
-            action: 14,
+            action: 25,
             keys: "Ctrl+W".into()
         }]));
     }
