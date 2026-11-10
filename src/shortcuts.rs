@@ -208,6 +208,7 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         return false;
     }
     if launcher.get_search_editing()
+        && !launcher.get_script_active()
         && plain
         && let Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown) = key
     {

@@ -5345,6 +5345,234 @@ mod tests {
             "Duplicate App in inventory must appear once"
         );
     }
+
+    #[test]
+    fn search_history_and_arrow_keys_include_prefixes_and_restore_exact_query() {
+        use slint::winit_030::winit::keyboard::{Key, ModifiersState, NamedKey};
+
+        init_ui_for_test();
+        let launcher = Launcher::new().unwrap();
+        launcher.set_shortcuts(crate::shortcuts::model(crate::shortcuts::defaults()));
+        let config = Config::default();
+        let prefixes = config
+            .prefixes
+            .iter()
+            .map(|prefix| PrefixChoice {
+                id: prefix.id.clone().into(),
+                name: prefix.name.clone().into(),
+                token: prefix.token.clone().into(),
+                action_id: prefix.action_id.clone().into(),
+                action_name: prefix.name.clone().into(),
+                action_index: 0,
+            })
+            .collect::<Vec<_>>();
+        launcher.set_prefixes(std::rc::Rc::new(slint::VecModel::from(prefixes)).into());
+        let (sender, receiver) = mpsc::channel();
+        callbacks(&launcher, sender, Arc::new(RequestSequence::default()));
+        launcher.show().unwrap();
+        launcher.set_launcher_visible(true);
+        launcher.invoke_focus_search();
+        assert!(launcher.get_search_focused());
+        assert!(launcher.get_search_editing());
+
+        // 1. Arrow left and right return false so TextInput moves characters natively
+        assert!(!crate::shortcuts::handle(
+            &launcher,
+            &Key::Named(NamedKey::ArrowLeft),
+            ModifiersState::empty()
+        ));
+        assert!(!crate::shortcuts::handle(
+            &launcher,
+            &Key::Named(NamedKey::ArrowRight),
+            ModifiersState::empty()
+        ));
+        launcher.set_search_text("hello".into());
+        launcher
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: slint::platform::Key::RightArrow.into(),
+            });
+        assert_eq!(launcher.get_english_cursor(), 1);
+        launcher
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: slint::platform::Key::LeftArrow.into(),
+            });
+        assert_eq!(launcher.get_english_cursor(), 0);
+
+        // 2. Submit normal query without prefix: "firefox"
+        launcher.set_search_text("firefox".into());
+        launcher.invoke_run_activated_prefix();
+        assert_eq!(launcher.get_activated_prefix_id(), "");
+
+        // 3. Submit prefix query: "y funny cats & dogs"
+        launcher.set_busy(false);
+        launcher.set_search_text("y funny cats & dogs".into());
+        launcher.invoke_run_activated_prefix();
+        let action = receiver
+            .try_iter()
+            .find(|action| matches!(action, Action::RunPrefix(..)))
+            .expect("RunPrefix action expected");
+        assert!(
+            matches!(action, Action::RunPrefix(ref id, ref q) if id == "youtube" && q == "funny cats & dogs")
+        );
+        assert_eq!(launcher.get_activated_prefix_name(), "YouTube");
+        assert_eq!(launcher.get_search_text(), "funny cats & dogs");
+
+        // 4. Submit another prefix query with TickTick
+        launcher.set_busy(false);
+        launcher.invoke_activate_ticktick_prefix();
+        launcher.set_search_text("buy milk !high".into());
+        launcher.invoke_run_activated_prefix();
+        let action = receiver
+            .try_iter()
+            .find(|action| matches!(action, Action::RunPrefix(..)))
+            .expect("RunPrefix action expected");
+        assert!(
+            matches!(action, Action::RunPrefix(ref id, ref q) if id == "ticktick" && q == "buy milk !high")
+        );
+        assert_eq!(launcher.get_activated_prefix_name(), "TickTick");
+        assert_eq!(launcher.get_search_text(), "buy milk !high");
+
+        // Clear active prefix to simulate user starting a new draft
+        launcher.set_search_text("".into());
+        launcher
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: slint::platform::Key::Backspace.into(),
+            });
+        launcher.set_search_text("draft search".into());
+
+        // 5. Navigate Up into history
+        // First Up restores TickTick prefix and "buy milk !high"
+        assert!(crate::shortcuts::handle(
+            &launcher,
+            &Key::Named(NamedKey::ArrowUp),
+            ModifiersState::empty()
+        ));
+        assert_eq!(launcher.get_activated_prefix_id(), "ticktick");
+        assert_eq!(launcher.get_activated_prefix_name(), "TickTick");
+        assert_eq!(launcher.get_search_text(), "buy milk !high");
+        assert_eq!(launcher.get_english_cursor(), 14);
+        launcher
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: slint::platform::Key::LeftArrow.into(),
+            });
+        assert_eq!(launcher.get_english_cursor(), 13);
+        launcher
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: slint::platform::Key::RightArrow.into(),
+            });
+        assert_eq!(launcher.get_english_cursor(), 14);
+
+        // Second Up restores YouTube prefix and "funny cats & dogs"
+        assert!(crate::shortcuts::handle(
+            &launcher,
+            &Key::Named(NamedKey::ArrowUp),
+            ModifiersState::empty()
+        ));
+        assert_eq!(launcher.get_activated_prefix_id(), "youtube");
+        assert_eq!(launcher.get_activated_prefix_name(), "YouTube");
+        assert_eq!(launcher.get_search_text(), "funny cats & dogs");
+
+        // Third Up restores plain search "firefox" with NO prefix
+        assert!(crate::shortcuts::handle(
+            &launcher,
+            &Key::Named(NamedKey::ArrowUp),
+            ModifiersState::empty()
+        ));
+        assert_eq!(launcher.get_activated_prefix_id(), "");
+        assert_eq!(launcher.get_activated_prefix_name(), "");
+        assert_eq!(launcher.get_search_text(), "firefox");
+
+        // Fourth Up stays at oldest entry
+        assert!(crate::shortcuts::handle(
+            &launcher,
+            &Key::Named(NamedKey::ArrowUp),
+            ModifiersState::empty()
+        ));
+        assert_eq!(launcher.get_activated_prefix_id(), "");
+        assert_eq!(launcher.get_search_text(), "firefox");
+
+        // 6. Navigate Down forward in history
+        // First Down restores YouTube prefix
+        assert!(crate::shortcuts::handle(
+            &launcher,
+            &Key::Named(NamedKey::ArrowDown),
+            ModifiersState::empty()
+        ));
+        assert_eq!(launcher.get_activated_prefix_id(), "youtube");
+        assert_eq!(launcher.get_activated_prefix_name(), "YouTube");
+        assert_eq!(launcher.get_search_text(), "funny cats & dogs");
+
+        // Second Down restores TickTick prefix
+        assert!(crate::shortcuts::handle(
+            &launcher,
+            &Key::Named(NamedKey::ArrowDown),
+            ModifiersState::empty()
+        ));
+        assert_eq!(launcher.get_activated_prefix_id(), "ticktick");
+        assert_eq!(launcher.get_activated_prefix_name(), "TickTick");
+        assert_eq!(launcher.get_search_text(), "buy milk !high");
+
+        // Third Down restores exact draft with no prefix
+        assert!(crate::shortcuts::handle(
+            &launcher,
+            &Key::Named(NamedKey::ArrowDown),
+            ModifiersState::empty()
+        ));
+        assert_eq!(launcher.get_activated_prefix_id(), "");
+        assert_eq!(launcher.get_activated_prefix_name(), "");
+        assert_eq!(launcher.get_search_text(), "draft search");
+
+        // Fourth Down stays at draft
+        assert!(crate::shortcuts::handle(
+            &launcher,
+            &Key::Named(NamedKey::ArrowDown),
+            ModifiersState::empty()
+        ));
+        assert_eq!(launcher.get_activated_prefix_id(), "");
+        assert_eq!(launcher.get_search_text(), "draft search");
+
+        // 7. Test draft that had an active prefix
+        launcher.invoke_activate_ticktick_prefix();
+        launcher.set_search_text("draft with prefix".into());
+        // Up to TickTick "buy milk !high"
+        assert!(crate::shortcuts::handle(
+            &launcher,
+            &Key::Named(NamedKey::ArrowUp),
+            ModifiersState::empty()
+        ));
+        assert_eq!(launcher.get_search_text(), "buy milk !high");
+        // Down back to draft restores TickTick prefix and "draft with prefix"
+        assert!(crate::shortcuts::handle(
+            &launcher,
+            &Key::Named(NamedKey::ArrowDown),
+            ModifiersState::empty()
+        ));
+        assert_eq!(launcher.get_activated_prefix_id(), "ticktick");
+        assert_eq!(launcher.get_activated_prefix_name(), "TickTick");
+        assert_eq!(launcher.get_search_text(), "draft with prefix");
+
+        // 8. Script active mode does not navigate history on Up/Down
+        launcher.set_search_text("".into());
+        launcher
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: slint::platform::Key::Backspace.into(),
+            });
+        launcher.set_search_text("/deploy".into());
+        assert!(launcher.get_script_active());
+        // Up and Down handle script selection rather than search history
+        assert!(crate::shortcuts::handle(
+            &launcher,
+            &Key::Named(NamedKey::ArrowUp),
+            ModifiersState::empty()
+        ));
+        assert_eq!(launcher.get_search_text(), "/deploy");
+    }
 }
 
 #[cfg(test)]

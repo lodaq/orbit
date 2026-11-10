@@ -78,6 +78,7 @@ export struct UserActionChoice { id: string, name: string, kind: string, source:
 export struct ScriptChoice { id: string, name: string, path: string }
 export struct PrefixChoice { id: string, name: string, token: string, action-id: string, action-name: string, action-index: int }
 export struct PrefixMatch { action-id: string, name: string, query: string, query-length: int, badge-width: int }
+export struct SearchHistoryEntry { text: string, prefix-id: string, prefix-name: string, prefix-width: length }
 
 export struct TickTickProject { id: string, name: string, inbox: bool }
 export struct TickTickView { id: string, name: string, heading: bool, rtl: bool }
@@ -1345,6 +1346,12 @@ export component Launcher inherits Window {
     callback run-activated-prefix();
     run-activated-prefix => {
         if root.busy { return; }
+        if root.activated-prefix-id == "" {
+            let matched = root.match-prefix(root.search-text);
+            if matched.action-id != "" {
+                root.activate-prefix();
+            }
+        }
         root.remember-search();
         if root.script-active {
             if root.script-needs-completion(root.search-text, root.script-matches[root.script-selection].name) { root.complete-script(); }
@@ -1415,37 +1422,64 @@ export component Launcher inherits Window {
     frame-saved => { root.busy = false; root.frame-editor = false; root.frame-recording = false; root.frame-error = ""; root.selected-ids = []; }
     frame-save-failed(error) => { root.busy = false; root.frame-error = error; }
     private property <int> search-selection;
-    private property <[string]> search-history: [];
+    private property <[SearchHistoryEntry]> search-history: [];
     private property <int> search-history-index: -1;
-    private property <string> search-history-draft;
+    private property <SearchHistoryEntry> search-history-draft;
     function remember-search() {
-        if root.search-text != "" && (root.search-history.length == 0 || root.search-history[root.search-history.length - 1] != root.search-text) {
-            if root.search-history.length == 50 { root.search-history.remove(0); }
-            root.search-history.push(root.search-text);
+        if root.search-text != "" || root.activated-prefix-id != "" {
+            let last-index = root.search-history.length - 1;
+            let is-duplicate = last-index >= 0
+                && root.search-history[last-index].text == root.search-text
+                && root.search-history[last-index].prefix-id == root.activated-prefix-id;
+            if !is-duplicate {
+                if root.search-history.length == 50 { root.search-history.remove(0); }
+                root.search-history.push({
+                    text: root.search-text,
+                    prefix-id: root.activated-prefix-id,
+                    prefix-name: root.activated-prefix-name,
+                    prefix-width: root.activated-prefix-width,
+                });
+            }
         }
         root.search-history-index = -1;
+    }
+    function apply-search-history(entry: SearchHistoryEntry) {
+        root.activated-prefix-id = entry.prefix-id;
+        root.activated-prefix-name = entry.prefix-name;
+        root.activated-prefix-width = entry.prefix-width > 0px ? entry.prefix-width : 78px;
+        root.search-text = entry.text;
+        let is-ai = entry.prefix-id != "" && root.action-index-for-id(entry.prefix-id) >= 0 && root.user-actions[root.action-index-for-id(entry.prefix-id)].kind == "AI";
+        if !is-ai {
+            root.search(root.search-text);
+        } else {
+            root.search("");
+        }
+        root.search-selection = 0;
+        root.search-hover = -1;
+        root.search-offset = 0px;
+        search-input.focus();
+        search-input.set-selection-offsets(1000000, 1000000);
     }
     function move-search-history(direction: int) {
         if root.search-history.length == 0 { return; }
         if root.search-history-index < 0 {
             if direction < 0 {
-                root.search-history-draft = root.search-text;
+                root.search-history-draft = {
+                    text: root.search-text,
+                    prefix-id: root.activated-prefix-id,
+                    prefix-name: root.activated-prefix-name,
+                    prefix-width: root.activated-prefix-width,
+                };
                 root.search-history-index = root.search-history.length - 1;
             } else { return; }
         } else if direction > 0 && root.search-history-index + direction >= root.search-history.length {
             root.search-history-index = -1;
-            root.search-text = root.search-history-draft;
-            root.search(root.search-text);
-            root.search-selection = 0;
+            root.apply-search-history(root.search-history-draft);
             return;
         } else {
             root.search-history-index = clamp(root.search-history-index + direction, 0, root.search-history.length - 1);
         }
-        root.search-text = root.search-history[root.search-history-index];
-        root.search(root.search-text);
-        root.search-selection = 0;
-        root.search-hover = -1;
-        root.search-offset = 0px;
+        root.apply-search-history(root.search-history[root.search-history-index]);
     }
     private property <int> search-hover: -1;
     private property <int> search-detail-index: search-hover >= 0 && search-hover < root.search-results.length ? search-hover : search-selection;
@@ -2104,6 +2138,7 @@ export component Launcher inherits Window {
         folder-close-timer.stop();
         root.engine-menu = false;
         root.search-text = "";
+        root.search-history-index = -1;
         root.activated-prefix-id = "";
         root.activated-prefix-name = "";
         root.settings = false;
@@ -2673,6 +2708,7 @@ export component Launcher inherits Window {
                 accepted => { if self.text != "" || root.activated-prefix-id != "" { root.run-activated-prefix(); } }
                 key-pressed(event) => {
                     if event.text == Key.Backspace && self.text == "" && root.activated-prefix-id != "" {
+                        root.search-history-index = -1;
                         root.clear-ai(); root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); accept;
                     }
                     else if event.text == "\n" && root.english-active && root.english-suggestion-selection >= 0 { root.english-apply(root.english-suggestion-selection); accept; }
