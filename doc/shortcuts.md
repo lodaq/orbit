@@ -6,11 +6,11 @@ The user approved `Orbit_Desktop_Launcher_UX_Spec_v2.md` on 2026-10-20 as author
 
 With Canvas focus (click a tool or empty Canvas space), Ctrl+Z undoes the last content edit and Ctrl+Shift+Z redoes it. Ctrl+X cuts selected items, Ctrl+C copies them, and Ctrl+V pastes them near the visible center without overlaps. History holds 20 edits for the current session; pan/zoom are not history steps. These edit commands also appear in the Canvas Context menu. Lock layout allows Copy and blocks the other edits. Native text editing keeps these keys in text fields.
 
-Ctrl+J and Ctrl+L fit the next Group; Ctrl+H and Ctrl+K fit the previous Group, following saved order and stopping at the ends. Outside Canvas focus, Ctrl+K keeps its Search anything action. Keys 1, 2, 3 and 4 select Select, Hand, Draw and Eraser. Canvas edit, Group navigation and tool bindings can be changed in Settings → Shortcuts. Existing conflicting assignments are preserved during migration.
+Ctrl+J and Ctrl+L fit the next Frame; Ctrl+H and Ctrl+K fit the previous Frame, following saved order and stopping at the ends. Outside Canvas focus, Ctrl+K keeps its Search anything action. Keys 1, 2, 3 and 4 select Select, Hand, Draw and Eraser. Canvas edit, Frame navigation and tool bindings can be changed in Settings → Shortcuts. Existing conflicting assignments are preserved during migration.
 
-Wheel pans vertically, Shift+wheel pans horizontally and Ctrl+wheel zooms around the pointer. Draw shows ink and Eraser removes strokes during the drag; release saves once and Escape cancels the gesture.
+Wheel pans vertically, Shift+wheel pans horizontally and Ctrl+wheel zooms around the pointer. Draw shows smooth ink and Eraser dims its targets during the drag; release saves once and Escape cancels the gesture.
 
-Canvas tools: Select drags a selection rectangle; Ctrl-click or Shift-click toggles items, and Ctrl/Shift-drag adds a rectangle to the selection. Hand drags to pan. Draw saves ink; Eraser removes whole strokes. Right-click with a selection → New Group to name it and record a shortcut. Click a Group label or press its shortcut to fit its items. Right-click the label to edit or delete the Group. Escape cancels an active gesture, then clears selection. Group shortcuts require Ctrl, Alt or Super and run only on the Canvas with no layer open.
+Canvas tools: Select drags a selection rectangle; Ctrl-click or Shift-click toggles items, and Ctrl/Shift-drag adds a rectangle to the selection. Hand drags to pan. Draw saves ink; Eraser removes whole strokes. Right-click with a selection → New Frame to name it and record a shortcut. Click a Frame label or press its shortcut to fit its items. Right-click the label to edit or delete the Frame. Escape cancels an active gesture, then clears selection. Frame shortcuts require Ctrl, Alt or Super and run only on the Canvas with no layer open.
 
 Orbit is mouse first. Settings → Shortcuts lists Orbit bindings and lets you add or delete them. To change a binding, use its ×, confirm with ✓, then use Add to record a replacement. Chip labels do not start recording. Choose an action and record a key combination; duplicate combinations are rejected. The tables below are defaults. Text editing shortcuts are provided by text fields, and the global toggle remains in Hyprland. Ctrl+K returns focus to the search field; while results are visible, arrows navigate results and typing edits the query.
 
@@ -90,6 +90,8 @@ Search engines: `:br` Brave, `:g` Google, `:d` DuckDuckGo, `:q` Qwant, `:b` Bing
 
 Search anything: **Ctrl+W** deletes the previous word using native text editing, including selected text and undo. When the query is empty, it removes the active Prefix. Manage or remove **Delete previous word** in Settings → Shortcuts. It acts only while Search anything is focused with no Settings or layer open. Existing bindings are preserved; an already assigned Ctrl+W is not replaced.
 
+With Search anything focused, Left and Right move through text. Up recalls the previous submitted query; Down moves toward newer queries and restores the current draft. Search history lasts until Orbit restarts.
+
 The top-bar Lock layout / Unlock layout button has no default shortcut. While locked, layout changes are disabled; pan, zoom and Show all items remain available.
 
 English assistance: **Accept next word** uses Ctrl+E by default while Search anything has a visible next-word prediction at the end of the query. It is configurable in Settings → Shortcuts. Existing Ctrl+E assignments are preserved; Tab also accepts a visible prediction; an exact Prefix Token takes priority.
@@ -110,12 +112,16 @@ Accept next word also completes the current partial word. The Autocomplete row s
 
 English Suggestions: Ctrl+1, Ctrl+2 and Ctrl+3 apply the corresponding displayed rewrite. Ctrl+N or Ctrl+J highlights the next suggestion; Ctrl+P or Ctrl+K highlights the previous one. Enter applies the highlighted suggestion without submitting. Navigation stops at the ends; the first down/up selects the first/last suggestion. Editing or refreshing suggestions clears the highlight. While suggestions are available in Search anything, Ctrl+K navigates them; otherwise it retains its search-focus action.
 
-Focused lists move down with Ctrl+N, Ctrl+J or Ctrl+↓, and up with Ctrl+P, Ctrl+K or Ctrl+↑. This applies to Search anything results, Scripts and Settings selects. Ctrl+K keeps its existing Search anything and Canvas Group actions when no list has focus.
+Focused lists move down with Ctrl+N, Ctrl+J or Ctrl+↓, and up with Ctrl+P, Ctrl+K or Ctrl+↑. This applies to Search anything results, Scripts and Settings selects. Ctrl+K keeps its existing Search anything and Canvas Frame actions when no list has focus.
 
 Canvas: Select drags a selection rectangle; Hand drags to pan; Ctrl+wheel zooms around the pointer from 25–200%. Right-click empty space → Add item opens the existing sheets and widget gallery at the clicked position. Right-click → Show all items fits the arranged content, including below 25% when necessary. Widgets scroll their own content. Escape cancels an active drag or placement preview without saving. Lock layout prevents adding, moving and resizing items while permitting navigation and widget interactions. The saved view survives hiding and restart. There are no page-switch actions or Box controls.
+
+With Canvas focus, `-` zooms out and `+` zooms in around the center of the window. Linux touchpad pinch is not supported by the current Winit backend; touchpad scrolling continues to pan.
 
 Robot workbench: Escape closes the workbench without cancelling work. Typing, Tab, text selection and clipboard shortcuts stay in the workbench while it is open. Send queues the chat message with the mouse; Cancel work cancels the selected conversation's queued/pending work. Approve once applies only to the displayed conversation and action. Delete conversation requires confirmation and is unavailable while that conversation has work outstanding.
 
 Scripts: type `/` to list saved scripts, then filter by name. Up/Down select without wrapping. Tab fills the selected script name and preserves arguments. Enter completes a partial name first, then runs on the next press; a complete name or a query with arguments runs immediately. Esc clears script mode. The first space separates the name filter from one unchanged argument string. With no match, Enter does nothing. Rows can also be clicked.
 
 Tab and Enter script-name completion append a space when no argument separator exists, placing the cursor ready for arguments. Existing argument text and spacing are preserved.
+
+Note, Text, Image, Arrow, Highlighter and Laser are available from the Canvas toolbar. Their style controls are at the top right. Laser is temporary and remains available with Lock layout. Eraser dims targeted Canvas strokes, notes, text and images until release.

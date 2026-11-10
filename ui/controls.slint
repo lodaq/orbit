@@ -556,7 +556,7 @@ export component AddItemRow inherits Rectangle {
         x: 12px; y: 12px; width: 40px; height: 40px;
         background: Theme.add-selected; border-radius: Theme.radius-control;
         if root.icon-present: Image { source: root.icon; image-fit: contain; width: 22px; height: 22px; x: 9px; y: 9px; }
-        if !root.icon-present: OrbitText { text: root.letter; color: Theme.add-focus; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+        if !root.icon-present: OrbitText { text: root.letter; color: Theme.add-focus; font-size: 18px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
     }
     OrbitText { x: 64px; y: root.description == "" ? 0px : 10px; width: max(0px, parent.width - 160px); height: root.description == "" ? parent.height : 22px; text: root.label; color: Theme.add-text; font-size: Theme.type-body; font-weight: 500; vertical-alignment: center; overflow: elide; }
     if root.description != "": OrbitText { x: 64px; y: 34px; width: max(0px, parent.width - 160px); height: 18px; text: root.description; color: Theme.add-secondary; font-size: Theme.type-hint; overflow: elide; }

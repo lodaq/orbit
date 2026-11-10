@@ -122,17 +122,17 @@ pub fn reconcile(config: &mut Config) -> Result<(), String> {
         .iter()
         .map(|item| item.id().to_owned())
         .collect();
-    config.groups.retain_mut(|group| {
+    config.frames.retain_mut(|frame| {
         let mut seen = HashSet::new();
-        group
+        frame
             .items
             .retain(|id| ids.contains(id) && seen.insert(id.clone()));
-        !group.items.is_empty()
+        !frame.items.is_empty()
     });
     let widget_ids: HashSet<_> = config
         .items
         .iter()
-        .filter(|item| matches!(item, Item::Widget { .. }))
+        .filter(|item| matches!(item, Item::Widget { .. } | Item::Annotation { .. }))
         .map(|item| item.id().to_owned())
         .collect();
     let mut seen = HashSet::new();
@@ -406,11 +406,11 @@ pub fn connect(launcher: &crate::Launcher) {
         ))
         .into()
     });
-    launcher.on_group_index(|groups, id| {
+    launcher.on_frame_index(|frames, id| {
         use slint::Model;
-        groups
+        frames
             .iter()
-            .position(|group| group.id == id)
+            .position(|frame| frame.id == id)
             .map_or(-1, |index| index as i32)
     });
 }

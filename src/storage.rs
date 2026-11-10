@@ -464,10 +464,14 @@ fn is_icon(data: &[u8], extension: &str) -> bool {
 }
 
 pub fn choose_icon() -> Option<PathBuf> {
-    let _guard = crate::platform::float_file_chooser("Choose icon");
+    choose_image("Choose icon")
+}
+
+pub fn choose_image(title: &str) -> Option<PathBuf> {
+    let _guard = crate::platform::float_file_chooser(title);
     rfd::FileDialog::new()
-        .set_title("Choose icon")
-        .add_filter("Icon", &["png", "jpg", "jpeg", "svg", "ico"])
+        .set_title(title)
+        .add_filter("Image", &["png", "jpg", "jpeg", "svg", "ico"])
         .pick_file()
 }
 

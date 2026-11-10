@@ -139,7 +139,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | Old word | Use instead |
 |---|---|
 | Slide, slice, page | Canvas |
-| Group | Folder |
+| Frame | Folder |
 | Keybinding, key binding, hotkey | Shortcut |
 | Modal, model, dialog, popup | Sheet (forms), Alert (confirmations), Context menu (right-click) |
 | Generated app | Installed app |
@@ -154,6 +154,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | Term | Meaning |
 |---|---|
 | **Search anything** | Searches saved Canvas items, System actions, the cached Installed apps list, files in File search paths and immediate directories in Directory search paths by name. Ctrl+K focuses the field. |
+| **Search history** | The current Orbit session's submitted Search anything queries, navigated with Up and Down while the search field is focused. |
 | **Search engine** | The website used for a web search when no local items match Search anything. Choose it in Settings → Search bar → General. |
 | **Prefix** | A named Search anything rule with a Token and selected Action. Tab or Space activates a matching Token; Enter sends the remaining search text to its Action. |
 | **Token** | The text that activates a Prefix in Search anything. |
@@ -260,7 +261,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | Term | Meaning |
 |---|---|
-| **Group** | Named references to Canvas items, shown with a labeled boundary; its shortcut fits those items on screen. |
+| **Frame** | Named references to Canvas items, shown with a labeled boundary; its shortcut fits those items on screen. |
 | **Select** | Canvas tool for selecting items by rectangle or modified click. |
 | **Hand** | Canvas tool for panning the view. |
 | **Draw** | Canvas tool for saving freehand ink. |
@@ -293,3 +294,12 @@ Canvas replaces the retired page layout. Boxes and their Add box command are rem
 | **Script** | A named executable file selected through `/` in Search anything; text after the first space is passed as one argument. |
 | **Scripts** | Search bar settings tab for adding, editing and deleting Script entries. |
 | **New script**, **Save script**, **Choose file** | Clear the Script editor, save its entry, or select its file with the native chooser. |
+
+| **Note** | A colored Canvas card with editable multiline text. |
+| **Text** | Editable text placed directly on the Canvas. |
+| **Image** | An imported image placed on the Canvas. |
+| **Arrow** | A saved line with an arrowhead. |
+| **Highlighter** | A broad translucent ink stroke. |
+| **Laser** | A temporary red pointer trail, excluded from saved data and history. |
+| **Opacity** | How solid Canvas content appears, from 10% to 100%. |
+| **Font size** | General setting controlling all Orbit interface text; 12 px by default. |

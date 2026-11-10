@@ -1,10 +1,48 @@
 use crate::config::{InkPoint, InkStroke};
+use serde::{Deserialize, Serialize};
 use std::fmt::Write;
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct Style {
+    pub color: String,
+    pub size: f32,
+    pub opacity: f32,
+    pub highlighter: bool,
+    pub arrow: bool,
+}
+impl Default for Style {
+    fn default() -> Self {
+        Self {
+            color: "#e8e5ef".into(),
+            size: 2.5,
+            opacity: 1.0,
+            highlighter: false,
+            arrow: false,
+        }
+    }
+}
+impl Style {
+    pub fn valid(&self) -> bool {
+        self.color.len() == 7
+            && self.color.starts_with('#')
+            && self.color[1..].bytes().all(|b| b.is_ascii_hexdigit())
+            && self.size.is_finite()
+            && (1.0..=64.0).contains(&self.size)
+            && self.opacity.is_finite()
+            && (0.1..=1.0).contains(&self.opacity)
+    }
+}
 
 // Bounds config size and the work needed to rebuild saved stroke paths.
 pub const MAX_POINTS: usize = 100_000;
 
+#[cfg(test)]
 pub fn view(points: &[InkPoint]) -> crate::CanvasInk {
+    view_with_padding(points, 2.0)
+}
+
+fn view_with_padding(points: &[InkPoint], padding: f32) -> crate::CanvasInk {
     let mut left = f32::INFINITY;
     let mut top = f32::INFINITY;
     let mut right = f32::NEG_INFINITY;
@@ -19,29 +57,90 @@ pub fn view(points: &[InkPoint]) -> crate::CanvasInk {
         return crate::CanvasInk::default();
     }
     // Slint culls Paths by their geometry, including the stroke outside its centerline.
-    left -= 2.0;
-    top -= 2.0;
+    left -= padding;
+    top -= padding;
     let mut path = String::with_capacity(points.len() * 18);
-    for (index, point) in points.iter().enumerate() {
+    let first = &points[0];
+    let _ = write!(path, "M {:.1} {:.1}", first.x - left, first.y - top);
+    // Midpoint quadratic curves avoid sharp joins without delaying the pointer.
+    for pair in points.windows(2) {
         let _ = write!(
             path,
-            "{}{:.1} {:.1}",
-            if index == 0 { "M " } else { " L " },
-            point.x - left,
-            point.y - top
+            " Q {:.1} {:.1} {:.1} {:.1}",
+            pair[0].x - left,
+            pair[0].y - top,
+            (pair[0].x + pair[1].x) * 0.5 - left,
+            (pair[0].y + pair[1].y) * 0.5 - top
         );
     }
-    if points.len() == 1 {
-        path.push_str(" L 2.1 2.1");
-    }
+    let last = points.last().unwrap();
+    let _ = write!(
+        path,
+        " L {:.1} {:.1}",
+        last.x - left + 0.01,
+        last.y - top + 0.01
+    );
     crate::CanvasInk {
         x: left,
         y: top,
-        width: right - left + 2.0,
-        height: bottom - top + 2.0,
+        width: right - left + padding,
+        height: bottom - top + padding,
         path: path.into(),
         samples: Default::default(),
+        ..Default::default()
     }
+}
+
+pub fn samples(points: &[InkPoint], style: &Style) -> Vec<InkPoint> {
+    let mut samples = points.to_vec();
+    if style.arrow
+        && let Some((a, b)) = points.first().zip(points.last())
+    {
+        let angle = (b.y - a.y).atan2(b.x - a.x);
+        let head = (style.size * 5.0).max(14.0);
+        for turn in [-0.5_f32, 0.5] {
+            samples.push(InkPoint {
+                x: b.x - head * (angle + turn).cos(),
+                y: b.y - head * (angle + turn).sin(),
+            });
+            samples.push(*b);
+        }
+    }
+    samples
+}
+
+pub fn styled_view(points: &[InkPoint], style: &Style) -> crate::CanvasInk {
+    let padding = if style.arrow {
+        (style.size * 5.0).max(14.0) + style.size
+    } else {
+        style.size * if style.highlighter { 2.0 } else { 0.5 } + 1.0
+    };
+    let mut result = view_with_padding(points, padding);
+    if style.arrow && points.len() >= 2 {
+        let a = points[0];
+        let b = points[points.len() - 1];
+        let mut path = String::new();
+        let _ = write!(
+            path,
+            "M {:.1} {:.1} L {:.1} {:.1}",
+            a.x - result.x,
+            a.y - result.y,
+            b.x - result.x,
+            b.y - result.y
+        );
+        for point in samples(points, style).iter().skip(points.len()).step_by(2) {
+            let _ = write!(
+                path,
+                " M {:.1} {:.1} L {:.1} {:.1}",
+                point.x - result.x,
+                point.y - result.y,
+                b.x - result.x,
+                b.y - result.y
+            );
+        }
+        result.path = path.into();
+    }
+    result
 }
 
 pub fn normalize(points: &mut Vec<InkPoint>) {
@@ -72,7 +171,7 @@ pub fn normalize(points: &mut Vec<InkPoint>) {
 }
 
 pub fn connect(launcher: &crate::Launcher) {
-    launcher.on_ink_view(|points, _count| {
+    launcher.on_ink_view(|points, _count, mode, size| {
         use slint::Model;
         let points = points
             .iter()
@@ -81,7 +180,35 @@ pub fn connect(launcher: &crate::Launcher) {
                 y: point.y,
             })
             .collect::<Vec<_>>();
-        view(&points)
+        styled_view(
+            &points,
+            &Style {
+                size,
+                arrow: mode == 7,
+                highlighter: mode == 8,
+                ..Default::default()
+            },
+        )
+    });
+    launcher.on_preview_erase_items(|items, targets, x1, y1, x2, y2| {
+        use slint::Model;
+        let mut targets: Vec<_> = targets.iter().collect();
+        for item in items.iter().filter(|item| item.annotation > 0) {
+            if !targets.contains(&item.id)
+                && hits_rect(
+                    &[InkPoint { x: x1, y: y1 }, InkPoint { x: x2, y: y2 }],
+                    crate::spatial::Rect {
+                        col: item.col,
+                        row: item.row,
+                        width: item.span_x as usize,
+                        height: item.span_y as usize,
+                    },
+                )
+            {
+                targets.push(item.id);
+            }
+        }
+        std::rc::Rc::new(slint::VecModel::from(targets)).into()
     });
     launcher.on_preview_erase(|strokes, x1, y1, x2, y2| {
         use slint::Model;
@@ -89,8 +216,8 @@ pub fn connect(launcher: &crate::Launcher) {
         let to = InkPoint { x: x2, y: y2 };
         let visible = strokes
             .iter()
-            .filter(|stroke| {
-                !stroke
+            .map(|mut stroke| {
+                if stroke
                     .samples
                     .iter()
                     .zip(stroke.samples.iter().skip(1))
@@ -100,9 +227,13 @@ pub fn connect(launcher: &crate::Launcher) {
                             &to,
                             &InkPoint { x: a.x, y: a.y },
                             &InkPoint { x: b.x, y: b.y },
-                            144.0,
+                            (12.0 + stroke.size as f64 / 2.0).powi(2),
                         )
                     })
+                {
+                    stroke.dimmed = true;
+                }
+                stroke
             })
             .collect::<Vec<_>>();
         std::rc::Rc::new(slint::VecModel::from(visible)).into()
@@ -112,20 +243,51 @@ pub fn connect(launcher: &crate::Launcher) {
 // Erasing removes a whole stroke when any part of it crosses the eraser path.
 pub fn erase(strokes: &mut Vec<InkStroke>, points: &[InkPoint], radius: f32) -> bool {
     let radius = radius.clamp(1.0, 200.0) as f64;
-    let radius2 = radius * radius;
     let before = strokes.len();
     strokes.retain(|stroke| {
+        let samples = samples(&stroke.points, &stroke.style);
         let mut previous = points.first();
         !points.iter().any(|eraser| {
             let from = previous.unwrap_or(eraser);
             previous = Some(eraser);
-            stroke
-                .points
-                .windows(2)
-                .any(|pair| segments_hit(from, eraser, &pair[0], &pair[1], radius2))
+            samples.windows(2).any(|pair| {
+                segments_hit(
+                    from,
+                    eraser,
+                    &pair[0],
+                    &pair[1],
+                    (radius
+                        + stroke.style.size as f64
+                            * if stroke.style.highlighter { 2.0 } else { 0.5 })
+                    .powi(2),
+                )
+            })
         })
     });
     strokes.len() != before
+}
+
+pub fn hits_rect(points: &[InkPoint], rect: crate::spatial::Rect) -> bool {
+    let left = rect.col as f32;
+    let top = rect.row as f32;
+    let right = left + rect.width as f32;
+    let bottom = top + rect.height as f32;
+    let corners = [
+        InkPoint { x: left, y: top },
+        InkPoint { x: right, y: top },
+        InkPoint {
+            x: right,
+            y: bottom,
+        },
+        InkPoint { x: left, y: bottom },
+        InkPoint { x: left, y: top },
+    ];
+    points.iter().enumerate().any(|(i, p)| {
+        (p.x >= left && p.x <= right && p.y >= top && p.y <= bottom)
+            || corners.windows(2).any(|edge| {
+                segments_hit(&points[i.saturating_sub(1)], p, &edge[0], &edge[1], 144.0)
+            })
+    })
 }
 
 fn segments_hit(a: &InkPoint, b: &InkPoint, c: &InkPoint, d: &InkPoint, radius2: f64) -> bool {
@@ -176,7 +338,7 @@ mod tests {
             (ink.x, ink.y, ink.width, ink.height),
             (-1.0, -6.25, 6.5, 10.25)
         );
-        assert_eq!(ink.path, "M 2.0 8.2 L 4.5 2.0");
+        assert!(ink.path.contains(" Q "));
         assert!(view(&[]).path.is_empty());
     }
 
@@ -200,10 +362,12 @@ mod tests {
         let mut strokes = vec![
             InkStroke {
                 id: "a".into(),
+                style: Default::default(),
                 points: vec![point(0.0, 0.0), point(100.0, 0.0)],
             },
             InkStroke {
                 id: "b".into(),
+                style: Default::default(),
                 points: vec![point(0.0, 100.0), point(100.0, 100.0)],
             },
         ];

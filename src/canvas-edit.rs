@@ -1,4 +1,4 @@
-use crate::config::{CanvasGroup, Config, InkStroke, Item};
+use crate::config::{CanvasFrame, Config, InkStroke, Item};
 use crate::spatial::Rect;
 use std::collections::BTreeMap;
 
@@ -7,7 +7,7 @@ pub struct State {
     items: Vec<Item>,
     positions: BTreeMap<String, Rect>,
     pinned: Vec<String>,
-    groups: Vec<CanvasGroup>,
+    frames: Vec<CanvasFrame>,
     ink: Vec<InkStroke>,
     item_size: i32,
     grid_gap: i32,
@@ -19,7 +19,7 @@ impl State {
             items: config.items.clone(),
             positions: config.positions.clone(),
             pinned: config.pinned.clone(),
-            groups: config.groups.clone(),
+            frames: config.frames.clone(),
             ink: config.ink.clone(),
             item_size: config.item_size,
             grid_gap: config.grid_gap,
@@ -30,7 +30,7 @@ impl State {
         config.items.clone_from(&self.items);
         config.positions.clone_from(&self.positions);
         config.pinned.clone_from(&self.pinned);
-        config.groups.clone_from(&self.groups);
+        config.frames.clone_from(&self.frames);
         config.ink.clone_from(&self.ink);
         config.item_size = self.item_size;
         config.grid_gap = self.grid_gap;
@@ -49,7 +49,7 @@ impl History {
         if before.items != config.items
             || before.positions != config.positions
             || before.pinned != config.pinned
-            || before.groups != config.groups
+            || before.frames != config.frames
             || before.ink != config.ink
             || before.item_size != config.item_size
             || before.grid_gap != config.grid_gap
@@ -167,7 +167,8 @@ impl Clipboard {
 fn replace_id(item: &mut Item) -> Result<(), String> {
     let id = match item {
         Item::App(app) => &mut app.id,
-        Item::Robot { id, .. }
+        Item::Annotation { id, .. }
+        | Item::Robot { id, .. }
         | Item::Widget { id, .. }
         | Item::Website { id, .. }
         | Item::File { id, .. }

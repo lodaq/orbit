@@ -36,7 +36,7 @@ try:
                         for name in ['Alpha', 'Beta', 'Far']]
     fixture['positions'] = {name: dict(col=x, row=300, width=144, height=144)
                             for name, x in [('Alpha', 400), ('Beta', 650), ('Far', 2400)]}
-    fixture['groups'] = [dict(id='work', name='Work', items=['Alpha', 'Beta'], keys='Ctrl+G'),
+    fixture['frames'] = [dict(id='work', name='Work', items=['Alpha', 'Beta'], keys='Ctrl+G'),
                          dict(id='far', name='عمل Far', items=['Far'], keys='Ctrl+B')]
     fixture['ink'] = []
     fixture['canvas'] = dict(view=dict(x=0, y=0, zoom=1))
@@ -59,18 +59,18 @@ try:
     d.wait(lambda: d.data()['canvas']['view']['zoom'] > 1, 'Ctrl+wheel did not zoom')
 
     chord(d, 'j')
-    d.wait(lambda: d.data()['canvas']['view']['zoom'] == 2, 'first Group was not fitted')
+    d.wait(lambda: d.data()['canvas']['view']['zoom'] == 2, 'first Frame was not fitted')
     work = d.data()['canvas']['view']
     chord(d, 'l')
-    d.wait(lambda: d.data()['canvas']['view'] != work, 'Ctrl+L did not fit next Group')
+    d.wait(lambda: d.data()['canvas']['view'] != work, 'Ctrl+L did not fit next Frame')
     far = d.data()['canvas']['view']
     chord(d, 'k')
-    d.wait(lambda: d.data()['canvas']['view'] == work, 'Ctrl+K did not fit previous Group')
+    d.wait(lambda: d.data()['canvas']['view'] == work, 'Ctrl+K did not fit previous Frame')
     chord(d, 'j')
-    d.wait(lambda: d.data()['canvas']['view'] == far, 'Ctrl+J did not fit next Group')
+    d.wait(lambda: d.data()['canvas']['view'] == far, 'Ctrl+J did not fit next Frame')
     chord(d, 'h')
-    d.wait(lambda: d.data()['canvas']['view'] == work, 'Ctrl+H did not fit previous Group')
-    d.shot('groups-keyboard.png')
+    d.wait(lambda: d.data()['canvas']['view'] == work, 'Ctrl+H did not fit previous Frame')
+    d.shot('frames-keyboard.png')
 
     d.key('1')
     d.key('Control', True)
@@ -104,7 +104,7 @@ try:
     d.key('Control', False)
     d.click(1758, 56)
     d.wait(lambda: d.data()['layout_locked'], 'layout did not lock')
-    d.click(40, 472)
+    d.click(40, 340)
     locked = d.data()['positions']
     chord(d, 'x')
     chord(d, 'z')
@@ -112,7 +112,7 @@ try:
     chord(d, 'c')
     d.click(1758, 56)
     d.wait(lambda: not d.data()['layout_locked'], 'layout did not unlock')
-    d.click(40, 472)
+    d.click(40, 340)
     chord(d, 'v')
     d.wait(lambda: len(d.items()) == 6, 'Copy was blocked by Lock layout')
     chord(d, 'z')
@@ -163,7 +163,7 @@ try:
     assert not d.data()['ink'], 'Losing window focus saved a cancelled stroke'
     assert not white(d.shot('focus-cancelled.png'), 380, 735)
 
-    d.click(40, 472)
+    d.click(40, 340)
     x, y = d.item_point('Alpha')
     d.click(x, y, 3)
     d.shot('item-edit-menu.png')
@@ -205,6 +205,6 @@ try:
     d.start()
     assert len(d.items()) == 5 and not d.data()['ink']
     d.shot('restart.png')
-    print('PASS wheel pan/zoom, Group navigation, tools, clipboard, undo/redo, live ink and cancellation:', d.work)
+    print('PASS wheel pan/zoom, Frame navigation, tools, clipboard, undo/redo, live ink and cancellation:', d.work)
 finally:
     d.close()

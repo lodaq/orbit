@@ -74,12 +74,12 @@ pub fn valid(bindings: &[Shortcut]) -> bool {
     })
 }
 
-// Group shortcuts carry a modifier so they never take a plain keystroke from search typing.
-pub fn validate_group_keys(
+// Frame shortcuts carry a modifier so they never take a plain keystroke from search typing.
+pub fn validate_frame_keys(
     keys: &str,
     id: &str,
     bindings: &[Shortcut],
-    groups: &[crate::config::CanvasGroup],
+    frames: &[crate::config::CanvasFrame],
 ) -> Result<(), String> {
     if keys.is_empty() {
         return Ok(());
@@ -91,16 +91,16 @@ pub fn validate_group_keys(
         .split('+')
         .any(|part| matches!(part, "Ctrl" | "Alt" | "Super"));
     if !modified {
-        return Err("Use Ctrl, Alt or Super in a Group shortcut".into());
+        return Err("Use Ctrl, Alt or Super in a Frame shortcut".into());
     }
     if bindings.iter().any(|binding| binding.keys == keys) {
         return Err("Shortcut is already used by an action".into());
     }
-    if groups
+    if frames
         .iter()
-        .any(|group| group.id != id && group.keys == keys)
+        .any(|frame| frame.id != id && frame.keys == keys)
     {
-        return Err("Shortcut is already used by another Group".into());
+        return Err("Shortcut is already used by another Frame".into());
     }
     Ok(())
 }
@@ -197,6 +197,35 @@ pub fn handle_event(
 }
 
 pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool {
+    let plain = !modifiers.control_key()
+        && !modifiers.alt_key()
+        && !modifiers.shift_key()
+        && !modifiers.super_key();
+    if launcher.get_search_editing()
+        && plain
+        && matches!(key, Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight))
+    {
+        return false;
+    }
+    if launcher.get_search_editing()
+        && plain
+        && let Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown) = key
+    {
+        launcher.invoke_navigate_search_history(if *key == Key::Named(NamedKey::ArrowUp) {
+            -1
+        } else {
+            1
+        });
+        return true;
+    }
+    if launcher.get_grid_navigation()
+        && let Key::Character(text) = key
+        && matches!(text.as_str(), "+" | "-")
+    {
+        let factor = if text == "+" { 1.1 } else { 1.0 / 1.1 };
+        launcher.invoke_zoom_canvas(factor);
+        return true;
+    }
     let Some(keys) = chord(key, modifiers) else {
         return false;
     };
@@ -234,13 +263,13 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         launcher.set_shortcut_recording(false);
         return true;
     }
-    if launcher.get_group_recording() {
+    if launcher.get_frame_recording() {
         if keys == "Escape" {
-            launcher.set_group_keys_draft("".into());
+            launcher.set_frame_keys_draft("".into());
         } else {
-            launcher.set_group_keys_draft(keys.into());
+            launcher.set_frame_keys_draft(keys.into());
         }
-        launcher.set_group_recording(false);
+        launcher.set_frame_recording(false);
         return true;
     }
     if launcher.get_english_active()
@@ -302,13 +331,13 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         launcher.invoke_context_focused();
         return true;
     }
-    if launcher.get_group_shortcuts()
-        && let Some(group) = launcher
-            .get_groups()
+    if launcher.get_frame_shortcuts()
+        && let Some(frame) = launcher
+            .get_frames()
             .iter()
-            .find(|group| group.keys == keys)
+            .find(|frame| frame.keys == keys)
     {
-        launcher.invoke_fit_group(group.id);
+        launcher.invoke_fit_frame(frame.id);
         return true;
     }
     let action = launcher
@@ -340,13 +369,13 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         return true;
     }
     match action {
-        0 if keys == "Ctrl+K" && launcher.get_canvas_shortcuts() => launcher.invoke_cycle_group(-1),
+        0 if keys == "Ctrl+K" && launcher.get_canvas_shortcuts() => launcher.invoke_cycle_frame(-1),
         0 => launcher.invoke_focus_search(),
         1 => launcher.invoke_close_top_layer(),
         14..=24 if !launcher.get_canvas_shortcuts() => return false,
         14..=18 => launcher.invoke_canvas_command(action - 14),
-        19 => launcher.invoke_cycle_group(-1),
-        20 => launcher.invoke_cycle_group(1),
+        19 => launcher.invoke_cycle_frame(-1),
+        20 => launcher.invoke_cycle_frame(1),
         21..=24 => launcher.invoke_select_tool(action - 21),
         2..=5 => {
             if launcher.get_search_navigation() {

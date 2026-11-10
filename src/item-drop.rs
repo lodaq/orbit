@@ -17,9 +17,11 @@ pub fn apply(
         return false;
     };
     if into == "@dock" {
-        if matches!(next.items[source.0], Item::Widget { .. })
-            || (next.pinned.len() >= crate::config::PINNED_LIMIT
-                && !next.pinned.iter().any(|pin| pin == id))
+        if matches!(
+            next.items[source.0],
+            Item::Widget { .. } | Item::Annotation { .. }
+        ) || (next.pinned.len() >= crate::config::PINNED_LIMIT
+            && !next.pinned.iter().any(|pin| pin == id))
         {
             return false;
         }
@@ -132,7 +134,9 @@ pub fn apply(
 }
 
 pub fn place_search_result(config: &mut Config, item: Item, rect: Option<Rect>, pin: bool) -> bool {
-    if config.layout_locked || (pin && matches!(item, Item::Widget { .. })) {
+    if config.layout_locked
+        || (pin && matches!(item, Item::Widget { .. } | Item::Annotation { .. }))
+    {
         return false;
     }
     let id = item.id().to_owned();

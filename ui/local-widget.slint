@@ -42,7 +42,7 @@ component HabitRow inherits Rectangle {
         background: root.checked ? Theme.focus : transparent;
         border-width: root.checked ? 0px : 1.5px;
         border-color: Theme.secondary;
-        if root.checked: OrbitText { text: "✓"; width: parent.width; height: parent.height; horizontal-alignment: center; vertical-alignment: center; font-size: 14px; font-weight: 700; color: Theme.field; }
+        if root.checked: OrbitText { text: "✓"; width: parent.width; height: parent.height; horizontal-alignment: center; vertical-alignment: center; font-size: 14px * Theme.font-scale; font-weight: 700; color: Theme.field; }
     }
     title := OrbitText {
         x: 46px; width: parent.width - 58px; y: (parent.height - self.height) / 2;
@@ -91,7 +91,7 @@ component AdhkarWidget inherits Rectangle {
                     width: reading.width; height: self.preferred-height;
                     padding-right: Theme.space-4;
                     alignment: start; spacing: Theme.space-4;
-                    if root.view.done: OrbitText { text: "✓"; font-size: 48px; color: Theme.success; horizontal-alignment: center; }
+                    if root.view.done: OrbitText { text: "✓"; font-size: 48px * Theme.font-scale; color: Theme.success; horizontal-alignment: center; }
                     if root.view.headline != "": OrbitText {
                         text: root.view.headline; color: Theme.adhkar-accent;
                         horizontal-alignment: right; font-size: Theme.type-control; wrap: word-wrap;
@@ -279,7 +279,7 @@ component UsageBadge inherits Rectangle {
     width: 26px; height: 26px; border-radius: 13px;
     background: root.tint.with-alpha(0.18);
     OrbitText {
-        text: root.glyph; font-size: 14px;
+        text: root.glyph; font-size: 14px * Theme.font-scale;
         font-weight: 700; color: root.tint;
         horizontal-alignment: center; vertical-alignment: center;
     }
@@ -297,7 +297,7 @@ component UsageStat inherits HorizontalLayout {
     VerticalLayout {
         alignment: center; spacing: 1px;
         OrbitText {
-            text: root.label; font-size: 12px;
+            text: root.label; font-size: 12px * Theme.font-scale;
             font-weight: 500; color: Theme.secondary;
         }
         UsageAmount { value: root.value; unit: root.unit; }
@@ -317,7 +317,7 @@ export component InternetUsageWidget inherits Rectangle {
             VerticalLayout {
                 spacing: 1px;
                 OrbitText {
-                    text: "TODAY"; font-size: 11px;
+                    text: "TODAY"; font-size: 11px * Theme.font-scale;
                     font-weight: 600; color: Theme.focus;
                 }
                 UsageAmount {
@@ -327,7 +327,7 @@ export component InternetUsageWidget inherits Rectangle {
             }
             OrbitText {
                 text: "Updated " + root.view.updated;
-                font-size: 10px; font-weight: 400; color: Theme.secondary;
+                font-size: 10px * Theme.font-scale; font-weight: 400; color: Theme.secondary;
                 horizontal-alignment: right; vertical-alignment: bottom;
             }
         }
@@ -380,7 +380,7 @@ export component LocalWidget inherits Rectangle {
                 alignment: start;
                 spacing: Theme.space-3;
                 if root.view.category == 0 && root.view.entry-id != "": OrbitText {
-                    text: "“"; color: Theme.focus; font-size: 48px; height: 32px;
+                    text: "“"; color: Theme.focus; font-size: 48px * Theme.font-scale; height: 32px;
                 }
                 if root.view.headline != "": OrbitText {
                     text: root.view.headline; color: Theme.text;

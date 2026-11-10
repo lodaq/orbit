@@ -1,14 +1,16 @@
 export global Theme {
+    in-out property <int> font-size: 12;
+    out property <float> font-scale: font-size / 14;
     out property <color> robot-background: #17212A;
     out property <color> robot-sidebar: #131B23;
     out property <color> robot-composer: #1D2934;
     out property <length> robot-radius: 8px;
-    out property <length> focus-title-size: 24px;
+    out property <length> focus-title-size: 24px * font-scale;
     out property <color> priority-high: #F18C98;
     out property <color> priority-medium: #E8BC70;
     out property <color> priority-low: #83ADFF;
     out property <color> adhkar-accent: #ffc477;
-    out property <length> adhkar-reading-size: 22px;
+    out property <length> adhkar-reading-size: 22px * font-scale;
     out property <color> launcher-background: #0B0D19;
     out property <float> background-opacity: 0.9;
     out property <color> placement-valid: #71DDCF;
@@ -27,9 +29,9 @@ export global Theme {
     out property <color> widget-border: #C6D0FF20;
     out property <color> widget-row: #FFFFFF06;
     out property <color> widget-completed: #B6BEFF12;
-    out property <length> widget-reading-size: 20px;
-    out property <length> azan-time-size: 34px;
-    out property <length> widget-word-size: 24px;
+    out property <length> widget-reading-size: 20px * font-scale;
+    out property <length> azan-time-size: 34px * font-scale;
+    out property <length> widget-word-size: 24px * font-scale;
     out property <length> widget-action-height: 32px;
     // Feedback starts on press; only the release eases back to rest.
     out property <duration> control-release: 120ms;
@@ -89,8 +91,8 @@ export global Theme {
     out property <length> settings-h-control-sm: 34px;
     out property <length> settings-h-icon-btn: 36px;
     out property <length> settings-h-nav: 44px;
-    out property <length> settings-title-size: 24px;
-    out property <length> settings-card-title-size: 15px;
+    out property <length> settings-title-size: 24px * font-scale;
+    out property <length> settings-card-title-size: 15px * font-scale;
 
     out property <duration> cursor-snap-delay: 1ms;
     out property <duration> cursor-lead: 70ms;
@@ -107,14 +109,14 @@ export global Theme {
     out property <length> kbd-height: 22px;
     out property <length> kbd-padding: 6px;
     out property <length> kbd-radius: 5px;
-    out property <length> kbd-font-size: 11px;
+    out property <length> kbd-font-size: 11px * font-scale;
     out property <color> kbd-background: #FFFFFF0A;
     out property <color> kbd-border: #FFFFFF14;
     out property <color> kbd-shadow: #00000030;
     out property <length> search-min-height: 48px;
     out property <length> search-padding: 12px;
     out property <length> search-cursor-inset: 2px;
-    out property <length> search-font-size: 16px;
+    out property <length> search-font-size: 16px * font-scale;
     out property <duration> folder-transition: 150ms;
     out property <color> search-background: #171A29E8;
     out property <color> search-border: #C6D0FF60;
@@ -143,10 +145,10 @@ export global Theme {
     out property <length> focus-width: 2px;
 
     // Type scale for shared controls and common text roles.
-    out property <length> type-hint: 12px;
-    out property <length> type-control: 13px;
-    out property <length> type-body: 14px;
-    out property <length> type-title: 20px;
+    out property <length> type-hint: 12px * font-scale;
+    out property <length> type-control: 13px * font-scale;
+    out property <length> type-body: 14px * font-scale;
+    out property <length> type-title: 20px * font-scale;
     out property <color> on-primary: #FFFFFF;
 
     out property <color> sheet: #181D35;
@@ -165,8 +167,8 @@ export global Theme {
     out property <color> error-background: #392633;
     out property <color> backdrop: #060814B8;
     out property <color> selection-border: #8F9EE8;
-    out property <color> group-border: #D7DEFF4D;
-    out property <color> group-chip: #171A29E6;
+    out property <color> frame-border: #D7DEFF4D;
+    out property <color> frame-chip: #171A29E6;
     out property <color> ink: #E6E9F5;
     out property <color> eraser-fill: #FFFFFF1F;
     out property <color> eraser-border: #FFFFFF99;

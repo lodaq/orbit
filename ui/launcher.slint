@@ -12,12 +12,12 @@ import { Panel, MenuOption, AddItemRow, SettingsAddButton, SettingsButton, Setti
 import "fonts/inter.ttf";
 export { WidgetDataEntry, WidgetView, LocalWidgets } from "local-widget.slint";
 import { WidgetDataEntry, WidgetView, LocalWidgets, LocalWidget } from "local-widget.slint";
-import { Palette, ScrollView } from "std-widgets.slint";
+import { Palette, ScrollView, Slider } from "std-widgets.slint";
 
 export struct CompletedReference { id: string, date: string, title: string, done: bool }
-export struct CanvasGroupView { id: string, name: string, keys: string, x: float, y: float, width: float, height: float, count: int }
+export struct CanvasFrameView { id: string, name: string, keys: string, x: float, y: float, width: float, height: float, count: int }
 export struct InkSample { x: float, y: float }
-export struct CanvasInk { x: float, y: float, width: float, height: float, path: string, samples: [InkSample] }
+export struct CanvasInk { x: float, y: float, width: float, height: float, path: string, samples: [InkSample], color: color, size: float, opacity: float, dimmed: bool }
 
 export struct ShortcutEntry { action: int, keys: string }
 export struct ShortcutGroup { action: int, entries: [ShortcutEntry] }
@@ -29,6 +29,7 @@ export struct FolderPreview {
 }
 
 export struct AppTile {
+    annotation: int, annotation-color: color, annotation-color-name: string, annotation-size: float, annotation-opacity: float,
     robot: string,
     row: int, col: int, span-x: int, span-y: int, widget: bool, widget-kind: int, widget-text: string, widget-min: int, widget-max: int, ticktick: bool, ticktick-next: bool,
     ticktick-project-id: string,
@@ -167,7 +168,7 @@ component ToastCard inherits Rectangle {
         OrbitText {
             text: root.item.level == 1 ? "✓" : root.item.level == 0 ? "i" : "!";
             color: root.status-color;
-            font-size: 11px;
+            font-size: 11px * Theme.font-scale;
             font-weight: 700;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -208,7 +209,7 @@ component ToastCard inherits Rectangle {
         OrbitText {
             text: "×";
             color: close-touch.has-hover ? Theme.text : Theme.secondary;
-            font-size: 14px;
+            font-size: 14px * Theme.font-scale;
             font-weight: 600;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -309,7 +310,7 @@ component ItemTile inherits Rectangle {
     completion-flash-timer := Timer { running: root.ticktick-next-completion-flash; interval: 420ms; triggered => { root.ticktick-next-completion-flash = false; } }
     private property <length> item-icon-size: min(self.width * 0.75, self.height - 36px);
     private property <length> item-content-top: (self.height - item-icon-size - Theme.space-1 - 16px) / 2;
-    if index < items.length && !items[index].widget: Rectangle {
+    if index < items.length && !items[index].widget && items[index].annotation == 0: Rectangle {
         x: (parent.width - self.width) / 2;
         width: root.item-icon-size + 2 * root.item-content-top;
         // The label line box includes space below the visible letters.
@@ -317,7 +318,7 @@ component ItemTile inherits Rectangle {
         background: root.pressed ? Theme.press-overlay : root.hovered ? Theme.hover-overlay : transparent;
         border-radius: Theme.radius-control;
     }
-    if index < items.length && !items[index].widget: Rectangle {
+    if index < items.length && !items[index].widget && items[index].annotation == 0: Rectangle {
         x: (parent.width - self.width) / 2; y: root.item-content-top;
         width: root.item-icon-size; height: self.width;
         border-radius: Theme.radius-sheet;
@@ -336,6 +337,19 @@ component ItemTile inherits Rectangle {
         if index < items.length && folder-preview && items[index].folder: ItemIcon { width: parent.width; height: parent.height; item: items[index]; }
         if index < items.length && folder-preview && items[index].folder: ItemIcon {
             x: parent.width - 30px; y: parent.height - 30px; width: 28px; height: 28px; item: drag-preview-item;
+        }
+    }
+    if index < items.length && items[index].annotation > 0: Rectangle {
+        width: parent.width; height: parent.height;
+        opacity: items[index].annotation-opacity;
+        background: items[index].annotation == 1 ? (items[index].annotation-color-name == "#e8e5ef" ? #ffe39a : items[index].annotation-color) : transparent;
+        border-radius: 2px;
+        if items[index].annotation == 3: Image { width: parent.width; height: parent.height; source: items[index].icon; image-fit: contain; }
+        if items[index].annotation != 3: OrbitText {
+            x: 16px; y: 12px; width: parent.width - 32px; height: parent.height - 24px;
+            text: items[index].name; color: items[index].annotation == 1 ? #1d1d1d : items[index].annotation-color; font-size: items[index].annotation-size * 1px;
+            wrap: word-wrap; vertical-alignment: items[index].annotation == 1 ? center : top;
+            horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left;
         }
     }
     if index < items.length && items[index].widget && !items[index].ticktick: OrbitText { x: 16px; y: 12px; width: parent.width - (items[index].widget-kind == 16 ? 80px : 32px); height: 24px; text: items[index].name; color: Theme.text; font-size: Theme.type-body; font-weight: 600; overflow: elide; }
@@ -404,7 +418,7 @@ component ItemTile inherits Rectangle {
                         overflow: elide; vertical-alignment: center;
                     }
                 }
-                if task.due != "": OrbitText { x: task.rtl ? 0px : parent.width - 72px; y: 1px; width: 70px; height: 33px; text: task.due; color: Theme.secondary; font-size: 11px; horizontal-alignment: task.rtl ? left : right; vertical-alignment: center; }
+                if task.due != "": OrbitText { x: task.rtl ? 0px : parent.width - 72px; y: 1px; width: 70px; height: 33px; text: task.due; color: Theme.secondary; font-size: 11px * Theme.font-scale; horizontal-alignment: task.rtl ? left : right; vertical-alignment: center; }
 
             }
         }
@@ -495,7 +509,7 @@ component ItemTile inherits Rectangle {
             stroke-width: 2px;
         }
     }
-    if index < items.length && !items[index].widget: OrbitText {
+    if index < items.length && !items[index].widget && items[index].annotation == 0: OrbitText {
         y: items[index].widget ? parent.height - 28px : root.item-content-top + root.item-icon-size + Theme.space-1;
         x: 6px;
         width: parent.width - 12px;
@@ -622,9 +636,9 @@ export component Launcher inherits Window {
     pure callback selection-has([string], string) -> bool;
     pure callback selection-toggle([string], string) -> [string];
     pure callback marquee-select([AppTile],float,float,float,float,[string],bool) -> [string];
-    pure callback ink-view([InkSample], int) -> CanvasInk;
+    pure callback ink-view([InkSample], int, int, float) -> CanvasInk;
     pure callback preview-erase([CanvasInk], float, float, float, float) -> [CanvasInk];
-    pure callback group-index([CanvasGroupView], string) -> int;
+    pure callback frame-index([CanvasFrameView], string) -> int;
     callback add-widget(int,int,int,bool);
     callback duplicate-widget(string);
     callback widget-action(string,int,int);
@@ -690,13 +704,19 @@ export component Launcher inherits Window {
     }
 
     private property <int> dock-source-index: -1;
-    out property <bool> grid-navigation: !RobotWorkbench.visible && !root.search-context && !root.ai-active && canvas-focus.has-focus && !root.canvas-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.group-editor;
-    out property <bool> group-shortcuts: !RobotWorkbench.visible && !root.canvas-context && root.context-index < 0 && root.group-context-id == "" && !root.tool-active && !root.marquee-active && !root.panning && !root.dragging && root.home-visible && !root.busy && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.group-editor && !root.search-context;
-    out property <bool> canvas-shortcuts: root.group-shortcuts && canvas-focus.has-focus;
+    out property <bool> grid-navigation: !RobotWorkbench.visible && !root.search-context && !root.ai-active && canvas-focus.has-focus && !root.canvas-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.frame-editor && !root.annotation-editor;
+    out property <bool> frame-shortcuts: !RobotWorkbench.visible && !root.canvas-context && root.context-index < 0 && root.frame-context-id == "" && !root.tool-active && !root.marquee-active && !root.panning && !root.dragging && root.home-visible && !root.busy && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.frame-editor && !root.annotation-editor && !root.search-context;
+    out property <bool> canvas-shortcuts: root.frame-shortcuts && canvas-focus.has-focus;
     in-out property <bool> can-undo;
     in-out property <bool> can-redo;
     in-out property <bool> can-paste;
     callback edit-canvas(int, [string], float, float);
+    callback zoom-canvas(float);
+    zoom-canvas(factor) => {
+        CanvasState.zoom-at(root.width / 2px, root.height / 2px, factor);
+        root.view-dirty = true;
+        canvas-save-timer.restart();
+    }
     callback canvas-command(int);
     canvas-command(command) => {
         if root.layout-locked && command != 3 { return; }
@@ -707,14 +727,14 @@ export component Launcher inherits Window {
     }
     callback select-tool(int);
     select-tool(mode) => { root.set-tool(mode); }
-    private property <string> active-group-id;
-    callback cycle-group(int);
-    cycle-group(direction) => {
-        if root.groups.length == 0 { return; }
-        let current = root.group-index(root.groups, root.active-group-id);
-        let next = current < 0 ? (direction > 0 ? 0 : root.groups.length - 1)
-            : min(root.groups.length - 1, max(0, current + direction));
-        root.fit-group-view(root.groups[next].id);
+    private property <string> active-frame-id;
+    callback cycle-frame(int);
+    cycle-frame(direction) => {
+        if root.frames.length == 0 { return; }
+        let current = root.frame-index(root.frames, root.active-frame-id);
+        let next = current < 0 ? (direction > 0 ? 0 : root.frames.length - 1)
+            : min(root.frames.length - 1, max(0, current + direction));
+        root.fit-frame-view(root.frames[next].id);
     }
     pure callback next-grid-item([AppTile],int,int) -> int;
     callback move-grid(int);
@@ -751,8 +771,29 @@ export component Launcher inherits Window {
     private property <float> pan-origin-y;
     private property <length> pan-start-x;
     private property <length> pan-start-y;
+    in-out property <int> font-size: 12;
+    callback save-font-size(int);
+    changed font-size => { Theme.font-size = root.font-size; }
+    in-out property <color> ink-color-value: #e8e5ef;
+    private property <string> ink-color: "#e8e5ef";
+    in-out property <float> ink-size: 2.5;
+    in-out property <float> text-size: 24;
+    in-out property <float> ink-opacity: 1;
+    in-out property <bool> annotation-editor;
+    in-out property <string> annotation-error;
+    private property <string> annotation-id;
+    private property <string> annotation-text;
+    private property <int> annotation-kind: 1;
+    private property <int> annotation-x;
+    private property <int> annotation-y;
+    callback save-annotation(string,string,int,string,float,float,float,float);
+    callback style-selection([string],string,float,float);
+    laser-timer := Timer { interval: 70ms; triggered => {
+        if root.ink-draft.length > 1 { root.ink-draft.remove(0); }
+        else { root.ink-draft = []; self.stop(); }
+    } }
     in-out property <[string]> selected-ids;
-    in-out property <[CanvasGroupView]> groups;
+    in-out property <[CanvasFrameView]> frames;
     in-out property <[CanvasInk]> ink-strokes;
     in-out property <int> tool-mode: 0;
     in-out property <bool> ctrl-held;
@@ -766,30 +807,33 @@ export component Launcher inherits Window {
     private property <length> marquee-end-y;
     private property <[InkSample]> ink-draft;
     private property <[InkSample]> erase-draft;
+    private property <[string]> erase-item-targets;
+    pure callback preview-erase-items([AppTile],[string],float,float,float,float) -> [string];
     private property <[CanvasInk]> erase-preview;
     private property <bool> erase-preview-active;
     private property <bool> tool-active;
-    callback add-ink([InkSample]);
+    callback add-ink([InkSample], string, float, float, int);
     callback erase-ink([InkSample]);
     callback ink-finished();
     ink-finished => {
         root.ink-draft = [];
         root.erase-preview-active = false;
+        root.erase-item-targets = [];
         root.busy = false;
     }
-    callback save-group(string,string,string,[string]);
-    callback delete-group(string);
-    callback group-saved();
-    callback group-save-failed(string);
-    callback fit-group(string);
-    callback fit-group-action(string,float,float);
-    in-out property <bool> group-editor;
-    private property <string> group-edit-id;
-    private property <string> group-name-draft;
-    in-out property <string> group-keys-draft;
-    in-out property <bool> group-recording;
-    private property <string> group-error;
-    private property <string> group-context-id;
+    callback save-frame(string,string,string,[string]);
+    callback delete-frame(string);
+    callback frame-saved();
+    callback frame-save-failed(string);
+    callback fit-frame(string);
+    callback fit-frame-action(string,float,float);
+    in-out property <bool> frame-editor;
+    private property <string> frame-edit-id;
+    private property <string> frame-name-draft;
+    in-out property <string> frame-keys-draft;
+    in-out property <bool> frame-recording;
+    private property <string> frame-error;
+    private property <string> frame-context-id;
     callback set-add-position(float,float);
     callback show-all-items(float,float);
     callback reveal-item(int,int,int,int);
@@ -837,45 +881,46 @@ export component Launcher inherits Window {
         root.ink-draft = [];
         root.erase-draft = [];
         root.erase-preview-active = false;
+        root.erase-item-targets = [];
         root.tool-active = false;
     }
-    function fit-group-view(id: string) {
-        root.active-group-id = id;
-        root.group-context-id = "";
+    function fit-frame-view(id: string) {
+        root.active-frame-id = id;
+        root.frame-context-id = "";
         root.canvas-context = false;
         root.context-index = -1;
         root.flush-canvas();
-        root.fit-group-action(id, root.width / 1px, root.height / 1px);
+        root.fit-frame-action(id, root.width / 1px, root.height / 1px);
     }
-    fit-group(id) => { root.fit-group-view(id); }
-    function open-group-editor(id: string) {
+    fit-frame(id) => { root.fit-frame-view(id); }
+    function open-frame-editor(id: string) {
         root.canvas-context = false;
         root.context-index = -1;
         root.dock-context = "";
-        root.group-context-id = "";
-        root.group-edit-id = id;
-        root.group-name-draft = "";
-        root.group-keys-draft = "";
-        root.group-recording = false;
-        root.group-error = "";
-        let index = root.group-index(root.groups, id);
+        root.frame-context-id = "";
+        root.frame-edit-id = id;
+        root.frame-name-draft = "";
+        root.frame-keys-draft = "";
+        root.frame-recording = false;
+        root.frame-error = "";
+        let index = root.frame-index(root.frames, id);
         if index >= 0 {
-            root.group-name-draft = root.groups[index].name;
-            root.group-keys-draft = root.groups[index].keys;
+            root.frame-name-draft = root.frames[index].name;
+            root.frame-keys-draft = root.frames[index].keys;
         }
-        root.group-editor = true;
+        root.frame-editor = true;
     }
-    function group-member-count() -> int {
-        if root.group-edit-id == "" { return root.selected-ids.length; }
-        let index = root.group-index(root.groups, root.group-edit-id);
-        return index >= 0 ? root.groups[index].count : 0;
+    function frame-member-count() -> int {
+        if root.frame-edit-id == "" { return root.selected-ids.length; }
+        let index = root.frame-index(root.frames, root.frame-edit-id);
+        return index >= 0 ? root.frames[index].count : 0;
     }
     function set-tool(mode: int) {
         root.tool-mode = mode;
         root.cancel-canvas();
         root.canvas-context = false;
         root.context-index = -1;
-        root.group-context-id = "";
+        root.frame-context-id = "";
         canvas-focus.focus();
     }
     function finish-marquee() {
@@ -888,22 +933,30 @@ export component Launcher inherits Window {
     }
     function tool-pointer(event: PointerEvent, x: length, y: length) {
         if root.busy { return; }
-        if root.layout-locked && root.tool-mode >= 2 { return; }
+        if root.layout-locked && root.tool-mode >= 2 && root.tool-mode != 9 { return; }
         if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
             root.flush-canvas();
             root.cancel-drag();
             root.canvas-context = false;
             root.context-index = -1;
-            root.group-context-id = "";
+            root.frame-context-id = "";
             if root.tool-mode == 1 {
                 root.pan-origin-x = CanvasState.pan-x; root.pan-origin-y = CanvasState.pan-y;
                 root.pan-start-x = x; root.pan-start-y = y; root.panning = true;
-            } else if root.tool-mode == 2 {
+            } else if root.tool-mode >= 4 && root.tool-mode <= 6 {
+                root.annotation-id = ""; root.annotation-kind = root.tool-mode == 4 ? 1 : root.tool-mode == 5 ? 2 : 3;
+                root.annotation-text = ""; root.annotation-error = "";
+                root.annotation-x = round(root.world-x(x) / 1px); root.annotation-y = round(root.world-y(y) / 1px);
+                if root.tool-mode == 6 { root.busy = true; root.save-annotation("","Image",3,root.ink-color,root.text-size,root.ink-opacity,root.annotation-x,root.annotation-y); }
+                else { root.annotation-editor = true; }
+            } else if (root.tool-mode == 2 || root.tool-mode >= 7) {
+                laser-timer.stop();
                 root.ink-draft = [{ x: root.world-x(x) / 1px, y: root.world-y(y) / 1px }];
                 root.tool-active = true;
             } else if root.tool-mode == 3 {
                 root.erase-draft = [{ x: root.world-x(x) / 1px, y: root.world-y(y) / 1px }];
                 root.erase-preview = root.preview-erase(root.ink-strokes, root.world-x(x) / 1px, root.world-y(y) / 1px, root.world-x(x) / 1px, root.world-y(y) / 1px);
+                root.erase-item-targets = root.preview-erase-items(root.items, [], root.world-x(x) / 1px,root.world-y(y) / 1px,root.world-x(x) / 1px,root.world-y(y) / 1px);
                 root.erase-preview-active = true;
                 root.tool-active = true;
             }
@@ -913,11 +966,13 @@ export component Launcher inherits Window {
             if root.tool-mode == 1 && root.panning {
                 CanvasState.pan-x = root.pan-origin-x + (x - root.pan-start-x) / 1px * root.canvas-speed;
                 CanvasState.pan-y = root.pan-origin-y + (y - root.pan-start-y) / 1px * root.canvas-speed;
-            } else if root.tool-mode == 2 && root.tool-active {
-                if root.ink-draft.length < 2000 { root.ink-draft.push({ x: root.world-x(x) / 1px, y: root.world-y(y) / 1px }); }
+            } else if (root.tool-mode == 2 || root.tool-mode >= 7) && root.tool-active {
+                if root.tool-mode == 7 { root.ink-draft = [root.ink-draft[0],{ x: root.world-x(x) / 1px, y: root.world-y(y) / 1px }]; }
+                else if root.ink-draft.length < 2000 { if root.tool-mode == 9 && root.ink-draft.length >= 20 { root.ink-draft.remove(0); } root.ink-draft.push({ x: root.world-x(x) / 1px, y: root.world-y(y) / 1px }); }
             } else if root.tool-mode == 3 && root.tool-active && root.erase-draft.length < 2000 {
                 let previous = root.erase-draft[root.erase-draft.length - 1];
                 root.erase-preview = root.preview-erase(root.erase-preview, previous.x, previous.y, root.world-x(x) / 1px, root.world-y(y) / 1px);
+                root.erase-item-targets = root.preview-erase-items(root.items,root.erase-item-targets,previous.x,previous.y,root.world-x(x) / 1px,root.world-y(y) / 1px);
                 root.erase-draft.push({ x: root.world-x(x) / 1px, y: root.world-y(y) / 1px });
             }
         }
@@ -926,9 +981,10 @@ export component Launcher inherits Window {
                 root.panning = false;
                 root.view-dirty = CanvasState.pan-x != root.pan-origin-x || CanvasState.pan-y != root.pan-origin-y;
                 root.flush-canvas();
-            } else if root.tool-mode == 2 && root.tool-active {
+            } else if (root.tool-mode == 2 || root.tool-mode >= 7) && root.tool-active {
+                if root.tool-mode == 9 { laser-timer.restart(); root.tool-active = false; return; }
                 root.busy = true;
-                root.add-ink(root.ink-draft);
+                root.add-ink(root.ink-draft,root.ink-color,root.ink-size,root.ink-opacity,root.tool-mode);
                 root.tool-active = false;
             } else if root.tool-mode == 3 && root.tool-active {
                 root.busy = true;
@@ -947,7 +1003,7 @@ export component Launcher inherits Window {
             if event.button == PointerEventButton.right {
                 root.cancel-drag();
                 root.marquee-active = false;
-                root.group-context-id = "";
+                root.frame-context-id = "";
                 root.canvas-context = index < 0;
                 if index >= 0 && !root.selection-has(root.selected-ids, root.items[index].id) {
                     root.selected-ids = [root.items[index].id];
@@ -1289,6 +1345,7 @@ export component Launcher inherits Window {
     callback run-activated-prefix();
     run-activated-prefix => {
         if root.busy { return; }
+        root.remember-search();
         if root.script-active {
             if root.script-needs-completion(root.search-text, root.script-matches[root.script-selection].name) { root.complete-script(); }
             else { root.launch-script(); }
@@ -1350,14 +1407,46 @@ export component Launcher inherits Window {
     private property <int> shortcut-delete-action: -1;
     private property <string> shortcut-delete-keys;
     private property <int> shortcut-action;
-    private property <[string]> shortcut-actions: ["Focus Search anything", "Close the top layer", "Move left", "Move right", "Move up", "Move down", "Open / Choose", "Next field", "Previous field", "Open Settings", "Delete previous word", "Accept next word", "Undo", "Redo", "Cut", "Copy", "Paste", "Previous Group", "Next Group", "Select", "Hand", "Draw", "Eraser"];
+    private property <[string]> shortcut-actions: ["Focus Search anything", "Close the top layer", "Move left", "Move right", "Move up", "Move down", "Open / Choose", "Next field", "Previous field", "Open Settings", "Delete previous word", "Accept next word", "Undo", "Redo", "Cut", "Copy", "Paste", "Previous Frame", "Next Frame", "Select", "Hand", "Draw", "Eraser"];
     callback save-shortcut(int, string, string);
     callback delete-shortcut(int, string);
     callback shortcut-saved();
     shortcut-saved => { root.shortcut-editor = false; root.shortcut-recording = false; }
-    group-saved => { root.busy = false; root.group-editor = false; root.group-recording = false; root.group-error = ""; root.selected-ids = []; }
-    group-save-failed(error) => { root.busy = false; root.group-error = error; }
+    frame-saved => { root.busy = false; root.frame-editor = false; root.frame-recording = false; root.frame-error = ""; root.selected-ids = []; }
+    frame-save-failed(error) => { root.busy = false; root.frame-error = error; }
     private property <int> search-selection;
+    private property <[string]> search-history: [];
+    private property <int> search-history-index: -1;
+    private property <string> search-history-draft;
+    function remember-search() {
+        if root.search-text != "" && (root.search-history.length == 0 || root.search-history[root.search-history.length - 1] != root.search-text) {
+            if root.search-history.length == 50 { root.search-history.remove(0); }
+            root.search-history.push(root.search-text);
+        }
+        root.search-history-index = -1;
+    }
+    function move-search-history(direction: int) {
+        if root.search-history.length == 0 { return; }
+        if root.search-history-index < 0 {
+            if direction < 0 {
+                root.search-history-draft = root.search-text;
+                root.search-history-index = root.search-history.length - 1;
+            } else { return; }
+        } else if direction > 0 && root.search-history-index + direction >= root.search-history.length {
+            root.search-history-index = -1;
+            root.search-text = root.search-history-draft;
+            root.search(root.search-text);
+            root.search-selection = 0;
+            return;
+        } else {
+            root.search-history-index = clamp(root.search-history-index + direction, 0, root.search-history.length - 1);
+        }
+        root.search-text = root.search-history[root.search-history-index];
+        root.search(root.search-text);
+        root.search-selection = 0;
+        root.search-hover = -1;
+        root.search-offset = 0px;
+    }
     private property <int> search-hover: -1;
     private property <int> search-detail-index: search-hover >= 0 && search-hover < root.search-results.length ? search-hover : search-selection;
     private property <string> search-detail: search-detail-index >= 0 && search-detail-index < root.search-results.length ? (root.search-results[search-detail-index].path != "" ? root.search-results[search-detail-index].path : root.search-results[search-detail-index].url != "" ? root.search-results[search-detail-index].url : root.search-results[search-detail-index].command) : "";
@@ -1413,6 +1502,8 @@ export component Launcher inherits Window {
     private property <int> search-path-index: -1;
     private property <string> search-path-draft;
     callback search(string);
+    callback navigate-search-history(int);
+    navigate-search-history(direction) => { root.move-search-history(direction); }
     callback save-search-path(bool, int, string);
     callback delete-search-path(bool, int);
     callback finish-search-path-save();
@@ -1993,19 +2084,19 @@ export component Launcher inherits Window {
         root.clear-ai();
         root.search-context = false;
         root.canvas-context = false;
-        root.group-context-id = "";
+        root.frame-context-id = "";
         root.selected-ids = [];
         root.tool-mode = 0;
         root.marquee-active = false;
         root.ink-draft = [];
         root.erase-draft = [];
         root.tool-active = false;
-        root.group-editor = false;
-        root.group-recording = false;
-        root.group-edit-id = "";
-        root.group-name-draft = "";
-        root.group-keys-draft = "";
-        root.group-error = "";
+        root.frame-editor = false; root.annotation-editor = false;
+        root.frame-recording = false;
+        root.frame-edit-id = "";
+        root.frame-name-draft = "";
+        root.frame-keys-draft = "";
+        root.frame-error = "";
         root.placing-widget = -1; root.widget-placement-target = false;
         if root.folder-open { root.close-folder(); }
         root.cancel-drag();
@@ -2045,11 +2136,12 @@ export component Launcher inherits Window {
         if AzanSettings.widget-id != "" { AzanSettings.close(); return; }
         if root.search-context { root.search-context = false; return; }
         if root.canvas-context { root.canvas-context = false; return; }
-        if root.group-context-id != "" { root.group-context-id = ""; return; }
+        if root.frame-context-id != "" { root.frame-context-id = ""; return; }
         if root.ticktick-confirm-delete { root.ticktick-confirm-delete = false; return; }
         if root.ticktick-open { root.ticktick-open = false; root.ticktick-edit-id = ""; return; }
         if root.placing-widget >= 0 { root.placing-widget = -1; root.widget-placement-target = false; return; }
-        else if root.group-editor { root.group-editor = false; root.group-recording = false; }
+        else if root.annotation-editor { root.annotation-editor = false; }
+        else if root.frame-editor { root.frame-editor = false; root.frame-recording = false; }
         else if root.shortcut-editor { root.shortcut-editor = false; root.shortcut-recording = false; }
         else if root.drag-index >= 0 { root.cancel-drag(); }
         else if root.picker { root.icon-session += 1; root.icon-busy = false; root.picker = false;  }
@@ -2254,7 +2346,7 @@ export component Launcher inherits Window {
         visible: root.home-visible;
         background: Theme.canvas-surface;
         canvas-input := TouchArea {
-            enabled: !root.busy && !root.folder-open && !root.sheet && !root.alert && !root.picker && !root.settings && !root.ticktick-open && !root.group-editor && root.ticktick-popup-widget-id == "";
+            enabled: !root.busy && !root.folder-open && !root.sheet && !root.alert && !root.picker && !root.settings && !root.ticktick-open && !root.frame-editor && !root.annotation-editor && root.ticktick-popup-widget-id == "";
             mouse-cursor: root.panning ? grabbing : root.tool-mode == 1 ? grab : default;
             scroll-event(event) => {
                 if root.dragging || root.panning { return accept; }
@@ -2279,7 +2371,7 @@ export component Launcher inherits Window {
                 y: canvas-world.display-items[index].row * 1px + root.grid-gap * 0.5px;
                 width: index < canvas-world.display-items.length ? canvas-world.display-items[index].span-x * 1px - root.grid-gap * 1px : root.item-size * 1px;
                 height: index < canvas-world.display-items.length ? canvas-world.display-items[index].span-y * 1px - root.grid-gap * 1px : root.item-size * 1px;
-                opacity: self.source-here ? 0.2 : 1;
+                opacity: self.source-here || root.selection-has(root.erase-item-targets,canvas-world.display-items[index].id) ? 0.2 : 1;
                 items: canvas-world.display-items; index: index;
                 property <length> header-pointer-x: (canvas-input.mouse-x / 1px - CanvasState.pan-x) / CanvasState.zoom * 1px - self.x;
                 property <length> header-pointer-y: (canvas-input.mouse-y / 1px - CanvasState.pan-y) / CanvasState.zoom * 1px - self.y;
@@ -2343,15 +2435,17 @@ export component Launcher inherits Window {
                 x: stroke.x * 1px; y: stroke.y * 1px; fit: preserve;
                 width: stroke.width * 1px; height: stroke.height * 1px;
                 commands: stroke.path;
-                fill: transparent; stroke: Theme.ink; stroke-width: 2.5px;
+                fill: transparent; stroke: stroke.color; stroke-width: stroke.size * 1px;
+                opacity: stroke.opacity * (stroke.dimmed ? 0.2 : 1);
                 stroke-line-cap: round; stroke-line-join: round;
             }
             if root.ink-draft.length > 0: Path {
-                property <CanvasInk> draft: root.ink-view(root.ink-draft, root.ink-draft.length);
+                property <CanvasInk> draft: root.ink-view(root.ink-draft, root.ink-draft.length, root.tool-mode, root.ink-size);
                 x: draft.x * 1px; y: draft.y * 1px; fit: preserve;
                 width: draft.width * 1px; height: draft.height * 1px;
                 commands: draft.path;
-                fill: transparent; stroke: Theme.ink; stroke-width: 2.5px;
+                fill: transparent; stroke: root.tool-mode == 9 ? #ff3b30 : root.ink-color-value; stroke-width: root.ink-size * (root.tool-mode == 8 ? 4px : 1px);
+                opacity: root.ink-opacity * (root.tool-mode == 8 ? 0.35 : 1);
                 stroke-line-cap: round; stroke-line-join: round;
             }
             if root.drag-on-canvas && !root.resizing && root.merge-target < 0 && !root.on-dock: Rectangle {
@@ -2380,13 +2474,13 @@ export component Launcher inherits Window {
             background: Theme.selection.with-alpha(0.10);
             border-width: 1px; border-color: Theme.selection-border; border-radius: 4px;
         }
-        for group in root.groups: Rectangle {
-            x: (CanvasState.pan-x + group.x * CanvasState.zoom) * 1px;
-            y: (CanvasState.pan-y + group.y * CanvasState.zoom) * 1px;
-            width: group.width * CanvasState.zoom * 1px;
-            height: group.height * CanvasState.zoom * 1px;
+        for frame in root.frames: Rectangle {
+            x: (CanvasState.pan-x + frame.x * CanvasState.zoom) * 1px;
+            y: (CanvasState.pan-y + frame.y * CanvasState.zoom) * 1px;
+            width: frame.width * CanvasState.zoom * 1px;
+            height: frame.height * CanvasState.zoom * 1px;
             background: transparent;
-            border-width: 1px; border-color: Theme.group-border; border-radius: 12px;
+            border-width: 1px; border-color: Theme.frame-border; border-radius: 12px;
         }
         if root.home-visible && root.tool-mode != 0: Rectangle {
             width: parent.width; height: parent.height;
@@ -2408,52 +2502,112 @@ export component Launcher inherits Window {
                 border-width: 1px; border-color: Theme.eraser-border;
             }
         }
-        for group in root.groups: Rectangle {
-            x: (CanvasState.pan-x + group.x * CanvasState.zoom) * 1px;
-            y: (CanvasState.pan-y + group.y * CanvasState.zoom) * 1px - 34px;
-            width: min(280px,max(72px,(group.name.character-count + (group.keys == "" ? 0 : group.keys.character-count + 2)) * 8px + 28px));
+        for frame in root.frames: Rectangle {
+            x: (CanvasState.pan-x + frame.x * CanvasState.zoom) * 1px;
+            y: (CanvasState.pan-y + frame.y * CanvasState.zoom) * 1px - 34px;
+            width: min(280px,max(72px,(frame.name.character-count + (frame.keys == "" ? 0 : frame.keys.character-count + 2)) * 8px + 28px));
             height: 28px;
-            background: Theme.group-chip;
-            border-width: 1px; border-color: Theme.group-border; border-radius: 8px;
+            background: Theme.frame-chip;
+            border-width: 1px; border-color: Theme.frame-border; border-radius: 8px;
             OrbitText {
                 x: 10px; width: parent.width - 20px; height: parent.height;
-                text: group.keys == "" ? group.name : group.name + "   " + group.keys;
+                text: frame.keys == "" ? frame.name : frame.name + "   " + frame.keys;
                 color: Theme.text; font-size: Theme.type-hint; font-weight: 600;
-                horizontal-alignment: root.text-is-rtl(group.name) ? right : left; vertical-alignment: center; overflow: elide;
+                horizontal-alignment: root.text-is-rtl(frame.name) ? right : left; vertical-alignment: center; overflow: elide;
             }
-            group-label-touch := TouchArea {
+            frame-label-touch := TouchArea {
                 mouse-cursor: pointer;
-                clicked => { root.fit-group-view(group.id); }
+                clicked => { root.fit-frame-view(frame.id); }
                 pointer-event(event) => {
                     if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
                         root.context-x = self.absolute-position.x + self.mouse-x;
                         root.context-y = self.absolute-position.y + self.mouse-y;
-                        root.group-context-id = group.id;
+                        root.frame-context-id = frame.id;
                         root.canvas-context = false; root.context-index = -1; root.dock-context = "";
                     }
                 }
             }
         }
     }
-    if root.home-visible && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.group-editor: Rectangle {
+    if root.home-visible && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.frame-editor && !root.annotation-editor: Rectangle {
         x: 16px; y: (root.height - self.height) / 2;
-        width: 48px; height: 184px;
+        width: 48px; height: min(root.height - 180px, 448px);
         background: Theme.dock-surface;
         border-width: 1px; border-color: Theme.dock-border; border-radius: 16px;
-        for index in 4: Rectangle {
+        for index in 10: Rectangle {
             x: 4px; y: 4px + index * 44px; width: 40px; height: 40px;
             border-radius: 10px;
             background: root.tool-mode == index ? Theme.selection : tool-touch.has-hover ? Theme.hover-overlay : transparent;
             accessible-role: button;
-            accessible-label: index == 0 ? "Select" : index == 1 ? "Hand" : index == 2 ? "Draw" : "Eraser";
+            accessible-label: index == 0 ? "Select" : index == 1 ? "Hand" : index == 2 ? "Draw" : index == 3 ? "Eraser" : index == 4 ? "Note" : index == 5 ? "Text" : index == 6 ? "Image" : index == 7 ? "Arrow" : index == 8 ? "Highlighter" : "Laser";
             accessible-action-default => { root.set-tool(index); }
-            Image {
+            if index >= 4: OrbitText { text: index == 4 ? "▣" : index == 5 ? "T" : index == 6 ? "▧" : index == 7 ? "↗" : index == 8 ? "▰" : "⌁"; color: Theme.text; font-size: 22px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+            if index < 4: Image {
                 x: 10px; y: 10px; width: 20px; height: 20px;
                 source: index == 0 ? @image-url("assets/tool-select.svg") : index == 1 ? @image-url("assets/tool-hand.svg") : index == 2 ? @image-url("assets/tool-draw.svg") : @image-url("assets/tool-eraser.svg");
             }
             tool-touch := TouchArea {
                 mouse-cursor: pointer;
                 clicked => { root.set-tool(index); }
+            }
+            if tool-touch.has-hover: Rectangle {
+                x: 48px; y: 4px; width: 112px; height: 32px; background: Theme.sheet; border-radius: Theme.radius-control;
+                OrbitText { x: 10px; width: parent.width - 20px; height: parent.height; color: Theme.text; font-size: Theme.type-control; vertical-alignment: center;
+                    text: index == 0 ? "Select" : index == 1 ? "Hand" : index == 2 ? "Draw" : index == 3 ? "Eraser" : index == 4 ? "Note" : index == 5 ? "Text" : index == 6 ? "Image" : index == 7 ? "Arrow" : index == 8 ? "Highlighter" : "Laser";
+                }
+            }
+        }
+    }
+    if root.home-visible && !root.settings && !root.sheet && !root.alert && !root.folder-open && !root.frame-editor && !root.annotation-editor && root.tool-mode != 1 && root.tool-mode != 3 && root.tool-mode != 9: Rectangle {
+        x: root.width - self.width - 16px; y: 104px;
+        width: 180px; height: root.selected-ids.length > 0 ? 260px : 216px;
+        background: Theme.dock-surface; border-radius: Theme.radius-control;
+        border-width: Theme.border-width; border-color: Theme.border;
+        for swatch[index] in [
+            { value: #e8e5ef, name: "White", code: "#e8e5ef" }, { value: #9fa8b2, name: "Gray", code: "#9fa8b2" },
+            { value: #e599f7, name: "Light violet", code: "#e599f7" }, { value: #ae3ec9, name: "Violet", code: "#ae3ec9" },
+            { value: #4263eb, name: "Blue", code: "#4263eb" }, { value: #4dabf7, name: "Light blue", code: "#4dabf7" },
+            { value: #ffc078, name: "Light orange", code: "#ffc078" }, { value: #f76707, name: "Orange", code: "#f76707" },
+            { value: #099268, name: "Green", code: "#099268" }, { value: #40c057, name: "Light green", code: "#40c057" },
+            { value: #ff8787, name: "Light red", code: "#ff8787" }, { value: #e03131, name: "Red", code: "#e03131" }
+        ]: Rectangle {
+            x: 12px + mod(index,4) * 42px; y: 12px + floor(index/4) * 34px; width: 30px; height: 30px;
+            border-radius: 15px; border-width: root.ink-color == swatch.code ? 2px : 0px; border-color: Theme.text;
+            Rectangle { x: 5px; y: 5px; width: 20px; height: 20px; border-radius: 10px; background: swatch.value; }
+            accessible-role: button; accessible-label: swatch.name;
+            accessible-action-default => { root.ink-color = swatch.code; root.ink-color-value = swatch.value; }
+            TouchArea { mouse-cursor: pointer; clicked => { root.ink-color = swatch.code; root.ink-color-value = swatch.value; } }
+        }
+        OrbitText { x: 12px; y: 117px; width: 156px; height: 20px; text: "Opacity  " + round(root.ink-opacity * 100) + "%"; color: Theme.text; font-size: Theme.type-hint; }
+        Slider { x: 12px; y: 140px; width: 156px; height: 24px; minimum: 10; maximum: 100; value: root.ink-opacity * 100; changed(value) => { root.ink-opacity = value / 100; } }
+        for size[index] in [18,24,36,44]: SettingsButton {
+            x: 8px + index * 42px; y: 172px; option-width: 38px; height: 32px;
+            label: index == 0 ? "S" : index == 1 ? "M" : index == 2 ? "L" : "XL";
+            primary: root.text-size == size;
+            accessible-label: "Size " + size;
+            clicked => { root.text-size = size; root.ink-size = index == 0 ? 1.5 : index == 1 ? 2.5 : index == 2 ? 4 : 6; canvas-focus.focus(); }
+        }
+        if root.selected-ids.length > 0: SettingsButton {
+            x: 12px; y: 216px; option-width: 156px; height: 32px; label: "Apply to selection"; enabled: !root.layout-locked;
+            clicked => { root.style-selection(root.selected-ids,root.ink-color,root.text-size,root.ink-opacity); canvas-focus.focus(); }
+        }
+    }
+    if root.annotation-editor: Rectangle {
+        width: root.width; height: root.height; background: Theme.backdrop;
+        TouchArea { clicked => { root.annotation-editor = false; } }
+        Panel {
+            x: (parent.width - self.width)/2; y: (parent.height - self.height)/2;
+            width: min(520px,parent.width - 48px); height: min(400px,parent.height - 48px);
+            VerticalLayout { padding: 24px; spacing: 16px;
+                SettingsTitle { text: root.annotation-kind == 1 ? "Note" : "Text"; }
+                SettingsField { text <=> root.annotation-text; multiline: true; accept-newlines: true; autofocus: true; multiline-height: 190px; label: "Content"; placeholder: "Write here"; error: root.annotation-error; }
+                HorizontalLayout {
+                    SettingsButton { label: "Cancel"; clicked => { root.annotation-editor = false; } }
+                    Rectangle { horizontal-stretch: 1; }
+                    SettingsButton { label: "Save"; primary: true; enabled: root.annotation-text != "" && !root.busy; clicked => {
+                        root.busy = true; root.save-annotation(root.annotation-id,root.annotation-text,root.annotation-kind,root.ink-color,root.text-size,root.ink-opacity,root.annotation-x,root.annotation-y);
+                    } }
+                }
             }
         }
     }
@@ -2515,7 +2669,7 @@ export component Launcher inherits Window {
                         search-scroll.content-y = max(search-scroll.height - search-scroll.content-height, search-scroll.height - Theme.search-cursor-inset - self.y - point.y - root.search-cursor-height);
                     }
                 }
-                edited => { KeyboardNavigation.list-focused = false; root.search-selection = 0; root.search-hover = -1; root.search-offset = 0px; if !root.ai-active { root.search(self.text); } }
+                edited => { root.search-history-index = -1; KeyboardNavigation.list-focused = false; root.search-selection = 0; root.search-hover = -1; root.search-offset = 0px; if !root.ai-active { root.search(self.text); } }
                 accepted => { if self.text != "" || root.activated-prefix-id != "" { root.run-activated-prefix(); } }
                 key-pressed(event) => {
                     if event.text == Key.Backspace && self.text == "" && root.activated-prefix-id != "" {
@@ -2563,7 +2717,7 @@ export component Launcher inherits Window {
         if root.activated-prefix-name != "": Rectangle {
             x: 45px; y: (Theme.search-min-height - self.height) / 2; width: root.activated-prefix-width; height: 28px;
             background: Theme.search-prefix-background; border-width: Theme.border-width; border-color: Theme.search-focus-border; border-radius: Theme.radius-control;
-            prefix-badge-label := OrbitText { x: 6px; width: parent.width - 12px; height: parent.height; text: root.activated-prefix-name; accessible-label: root.activated-prefix-name; color: Theme.focus; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+            prefix-badge-label := OrbitText { x: 6px; width: parent.width - 12px; height: parent.height; text: root.activated-prefix-name; accessible-label: root.activated-prefix-name; color: Theme.focus; font-size: 11px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
         }
         search-hint := Kbd {
             x: parent.width - self.width - Theme.search-padding;
@@ -2738,7 +2892,7 @@ export component Launcher inherits Window {
                 height: parent.height;
                 text: root.dock-hovered-name;
                 color: #171A29;
-                font-size: 13px;
+                font-size: 13px * Theme.font-scale;
                 font-weight: 500;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -2814,7 +2968,7 @@ export component Launcher inherits Window {
             if item.source < 0: OrbitText {
                 y: 126px; width: parent.width; height: 18px;
                 text: item.source == -5 ? (index == 0 ? "Default search engine" : "Search engine") : item.source == -1 ? "Actions" : item.source == -2 ? "Installed apps" : item.source == -3 ? "File" : "Directory";
-                color: Theme.secondary; font-size: 11px; horizontal-alignment: center;
+                color: Theme.secondary; font-size: 11px * Theme.font-scale; horizontal-alignment: center;
             }
             if item.path != "" || item.url != "" || item.command != "": OrbitText {
                 x: Theme.space-2; y: 144px; width: parent.width - 2 * Theme.space-2; height: 28px;
@@ -3017,7 +3171,7 @@ export component Launcher inherits Window {
         VerticalLayout {
             x: 16px; y: 28px; width: root.settings-sidebar-width - 32px; height: parent.height - 48px;
             spacing: 4px;
-            OrbitText { text: "Settings"; color: Theme.settings-text; font-size: 22px; font-weight: 600; height: 46px; }
+            OrbitText { text: "Settings"; color: Theme.settings-text; font-size: 22px * Theme.font-scale; font-weight: 600; height: 46px; }
             SettingsNav { label: "General"; icon: @image-url("assets/settings.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 0; clicked => { root.settings-tab = 0; root.shortcuts-tab = false; root.shortcut-recording = false; } }
             SettingsNav { label: "Robots"; icon: @image-url("assets/robot.svg"); icon-present: true; available-width: parent.width; clicked => { RobotWorkbench.adding = false; RobotWorkbench.section = 0; RobotWorkbench.refresh-skills(); RobotWorkbench.open("", true); } }
             SettingsNav { label: "Appearance"; icon: @image-url("assets/settings.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 8; clicked => { root.settings-tab = 8; root.shortcuts-tab = false; root.shortcut-recording = false; } }
@@ -3209,11 +3363,11 @@ export component Launcher inherits Window {
             }
             if root.settings-tab == 0: Rectangle {
                 property <bool> stacked: (root.settings-content-width) < 900px;
-                height: self.stacked ? 1040px : max(520px, root.height - 416px);
+                height: self.stacked ? 1160px : max(580px, root.height - 416px);
                 SettingsCard {
                     x: 0px; y: 0px;
                     width: parent.stacked ? parent.width : (parent.width - 20px) * 1.3 / 2.3;
-                    height: parent.stacked ? 520px : parent.height;
+                    height: parent.stacked ? 580px : parent.height;
                     VerticalLayout {
                         padding: 22px; spacing: 20px;
                         SettingsTitle { text: "Home screen"; }
@@ -3232,7 +3386,12 @@ export component Launcher inherits Window {
                             SettingsStepper { enabled: !root.layout-locked; label: "Item size"; value <=> root.item-size; minimum: 80; maximum: 176; step: 8; }
                         }
                         HorizontalLayout { spacing: 10px;
-                            SettingsButton { label: "Reset to default"; option-width: 160px; enabled: !root.layout-locked; clicked => { root.item-size = 128; root.grid-gap = 16; root.canvas-speed = 5; } }
+                            SettingsDescription { text: "Font size (px)"; vertical-alignment: center; }
+                            SettingsStepper { label: "Font size"; value <=> root.font-size; minimum: 10; maximum: 24; }
+                            SettingsButton { label: "Save font"; option-width: max(96px, 96px * Theme.font-scale); clicked => { root.save-font-size(root.font-size); } }
+                        }
+                        HorizontalLayout { spacing: 10px;
+                            SettingsButton { label: "Reset to default"; option-width: 160px; enabled: !root.layout-locked; clicked => { root.item-size = 128; root.grid-gap = 16; root.canvas-speed = 5; root.font-size = 12; root.save-font-size(12); } }
                             SettingsButton { label: "Save"; primary: true; enabled: !root.layout-locked && !root.busy; clicked => { root.busy = true; root.save-appearance(root.item-size, root.grid-gap, root.canvas-speed); } }
                             Rectangle { horizontal-stretch: 1; }
                         }
@@ -3252,13 +3411,13 @@ export component Launcher inherits Window {
                 }
                 VerticalLayout {
                     x: parent.stacked ? 0px : (parent.width - 20px) * 1.3 / 2.3 + 20px;
-                    y: parent.stacked ? 540px : 0px;
+                    y: parent.stacked ? 600px : 0px;
                     width: parent.stacked ? parent.width : (parent.width - 20px) / 2.3;
                     height: parent.stacked ? 500px : parent.height;
                     spacing: 20px;
                     SettingsCard {
-                        height: 256px;
-                        VerticalLayout { padding: 22px; spacing: 14px;
+                        height: max(256px, account-content.preferred-height);
+                        account-content := VerticalLayout { padding: 22px; spacing: 14px;
                             HorizontalLayout {
                                 SettingsTitle { text: "TickTick account"; }
                                 Rectangle { horizontal-stretch: 1; }
@@ -3523,18 +3682,18 @@ export component Launcher inherits Window {
                         spacing: 0px;
                         for column in root.shortcut-columns: VerticalLayout {
                             spacing: 0px; alignment: start;
-                            for group[index] in root.shortcut-groups: Rectangle {
+                            for frame[index] in root.shortcut-groups: Rectangle {
                                 visible: mod(index, root.shortcut-columns) == column;
                                 property <length> row-width: ((root.settings-content-width) / root.shortcut-columns);
                                 property <length> name-width: min(190px, self.row-width * 0.35);
                                 property <length> keys-width: self.row-width - self.name-width - 120px;
                                 property <int> key-columns: max(1, floor((self.keys-width + 6px) / 140px));
-                                height: mod(index, root.shortcut-columns) != column ? 0px : max(56px, ceil(group.entries.length / self.key-columns) * 34px + 22px);
+                                height: mod(index, root.shortcut-columns) != column ? 0px : max(56px, ceil(frame.entries.length / self.key-columns) * 34px + 22px);
                                 width: self.row-width;
                                 Rectangle { y: parent.height - 1px; height: 1px; width: parent.width; background: Theme.settings-border-card; }
-                                SettingsTitle { x: 20px; width: parent.name-width; height: parent.height; text: root.shortcut-actions[group.action >= 12 ? group.action - 2 : group.action]; font-size: Theme.type-body; wrap: word-wrap; vertical-alignment: center; }
-                                if group.entries.length == 0: SettingsDescription { x: 32px + parent.name-width; width: parent.keys-width; height: parent.height; text: "No shortcut assigned"; font-italic: true; color: Theme.settings-text-none; vertical-alignment: center; }
-                                for binding[key-index] in group.entries: SettingsChip {
+                                SettingsTitle { x: 20px; width: parent.name-width; height: parent.height; text: root.shortcut-actions[frame.action >= 12 ? frame.action - 2 : frame.action]; font-size: Theme.type-body; wrap: word-wrap; vertical-alignment: center; }
+                                if frame.entries.length == 0: SettingsDescription { x: 32px + parent.name-width; width: parent.keys-width; height: parent.height; text: "No shortcut assigned"; font-italic: true; color: Theme.settings-text-none; vertical-alignment: center; }
+                                for binding[key-index] in frame.entries: SettingsChip {
                                     x: 32px + parent.name-width + mod(key-index, parent.key-columns) * (parent.keys-width + 6px) / parent.key-columns;
                                     y: 12px + floor(key-index / parent.key-columns) * 34px;
                                     width: (parent.keys-width + 6px) / parent.key-columns - 6px;
@@ -3548,7 +3707,7 @@ export component Launcher inherits Window {
                                         } else { root.shortcut-delete-action = binding.action; root.shortcut-delete-keys = binding.keys; }
                                     }
                                 }
-                                SettingsButton { x: parent.width - 80px; y: 11px; label: "Add"; option-width: 60px; height: 34px; enabled: !root.busy; clicked => { root.shortcut-action = group.action >= 12 ? group.action - 2 : group.action; root.shortcut-existing = ""; root.shortcut-draft = ""; root.shortcut-editor = true; } }
+                                SettingsButton { x: parent.width - 80px; y: 11px; label: "Add"; option-width: 60px; height: 34px; enabled: !root.busy; clicked => { root.shortcut-action = frame.action >= 12 ? frame.action - 2 : frame.action; root.shortcut-existing = ""; root.shortcut-draft = ""; root.shortcut-editor = true; } }
                             }
                         }
                     }
@@ -3576,7 +3735,7 @@ export component Launcher inherits Window {
                         width: (parent.width - (root.action-columns - 1) * 12px) / root.action-columns;
                         height: 92px;
 
-                        OrbitText { x: 12px; y: 8px; width: parent.width - 112px; height: 24px; text: prefix.name; color: Theme.settings-text; font-size: 15px; font-weight: 500; overflow: elide; }
+                        OrbitText { x: 12px; y: 8px; width: parent.width - 112px; height: 24px; text: prefix.name; color: Theme.settings-text; font-size: 15px * Theme.font-scale; font-weight: 500; overflow: elide; }
                         OrbitText { x: 12px; y: 34px; width: parent.width - 112px; height: 20px; font-family: "monospace"; text: "\u{2066}" + prefix.token + "  →  " + prefix.action-name + "\u{2069}"; color: Theme.settings-text-accent; font-size: Theme.type-control; overflow: elide; }
                         HorizontalLayout {
                             x: parent.width - 90px; y: 10px; spacing: 6px;
@@ -3645,9 +3804,9 @@ export component Launcher inherits Window {
                         border-width: action-focus.has-focus ? 2px : 1px;
                         border-color: action-focus.has-focus ? Theme.settings-icon-accent : Theme.settings-border-card;
                         border-radius: Theme.settings-r-card;
-                        OrbitText { x: 14px; y: 14px; width: parent.width - 110px; height: 24px; text: action.name; color: Theme.settings-text; font-size: 15px; font-weight: 600; wrap: word-wrap; vertical-alignment: center; }
+                        OrbitText { x: 14px; y: 14px; width: parent.width - 110px; height: 24px; text: action.name; color: Theme.settings-text; font-size: 15px * Theme.font-scale; font-weight: 600; wrap: word-wrap; vertical-alignment: center; }
                         Rectangle { x: parent.width - 86px; y: 14px; width: 72px; height: 22px; background: Theme.settings-bg-nav-active; border-radius: Theme.settings-r-kbd;
-                            OrbitText { text: action.kind; color: Theme.settings-text-kbd; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
+                            OrbitText { text: action.kind; color: Theme.settings-text-kbd; font-size: 11px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
                         }
                         OrbitText { x: 14px; y: 46px; width: parent.width - 28px; height: 18px; font-family: "monospace"; text: action.tokens == "" ? "" : "Tokens · " + action.tokens; color: Theme.settings-text-accent; font-size: Theme.type-control; overflow: elide; }
                         OrbitText { x: 14px; y: 72px; width: parent.width - 28px; height: 42px; text: action.description; color: Theme.settings-text-muted; font-size: Theme.type-control; wrap: word-wrap; overflow: elide; }
@@ -3857,12 +4016,12 @@ export component Launcher inherits Window {
             }
         }
     }
-    if root.canvas-context || root.context-index >= 0 || root.dock-context != "" || root.group-context-id != "": Rectangle {
+    if root.canvas-context || root.context-index >= 0 || root.dock-context != "" || root.frame-context-id != "": Rectangle {
         width: root.width; height: root.height;
         background: transparent;
         TouchArea {
-            clicked => { root.canvas-context = false; root.context-index = -1; root.dock-context = ""; root.context-id = ""; root.group-context-id = ""; }
-            pointer-event(event) => { if event.button == PointerEventButton.right && event.kind == PointerEventKind.down { root.canvas-context = false; root.context-index = -1; root.dock-context = ""; root.context-id = ""; root.group-context-id = ""; } }
+            clicked => { root.canvas-context = false; root.context-index = -1; root.dock-context = ""; root.context-id = ""; root.frame-context-id = ""; }
+            pointer-event(event) => { if event.button == PointerEventButton.right && event.kind == PointerEventKind.down { root.canvas-context = false; root.context-index = -1; root.dock-context = ""; root.context-id = ""; root.frame-context-id = ""; } }
         }
         Rectangle {
             x: max(0px, min(root.context-x, parent.width - self.width));
@@ -3874,10 +4033,10 @@ export component Launcher inherits Window {
             drop-shadow-offset-y: 8px;
             context-options := VerticalLayout {
                 padding: 8px; spacing: 4px;
-                if root.group-context-id != "": MenuOption { width: 184px; label: "Fit Group"; clicked => { root.fit-group-view(root.group-context-id); } }
-                if root.group-context-id != "": MenuOption { width: 184px; label: "Edit Group"; enabled: !root.layout-locked; clicked => { root.open-group-editor(root.group-context-id); } }
-                if root.group-context-id != "": MenuOption { width: 184px; label: "Delete Group"; destructive: true; enabled: !root.layout-locked; clicked => { root.delete-group(root.group-context-id); root.group-context-id = ""; } }
-                if (root.canvas-context || root.context-index >= 0) && root.selected-ids.length > 0: MenuOption { width: 184px; label: "New Group"; enabled: !root.layout-locked; clicked => { root.open-group-editor(""); } }
+                if root.frame-context-id != "": MenuOption { width: 184px; label: "Fit Frame"; clicked => { root.fit-frame-view(root.frame-context-id); } }
+                if root.frame-context-id != "": MenuOption { width: 184px; label: "Edit Frame"; enabled: !root.layout-locked; clicked => { root.open-frame-editor(root.frame-context-id); } }
+                if root.frame-context-id != "": MenuOption { width: 184px; label: "Delete Frame"; destructive: true; enabled: !root.layout-locked; clicked => { root.delete-frame(root.frame-context-id); root.frame-context-id = ""; } }
+                if (root.canvas-context || root.context-index >= 0) && root.selected-ids.length > 0: MenuOption { width: 184px; label: "New Frame"; enabled: !root.layout-locked; clicked => { root.open-frame-editor(""); } }
                 if root.canvas-context: MenuOption { width: 184px; label: "Add item"; enabled: !root.layout-locked; clicked => { root.add-item("App"); } }
                 if root.canvas-context: MenuOption { width: 184px; label: "Show all items"; clicked => { root.flush-canvas(); root.show-all-items(root.width / 1px,root.height / 1px); root.canvas-context = false; } }
                 if root.canvas-context: MenuOption { width: 184px; label: "Undo"; enabled: root.can-undo && !root.layout-locked; clicked => { root.canvas-command(0); } }
@@ -3901,10 +4060,15 @@ export component Launcher inherits Window {
                     enabled: !root.layout-locked && (root.items[root.context-index].span-x > root.items[root.context-index].min-span-x || root.items[root.context-index].span-y > root.items[root.context-index].min-span-y)
                         && root.preview-valid(root.items,root.items[root.context-index].id,root.items[root.context-index].col,root.items[root.context-index].row,max(root.items[root.context-index].min-span-x,root.items[root.context-index].span-x - 1),max(root.items[root.context-index].min-span-y,root.items[root.context-index].span-y - 1));
                     clicked => { root.busy = true; root.widget-action(root.items[root.context-index].id,max(root.items[root.context-index].min-span-x,root.items[root.context-index].span-x - 1),max(root.items[root.context-index].min-span-y,root.items[root.context-index].span-y - 1)); root.context-index = -1; } }
-                if root.context-index >= 0 && !root.items[root.context-index].widget: MenuOption { width: 184px; label: root.items[root.context-index].folder ? "Rename" : "Edit"; enabled: !root.layout-locked; clicked => {
+                if root.context-index >= 0 && root.items[root.context-index].annotation > 0 && root.items[root.context-index].annotation != 3: MenuOption { width: 184px; label: "Edit"; enabled: !root.layout-locked; clicked => {
+                    let item = root.items[root.context-index]; root.annotation-id = item.id; root.annotation-text = item.name; root.annotation-kind = item.annotation;
+                    root.text-size = item.annotation-size; root.ink-opacity = item.annotation-opacity; root.ink-color-value = item.annotation-color; root.ink-color = item.annotation-color-name;
+                    root.annotation-editor = true; root.context-index = -1;
+                } }
+                if root.context-index >= 0 && !root.items[root.context-index].widget && root.items[root.context-index].annotation == 0: MenuOption { width: 184px; label: root.items[root.context-index].folder ? "Rename" : "Edit"; enabled: !root.layout-locked; clicked => {
                     root.edit-item(root.context-index);
                 } }
-                if root.context-index >= 0 && !root.items[root.context-index].widget: MenuOption { width: 184px; label: root.items[root.context-index].pinned ? "Unpin" : "Pin"; enabled: !root.layout-locked; clicked => { root.busy = true; root.pin-item(root.items[root.context-index].id); root.context-index = -1; } }
+                if root.context-index >= 0 && !root.items[root.context-index].widget && root.items[root.context-index].annotation == 0: MenuOption { width: 184px; label: root.items[root.context-index].pinned ? "Unpin" : "Pin"; enabled: !root.layout-locked; clicked => { root.busy = true; root.pin-item(root.items[root.context-index].id); root.context-index = -1; } }
                 if root.context-index >= 0: MenuOption { width: 184px; label: "Delete"; destructive: true; enabled: !root.layout-locked; clicked => {
                     root.editing = root.context-index;
                     root.editing-id = root.items[root.context-index].id;
@@ -3918,10 +4082,10 @@ export component Launcher inherits Window {
             }
         }
     }
-    if root.group-editor: Rectangle {
+    if root.frame-editor: Rectangle {
         width: root.width; height: root.height;
         background: Theme.backdrop;
-        TouchArea { clicked => { root.group-editor = false; root.group-recording = false; } }
+        TouchArea { clicked => { root.frame-editor = false; root.frame-recording = false; } }
         Panel {
             x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
             width: min(440px, parent.width - 32px); height: min(380px, parent.height - 32px);
@@ -3935,35 +4099,35 @@ export component Launcher inherits Window {
                 HorizontalLayout {
                     spacing: 8px;
                     OrbitText {
-                        text: root.group-edit-id == "" ? "New Group" : "Edit Group";
+                        text: root.frame-edit-id == "" ? "New Frame" : "Edit Frame";
                         color: Theme.text; font-size: Theme.type-title; font-weight: 600;
                         vertical-alignment: center; horizontal-stretch: 1;
                     }
-                    SettingsButton { label: "×"; option-width: 40px; height: 36px; accessible-label: "Close Group editor"; clicked => { root.group-editor = false; root.group-recording = false; } }
+                    SettingsButton { label: "×"; option-width: 40px; height: 36px; accessible-label: "Close Frame editor"; clicked => { root.frame-editor = false; root.frame-recording = false; } }
                 }
                 OrbitText {
-                    text: root.group-member-count() == 1 ? "1 item · its shortcut fits this item on screen." : root.group-member-count() + " items · its shortcut fits them on screen.";
+                    text: root.frame-member-count() == 1 ? "1 item · its shortcut fits this item on screen." : root.frame-member-count() + " items · its shortcut fits them on screen.";
                     color: Theme.secondary; font-size: Theme.type-control;
                 }
                 SettingsField {
                     label: "Name"; placeholder: "Work"; autofocus: true;
-                    text <=> root.group-name-draft;
-                    error: root.group-error;
-                    enabled: !root.busy && !root.group-recording;
-                    accepted => { if root.group-name-draft != "" && !root.group-recording { root.busy = true; root.save-group(root.group-edit-id,root.group-name-draft,root.group-keys-draft,root.selected-ids); } }
+                    text <=> root.frame-name-draft;
+                    error: root.frame-error;
+                    enabled: !root.busy && !root.frame-recording;
+                    accepted => { if root.frame-name-draft != "" && !root.frame-recording { root.busy = true; root.save-frame(root.frame-edit-id,root.frame-name-draft,root.frame-keys-draft,root.selected-ids); } }
                 }
                 HorizontalLayout {
                     spacing: 8px;
                     SettingsButton {
-                        label: root.group-recording ? "Press shortcut…" : root.group-keys-draft == "" ? "Record shortcut" : "";
-                        shortcut: root.group-recording ? "" : root.group-keys-draft;
+                        label: root.frame-recording ? "Press shortcut…" : root.frame-keys-draft == "" ? "Record shortcut" : "";
+                        shortcut: root.frame-recording ? "" : root.frame-keys-draft;
                         option-width: 230px; height: 36px;
                         enabled: !root.busy;
-                        clicked => { root.group-recording = true; root.group-error = ""; }
+                        clicked => { root.frame-recording = true; root.frame-error = ""; }
                     }
-                    if root.group-keys-draft != "" && !root.group-recording: SettingsButton {
+                    if root.frame-keys-draft != "" && !root.frame-recording: SettingsButton {
                         label: "Clear"; option-width: 72px; height: 36px; enabled: !root.busy;
-                        clicked => { root.group-keys-draft = ""; root.group-error = ""; }
+                        clicked => { root.frame-keys-draft = ""; root.frame-error = ""; }
                     }
                 }
                 OrbitText {
@@ -3972,11 +4136,11 @@ export component Launcher inherits Window {
                 }
                 HorizontalLayout {
                     spacing: 8px;
-                    SettingsButton { label: "Cancel"; clicked => { root.group-editor = false; root.group-recording = false; } }
+                    SettingsButton { label: "Cancel"; clicked => { root.frame-editor = false; root.frame-recording = false; } }
                     SettingsButton {
                         label: "Save"; primary: true; option-width: 100px;
-                        enabled: !root.busy && !root.group-recording && root.group-name-draft != "";
-                        clicked => { root.busy = true; root.save-group(root.group-edit-id,root.group-name-draft,root.group-keys-draft,root.selected-ids); }
+                        enabled: !root.busy && !root.frame-recording && root.frame-name-draft != "";
+                        clicked => { root.busy = true; root.save-frame(root.frame-edit-id,root.frame-name-draft,root.frame-keys-draft,root.selected-ids); }
                     }
                 }
             }
@@ -4168,7 +4332,7 @@ export component Launcher inherits Window {
                                 Rectangle {
                                     width: 48px; height: 48px; border-radius: Theme.radius-preview; background: Theme.selection;
                                     if root.icon-preview-present: Image { width: 48px; height: 48px; source: root.icon-preview; image-fit: contain; }
-                                    if !root.icon-preview-present: OrbitText { text: root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.focus; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
+                                    if !root.icon-preview-present: OrbitText { text: root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.focus; font-size: 22px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
                                 }
                                 AddOption { add-style: root.editing < 0; label: "Change icon"; option-width: 136px; height: 48px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
                             }
@@ -4192,7 +4356,7 @@ export component Launcher inherits Window {
                                 Rectangle {
                                     width: 48px; height: 48px; border-radius: Theme.radius-preview; background: Theme.selection;
                                     if root.icon-preview-present: Image { width: 48px; height: 48px; source: root.icon-preview; image-fit: contain; }
-                                    if !root.icon-preview-present: OrbitText { text: root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.focus; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
+                                    if !root.icon-preview-present: OrbitText { text: root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.focus; font-size: 22px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
                                 }
                                 AddOption { add-style: root.editing < 0; label: "Change icon"; option-width: 136px; height: 48px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
                             }
@@ -4215,7 +4379,7 @@ export component Launcher inherits Window {
                                 Rectangle {
                                     width: 48px; height: 48px; border-radius: Theme.radius-control; background: Theme.add-selected;
                                     if root.icon-preview-present: Image { width: 48px; height: 48px; source: root.icon-preview; image-fit: contain; }
-                                    if !root.icon-preview-present: OrbitText { text: root.website-icon-loading ? "…" : root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.add-focus; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
+                                    if !root.icon-preview-present: OrbitText { text: root.website-icon-loading ? "…" : root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.add-focus; font-size: 22px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
                                 }
                                 OrbitText { text: root.website-auto-icon ? root.website-icon-status : "Custom icon"; color: Theme.add-secondary; font-size: Theme.type-hint; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: center; }
                                 if !root.website-auto-icon: AddOption { add-style: root.editing < 0; label: "Change icon"; option-width: 120px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
@@ -4327,7 +4491,7 @@ export component Launcher inherits Window {
                                         x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
                                         width: 40px; height: 40px; source: root.icon-preview; image-fit: contain;
                                     }
-                                    if !root.icon-preview-present: OrbitText { text: root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.focus; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
+                                    if !root.icon-preview-present: OrbitText { text: root.icon-letter != "" ? root.icon-letter : root.app-name == "" ? "?" : root.first-letter(root.app-name); color: Theme.focus; font-size: 22px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
                                 }
                                 AddOption { add-style: root.editing < 0; label: "Change icon"; option-width: 136px; height: 48px; enabled: !root.busy; clicked => { root.open-icon(root.icon-value, root.app-name); } }
                             }
@@ -4524,7 +4688,7 @@ export component Launcher inherits Window {
                 OrbitText {
                     text: root.items[root.editing].folder ? ("Delete folder '" + root.app-name + "'? Its apps will move to the Canvas.")
                         : ("Delete '" + root.app-name + "' from Orbit?");
-                    color: Theme.text; font-size: 17px; wrap: word-wrap;
+                    color: Theme.text; font-size: 17px * Theme.font-scale; wrap: word-wrap;
                 }
                 if root.banner != "": OrbitText { text: root.banner; color: Theme.error; wrap: word-wrap; }
                 HorizontalLayout {

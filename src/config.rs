@@ -33,6 +33,8 @@ pub struct Config {
     pub grid_gap: i32,
     #[serde(default = "default_canvas_speed")]
     pub canvas_speed: i32,
+    #[serde(default = "default_font_size")]
+    pub font_size: i32,
     #[serde(default)]
     pub background_color: String,
     #[serde(default)]
@@ -62,7 +64,8 @@ pub struct Config {
     #[serde(default)]
     pub directory_search_paths: Vec<String>,
     #[serde(default)]
-    pub groups: Vec<CanvasGroup>,
+    #[serde(alias = "groups")]
+    pub frames: Vec<CanvasFrame>,
     #[serde(default)]
     pub ink: Vec<InkStroke>,
     #[serde(default = "default_actions")]
@@ -119,9 +122,9 @@ pub struct Prefix {
     pub action_id: String,
 }
 
-// A Group names selected Canvas items and fits them on screen; it does not move or contain them.
+// A Frame names selected Canvas items and fits them on screen; it does not move or contain them.
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
-pub struct CanvasGroup {
+pub struct CanvasFrame {
     pub id: String,
     pub name: String,
     pub items: Vec<String>,
@@ -139,6 +142,8 @@ pub struct InkPoint {
 pub struct InkStroke {
     pub id: String,
     pub points: Vec<InkPoint>,
+    #[serde(default)]
+    pub style: crate::ink::Style,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -154,6 +159,13 @@ fn legacy_version() -> u32 {
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub enum Item {
+    Annotation {
+        id: String,
+        name: String,
+        kind: i32,
+        style: crate::ink::Style,
+        image: String,
+    },
     Robot {
         id: String,
         name: String,
@@ -286,7 +298,10 @@ impl Item {
                 icon,
                 path,
             } => (id, name, icon, Launch::Directory(path.clone())),
-            Self::Folder { .. } | Self::Widget { .. } | Self::Robot { .. } => return None,
+            Self::Annotation { .. }
+            | Self::Folder { .. }
+            | Self::Widget { .. }
+            | Self::Robot { .. } => return None,
         };
         Some(App {
             id: id.clone(),
@@ -325,7 +340,8 @@ impl Item {
     pub fn name(&self) -> &str {
         match self {
             Self::App(app) => &app.name,
-            Self::Website { name, .. }
+            Self::Annotation { name, .. }
+            | Self::Website { name, .. }
             | Self::File { name, .. }
             | Self::Directory { name, .. }
             | Self::Folder { name, .. }
@@ -337,7 +353,8 @@ impl Item {
     pub fn id(&self) -> &str {
         match self {
             Self::App(app) => &app.id,
-            Self::Website { id, .. }
+            Self::Annotation { id, .. }
+            | Self::Website { id, .. }
             | Self::File { id, .. }
             | Self::Directory { id, .. }
             | Self::Folder { id, .. }
@@ -360,6 +377,10 @@ fn default_item_size() -> i32 {
 fn default_grid_gap() -> i32 {
     16
 }
+fn default_font_size() -> i32 {
+    12
+}
+
 fn default_canvas_speed() -> i32 {
     5
 }
@@ -454,6 +475,7 @@ impl Default for Config {
             item_size: default_item_size(),
             grid_gap: default_grid_gap(),
             canvas_speed: default_canvas_speed(),
+            font_size: default_font_size(),
             background_color: String::new(),
             background_image: String::new(),
             background_folder: "/home/sebaq/Pictures/aesthetic-wallpapers/images".into(),
@@ -468,7 +490,7 @@ impl Default for Config {
             app_search_paths: Vec::new(),
             file_search_exclusions: default_file_search_exclusions(),
             directory_search_paths: Vec::new(),
-            groups: Vec::new(),
+            frames: Vec::new(),
             ink: Vec::new(),
             user_actions: default_actions(),
             scripts: Vec::new(),
@@ -779,7 +801,7 @@ impl Config {
                 .shortcuts
                 .iter()
                 .any(|entry| entry.keys == binding.keys)
-                && !self.groups.iter().any(|group| group.keys == binding.keys)
+                && !self.frames.iter().any(|frame| frame.keys == binding.keys)
             {
                 self.shortcuts.push(binding);
             }
@@ -916,6 +938,9 @@ impl Config {
     }
 
     pub fn valid(&self) -> bool {
+        if !(10..=24).contains(&self.font_size) {
+            return false;
+        }
         let mut script_ids = std::collections::HashSet::new();
         if self.scripts.iter().any(|script| {
             script.id.is_empty()
@@ -959,6 +984,25 @@ impl Config {
             .chain(self.legacy_pages.iter().flat_map(|page| &page.items))
         {
             if item.id().is_empty() || !ids.insert(item.id()) {
+                return false;
+            }
+            if let Item::Annotation {
+                name,
+                kind,
+                style,
+                image,
+                ..
+            } = item
+                && (!(1..=3).contains(kind)
+                    || !style.valid()
+                    || name.trim().is_empty()
+                    || name.chars().count() > 10_000
+                    || (*kind == 3
+                        && (image.is_empty()
+                            || image.contains(['/', '\\'])
+                            || image == "."
+                            || image == "..")))
+            {
                 return false;
             }
             if let Item::Folder { apps, .. } = item {
@@ -1018,27 +1062,27 @@ impl Config {
         if self.positions.values().any(|rect| !rect.valid()) {
             return false;
         }
-        let mut group_ids = std::collections::HashSet::new();
-        let mut group_names = std::collections::HashSet::new();
-        let mut group_keys = std::collections::HashSet::new();
-        if self.groups.iter().any(|group| {
+        let mut frame_ids = std::collections::HashSet::new();
+        let mut frame_names = std::collections::HashSet::new();
+        let mut frame_keys = std::collections::HashSet::new();
+        if self.frames.iter().any(|frame| {
             let mut members = std::collections::HashSet::new();
-            group.id.is_empty()
-                || group.name.trim().is_empty()
-                || group.name.chars().count() > 60
-                || !group_names.insert(group.name.trim().to_lowercase())
-                || group.items.is_empty()
-                || group
+            frame.id.is_empty()
+                || frame.name.trim().is_empty()
+                || frame.name.chars().count() > 60
+                || !frame_names.insert(frame.name.trim().to_lowercase())
+                || frame.items.is_empty()
+                || frame
                     .items
                     .iter()
                     .any(|id| !ids.contains(id.as_str()) || !members.insert(id.as_str()))
-                || !group_ids.insert(group.id.as_str())
-                || (!group.keys.is_empty() && !group_keys.insert(group.keys.as_str()))
-                || crate::shortcuts::validate_group_keys(
-                    &group.keys,
-                    &group.id,
+                || !frame_ids.insert(frame.id.as_str())
+                || (!frame.keys.is_empty() && !frame_keys.insert(frame.keys.as_str()))
+                || crate::shortcuts::validate_frame_keys(
+                    &frame.keys,
+                    &frame.id,
                     &self.shortcuts,
-                    &self.groups,
+                    &self.frames,
                 )
                 .is_err()
         }) {
@@ -1052,7 +1096,8 @@ impl Config {
             .sum::<usize>()
             > crate::ink::MAX_POINTS
             || self.ink.iter().any(|stroke| {
-                stroke.id.is_empty()
+                !stroke.style.valid()
+                    || stroke.id.is_empty()
                     || !ink_ids.insert(stroke.id.as_str())
                     || !(2..=2000).contains(&stroke.points.len())
                     || stroke.points.iter().any(|point| {
@@ -1885,18 +1930,18 @@ mod exclusion_persistence_tests {
 }
 
 #[cfg(test)]
-mod canvas_group_tests {
+mod canvas_frame_tests {
     use super::*;
 
     #[test]
     fn canvas_shortcuts_preserve_existing_bindings_and_deleted_defaults() {
-        let mut config = config_with_group();
+        let mut config = config_with_frame();
         config.shortcuts.retain(|entry| entry.action < 14);
         config.shortcuts.push(crate::shortcuts::Shortcut {
             action: 0,
             keys: "Ctrl+Z".into(),
         });
-        config.groups[0].keys = "Ctrl+V".into();
+        config.frames[0].keys = "Ctrl+V".into();
         config.canvas_shortcuts_initialized = false;
         config.add_canvas_shortcuts();
         assert!(config.canvas_shortcuts_initialized);
@@ -1913,7 +1958,7 @@ mod canvas_group_tests {
         assert!(!loaded.shortcuts.iter().any(|entry| entry.action == 21));
     }
 
-    fn config_with_group() -> Config {
+    fn config_with_frame() -> Config {
         let mut config = Config::default();
         config.items.push(Item::App(App {
             id: "a".into(),
@@ -1930,7 +1975,7 @@ mod canvas_group_tests {
                 height: 144,
             },
         );
-        config.groups.push(CanvasGroup {
+        config.frames.push(CanvasFrame {
             id: "g".into(),
             name: "Work".into(),
             items: vec!["a".into()],
@@ -1941,43 +1986,43 @@ mod canvas_group_tests {
 
     #[test]
     fn groups_require_members_unique_names_and_modified_unique_keys() {
-        let mut config = config_with_group();
+        let mut config = config_with_frame();
         assert!(config.valid());
         let saved = serde_json::to_vec(&config).unwrap();
         let loaded: Config = serde_json::from_slice(&saved).unwrap();
-        assert_eq!(loaded.groups.len(), 1);
+        assert_eq!(loaded.frames.len(), 1);
 
-        config.groups[0].items = vec!["missing".into()];
+        config.frames[0].items = vec!["missing".into()];
         assert!(!config.valid());
-        config.groups[0].items = vec!["a".into()];
+        config.frames[0].items = vec!["a".into()];
 
-        config.groups.push(CanvasGroup {
+        config.frames.push(CanvasFrame {
             id: "h".into(),
             name: " work ".into(),
             items: vec!["a".into()],
             keys: String::new(),
         });
         assert!(!config.valid());
-        config.groups[1].name = "Personal".into();
+        config.frames[1].name = "Personal".into();
         assert!(config.valid());
 
-        config.groups[1].keys = "A".into();
+        config.frames[1].keys = "A".into();
         assert!(!config.valid());
-        config.groups[1].keys = "1".into();
+        config.frames[1].keys = "1".into();
         assert!(!config.valid());
-        config.groups[1].keys = "Ctrl+1".into();
+        config.frames[1].keys = "Ctrl+1".into();
         assert!(!config.valid());
     }
 
     #[test]
     fn groups_drop_removed_members_and_disappear_when_empty() {
-        let mut config = config_with_group();
-        config.groups[0].items.push("missing".into());
+        let mut config = config_with_frame();
+        config.frames[0].items.push("missing".into());
         crate::spatial::reconcile(&mut config).unwrap();
-        assert_eq!(config.groups[0].items, ["a"]);
+        assert_eq!(config.frames[0].items, ["a"]);
         config.items.clear();
         crate::spatial::reconcile(&mut config).unwrap();
-        assert!(config.groups.is_empty());
+        assert!(config.frames.is_empty());
     }
 
     #[test]
@@ -1985,6 +2030,7 @@ mod canvas_group_tests {
         let mut config = Config::default();
         config.ink.push(InkStroke {
             id: "s".into(),
+            style: Default::default(),
             points: vec![InkPoint { x: 0.0, y: 0.0 }, InkPoint { x: 1.0, y: 1.0 }],
         });
         assert!(config.valid());
@@ -1993,8 +2039,84 @@ mod canvas_group_tests {
         config.ink[0].points = vec![InkPoint { x: 0.0, y: 0.0 }, InkPoint { x: 1.0, y: 1.0 }];
         config.ink.push(InkStroke {
             id: "s".into(),
+            style: Default::default(),
             points: vec![InkPoint { x: 0.0, y: 0.0 }, InkPoint { x: 1.0, y: 1.0 }],
         });
+        assert!(!config.valid());
+    }
+}
+
+#[cfg(test)]
+mod canvas_tool_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_groups_and_ink_keep_members_shortcuts_and_default_styles() {
+        let mut config = Config::default();
+        config.items.push(Item::File {
+            id: "a".into(),
+            name: "A".into(),
+            path: "/tmp/a".into(),
+            icon: Default::default(),
+        });
+        crate::spatial::reconcile(&mut config).unwrap();
+        let mut data = serde_json::to_value(config).unwrap();
+        data.as_object_mut().unwrap().remove("frames");
+        data["groups"] =
+            serde_json::json!([{ "id":"f", "name":"Work", "items":["a"], "keys":"Ctrl+G" }]);
+        data["ink"] = serde_json::json!([{ "id":"ink", "points":[{"x":0,"y":0},{"x":1,"y":1}] }]);
+        let restored: Config = serde_json::from_value(data).unwrap();
+        assert!(restored.valid());
+        assert_eq!(restored.frames[0].items, ["a"]);
+        assert_eq!(restored.frames[0].keys, "Ctrl+G");
+        assert_eq!(restored.ink[0].style, crate::ink::Style::default());
+        let saved = serde_json::to_value(restored).unwrap();
+        assert!(saved.get("groups").is_none());
+        assert_eq!(saved["frames"][0]["name"], "Work");
+    }
+
+    #[test]
+    fn canvas_text_styles_and_interface_font_size_round_trip_and_validate() {
+        let mut config = Config::default();
+        config.font_size = 18;
+        config.items.push(Item::Annotation {
+            id: "n".into(),
+            name: "عمل Work\nملاحظة".into(),
+            kind: 1,
+            style: crate::ink::Style {
+                color: "#ffc078".into(),
+                size: 36.0,
+                opacity: 0.5,
+                ..Default::default()
+            },
+            image: String::new(),
+        });
+        crate::spatial::reconcile(&mut config).unwrap();
+        let mut restored: Config =
+            serde_json::from_slice(&serde_json::to_vec(&config).unwrap()).unwrap();
+        assert!(restored.valid());
+        assert_eq!(restored.font_size, 18);
+        assert!(restored.items == config.items);
+        restored.font_size = 0;
+        assert!(!restored.valid());
+        restored.font_size = 12;
+        if let Item::Annotation { style, .. } = &mut restored.items[0] {
+            style.opacity = 2.0;
+        }
+        assert!(!restored.valid());
+    }
+
+    #[test]
+    fn canvas_images_reject_paths_outside_saved_assets() {
+        let mut config = Config::default();
+        config.items.push(Item::Annotation {
+            id: "i".into(),
+            name: "Image".into(),
+            kind: 3,
+            style: Default::default(),
+            image: "../outside.png".into(),
+        });
+        crate::spatial::reconcile(&mut config).unwrap();
         assert!(!config.valid());
     }
 }

@@ -193,7 +193,10 @@ impl Backup {
         }
         for item in self.config.items.iter() {
             match item {
-                Item::Widget { .. } | Item::Robot { .. } => {}
+                Item::Annotation { kind: 3, image, .. } => {
+                    self.validate_icon(&Icon::File(image.clone()))?
+                }
+                Item::Annotation { .. } | Item::Widget { .. } | Item::Robot { .. } => {}
                 Item::App(app) => self.validate_icon(&app.icon)?,
                 Item::Folder { apps, .. } => {
                     for app in apps {

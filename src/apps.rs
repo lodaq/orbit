@@ -3,7 +3,7 @@ use crate::config::{
     ActionKind, App, Config, Icon, Item, Launch, Prefix, SystemAction, UserAction,
 };
 use crate::{
-    ActionChoice, AppTile, CanvasGroupView, FolderPreview, InstalledAppTile, Launcher, add_item,
+    ActionChoice, AppTile, CanvasFrameView, FolderPreview, InstalledAppTile, Launcher, add_item,
     config, platform, recent,
 };
 use crate::{PrefixChoice, PrefixMatch, UserActionChoice};
@@ -77,10 +77,13 @@ enum Action {
     SaveLayoutLocked(bool),
     SaveShortcut(i32, String, String),
     DeleteShortcut(i32, String),
-    SaveGroup(String, String, String, Vec<String>),
-    DeleteGroup(String),
-    FitGroup(String, f32, f32),
-    AddInk(Vec<crate::config::InkPoint>),
+    SaveFrame(String, String, String, Vec<String>),
+    DeleteFrame(String),
+    FitFrame(String, f32, f32),
+    SaveAnnotation(String, String, i32, crate::ink::Style, i32, i32),
+    SaveFontSize(i32),
+    StyleSelection(Vec<String>, crate::ink::Style),
+    AddInk(Vec<crate::config::InkPoint>, crate::ink::Style),
     EraseInk(Vec<crate::config::InkPoint>),
     EditCanvas(i32, Vec<String>, i32, i32),
     SaveScript(String, String, String),
@@ -157,8 +160,10 @@ impl Action {
             | Self::Delete(..)
             | Self::SaveSearchResult(..)
             | Self::Drop(..)
-            | Self::SaveGroup(..)
-            | Self::DeleteGroup(..)
+            | Self::SaveFrame(..)
+            | Self::DeleteFrame(..)
+            | Self::StyleSelection(..)
+            | Self::SaveAnnotation(..)
             | Self::AddInk(..)
             | Self::EraseInk(..)
             | Self::AddRobot(..)
@@ -283,13 +288,13 @@ pub fn connect(launcher: &Launcher) {
                     | Action::DeleteNamedCommand(..)
                     | Action::SavePrefix(..)
                     | Action::DeletePrefix(..)
-                    | Action::SaveGroup(..)
-                    | Action::DeleteGroup(..)
+                    | Action::SaveFrame(..)
+                    | Action::DeleteFrame(..)
             );
             let save_search_result = matches!(action, Action::SaveSearchResult(..));
             let drag_drop = matches!(action, Action::Drop(..) | Action::SaveSearchResult(..));
             let save_shortcut = matches!(action, Action::SaveShortcut(..));
-            let save_group = matches!(action, Action::SaveGroup(..));
+            let save_frame = matches!(action, Action::SaveFrame(..));
             let ink_action = matches!(action, Action::AddInk(..) | Action::EraseInk(..));
             let script_edit = matches!(action, Action::SaveScript(..) | Action::DeleteScript(..));
             let script_run = matches!(action, Action::RunScript(..));
@@ -314,8 +319,8 @@ pub fn connect(launcher: &Launcher) {
                         | Action::DeleteNamedCommand(..)
                         | Action::SavePrefix(..)
                         | Action::DeletePrefix(..)
-                        | Action::SaveGroup(..)
-                        | Action::DeleteGroup(..)
+                        | Action::SaveFrame(..)
+                        | Action::DeleteFrame(..)
                 );
             let choosing = matches!(action, Action::ChoosePath(..) | Action::ChooseScript);
             let update = !choosing
@@ -337,6 +342,7 @@ pub fn connect(launcher: &Launcher) {
                 }
                 _ => false,
             };
+            let annotation_action = matches!(action, Action::SaveAnnotation(..));
             let action_feedback = success_message(&action);
             let before = ((action.changes_layout()
                 || matches!(
@@ -362,11 +368,15 @@ pub fn connect(launcher: &Launcher) {
             if request.is_some_and(|request| !requests.is_current(request)) {
                 continue;
             }
-            let group_error = if save_group {
+            let frame_error = if save_frame {
                 result.as_ref().err().cloned()
             } else {
                 None
             };
+            if annotation_action && let Err(error) = &result {
+                let error = error.clone();
+                let _ = weak.upgrade_in_event_loop(move |ui| ui.set_annotation_error(error.into()));
+            }
             let success = result.is_ok();
             if success
                 && reveal_added
@@ -422,12 +432,12 @@ pub fn connect(launcher: &Launcher) {
             if ink_action {
                 let _ = weak.upgrade_in_event_loop(|ui| ui.invoke_ink_finished());
             }
-            if save_group {
+            if save_frame {
                 let _ = weak.upgrade_in_event_loop(move |launcher| {
-                    if let Some(error) = group_error {
-                        launcher.invoke_group_save_failed(error.into());
+                    if let Some(error) = frame_error {
+                        launcher.invoke_frame_save_failed(error.into());
                     } else {
-                        launcher.invoke_group_saved();
+                        launcher.invoke_frame_saved();
                     }
                 });
             }
@@ -865,13 +875,13 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         let _ = sender.send(Action::DeleteShortcut(action, keys.into()));
     });
     let sender = send.clone();
-    launcher.on_save_group(move |id, name, keys, items| {
+    launcher.on_save_frame(move |id, name, keys, items| {
         use slint::Model;
         let items = items
             .iter()
             .map(|item| item.to_string())
             .collect::<Vec<_>>();
-        let _ = sender.send(Action::SaveGroup(
+        let _ = sender.send(Action::SaveFrame(
             id.into(),
             name.into(),
             keys.into(),
@@ -879,15 +889,15 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         ));
     });
     let sender = send.clone();
-    launcher.on_delete_group(move |id| {
-        let _ = sender.send(Action::DeleteGroup(id.into()));
+    launcher.on_delete_frame(move |id| {
+        let _ = sender.send(Action::DeleteFrame(id.into()));
     });
     let sender = send.clone();
-    launcher.on_fit_group_action(move |id, width, height| {
-        let _ = sender.send(Action::FitGroup(id.into(), width, height));
+    launcher.on_fit_frame_action(move |id, width, height| {
+        let _ = sender.send(Action::FitFrame(id.into(), width, height));
     });
     let sender = send.clone();
-    launcher.on_add_ink(move |points| {
+    launcher.on_add_ink(move |points, color, size, opacity, mode| {
         use slint::Model;
         let _ = sender.send(Action::AddInk(
             points
@@ -897,6 +907,48 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
                     y: point.y,
                 })
                 .collect(),
+            crate::ink::Style {
+                color: color.into(),
+                size,
+                opacity,
+                highlighter: mode == 8,
+                arrow: mode == 7,
+            },
+        ));
+    });
+    let sender = send.clone();
+    launcher.on_save_font_size(move |size| {
+        let _ = sender.send(Action::SaveFontSize(size));
+    });
+    let sender = send.clone();
+    launcher.on_style_selection({
+        let sender = send.clone();
+        move |ids, color, size, opacity| {
+            use slint::Model;
+            let _ = sender.send(Action::StyleSelection(
+                ids.iter().map(|id| id.to_string()).collect(),
+                crate::ink::Style {
+                    color: color.into(),
+                    size,
+                    opacity,
+                    ..Default::default()
+                },
+            ));
+        }
+    });
+    launcher.on_save_annotation(move |id, text, kind, color, size, opacity, x, y| {
+        let _ = sender.send(Action::SaveAnnotation(
+            id.into(),
+            text.into(),
+            kind,
+            crate::ink::Style {
+                color: color.into(),
+                size,
+                opacity,
+                ..Default::default()
+            },
+            x.round() as i32,
+            y.round() as i32,
         ));
     });
     let sender = send.clone();
@@ -992,7 +1044,7 @@ impl Apps {
         {
             for item in &self.config.items {
                 match item {
-                    Item::Widget { .. } | Item::Robot { .. } => {}
+                    Item::Annotation { .. } | Item::Widget { .. } | Item::Robot { .. } => {}
                     Item::App(app) => icons.push((app.id.clone(), app.icon.clone())),
                     Item::Website { id, icon, .. } => icons.push((id.clone(), icon.clone())),
                     Item::Folder { apps, .. } => {
@@ -1009,6 +1061,27 @@ impl Apps {
         for (id, icon) in icons {
             if let Err(message) = self.load_icon(&id, &icon) {
                 error = Some(message);
+            }
+        }
+        for item in &self.config.items {
+            if let Item::Annotation {
+                id, kind: 3, image, ..
+            } = item
+            {
+                if self.icons.contains_key(id) {
+                    continue;
+                }
+                match platform::read_icon(image)
+                    .map_err(|e| e.to_string())
+                    .and_then(|bytes| canvas_image(&bytes, image))
+                {
+                    Ok(pixels) => {
+                        self.icons.insert(id.clone(), pixels);
+                    }
+                    Err(message) => {
+                        error = Some(message);
+                    }
+                }
             }
         }
         error.map_or(Ok(()), Err)
@@ -1082,20 +1155,54 @@ impl Apps {
                 }
                 Ok(())
             }
-            Action::SaveGroup(id, name, keys, selected) => {
-                self.save_group(&id, name, keys, &selected)
+            Action::SaveFrame(id, name, keys, selected) => {
+                self.save_frame(&id, name, keys, &selected)
             }
-            Action::DeleteGroup(id) => {
+            Action::DeleteFrame(id) => {
                 let mut config = self.config.clone();
-                let before = config.groups.len();
-                config.groups.retain(|group| group.id != id);
-                if config.groups.len() == before {
-                    return Err("Group is missing".into());
+                let before = config.frames.len();
+                config.frames.retain(|frame| frame.id != id);
+                if config.frames.len() == before {
+                    return Err("Frame is missing".into());
                 }
                 self.commit(config)
             }
-            Action::FitGroup(id, width, height) => self.fit_group(&id, width, height, weak),
-            Action::AddInk(points) => self.add_ink(points),
+            Action::FitFrame(id, width, height) => self.fit_frame(&id, width, height, weak),
+            Action::SaveAnnotation(id, text, kind, style, x, y) => {
+                self.save_annotation(&id, text, kind, style, (x, y), weak)
+            }
+            Action::StyleSelection(ids, style) => {
+                if !style.valid() {
+                    return Err("Invalid style".into());
+                }
+                let mut config = self.config.clone();
+                for item in &mut config.items {
+                    if let Item::Annotation {
+                        id, style: saved, ..
+                    } = item
+                        && ids.contains(id)
+                    {
+                        *saved = style.clone();
+                    }
+                }
+                if config.items != self.config.items {
+                    self.commit(config)?;
+                }
+                Ok(())
+            }
+            Action::SaveFontSize(size) => {
+                if !(10..=24).contains(&size) {
+                    return Err("Font size must be 10–24 px".into());
+                }
+                if self.config.font_size != size {
+                    let mut config = self.config.clone();
+                    config.font_size = size;
+                    config.save().map_err(|e| e.to_string())?;
+                    self.config = config;
+                }
+                Ok(())
+            }
+            Action::AddInk(points, style) => self.add_ink(points, style),
             Action::EraseInk(points) => self.erase_ink(&points),
             Action::SaveScript(id, name, path) => {
                 crate::scripts::validate(&name, &path)?;
@@ -1978,7 +2085,7 @@ impl Apps {
                 self.open_folder = Some(id.into());
                 Ok(())
             }
-            Item::Widget { .. } => Ok(()),
+            Item::Widget { .. } | Item::Annotation { .. } => Ok(()),
         }
     }
 
@@ -2380,7 +2487,7 @@ impl Apps {
                         }
                     }
                 }
-                Item::Widget { .. } | Item::Robot { .. } => {}
+                Item::Annotation { .. } | Item::Widget { .. } | Item::Robot { .. } => {}
                 _ if item.name().to_lowercase().contains(&self.query) => {
                     push(self.tile(item));
                 }
@@ -2791,11 +2898,11 @@ impl Apps {
     fn save_shortcut(&mut self, action: i32, existing: String, keys: String) -> Result<(), String> {
         let mut config = self.config.clone();
         if config
-            .groups
+            .frames
             .iter()
-            .any(|group| !keys.is_empty() && group.keys == keys)
+            .any(|frame| !keys.is_empty() && frame.keys == keys)
         {
-            return Err("Shortcut is already used by a Group.".into());
+            return Err("Shortcut is already used by a Frame.".into());
         }
         let binding = crate::shortcuts::Shortcut { action, keys };
         if existing.is_empty() {
@@ -2817,7 +2924,7 @@ impl Apps {
         Ok(())
     }
 
-    fn save_group(
+    fn save_frame(
         &mut self,
         id: &str,
         name: String,
@@ -2826,18 +2933,18 @@ impl Apps {
     ) -> Result<(), String> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 60 {
-            return Err("Enter a Group name (60 characters or fewer).".into());
+            return Err("Enter a Frame name (60 characters or fewer).".into());
         }
         let keys = keys.trim();
         let mut config = self.config.clone();
         if config
-            .groups
+            .frames
             .iter()
-            .any(|group| group.id != id && group.name.trim().to_lowercase() == name.to_lowercase())
+            .any(|frame| frame.id != id && frame.name.trim().to_lowercase() == name.to_lowercase())
         {
-            return Err("A Group with that name already exists.".into());
+            return Err("A Frame with that name already exists.".into());
         }
-        crate::shortcuts::validate_group_keys(keys, id, &config.shortcuts, &config.groups)?;
+        crate::shortcuts::validate_frame_keys(keys, id, &config.shortcuts, &config.frames)?;
         if id.is_empty() {
             let existing: std::collections::HashSet<_> = config
                 .items
@@ -2851,40 +2958,40 @@ impl Apps {
                 }
             }
             if members.is_empty() {
-                return Err("Select at least one Canvas item for the Group.".into());
+                return Err("Select at least one Canvas item for the Frame.".into());
             }
-            config.groups.push(crate::config::CanvasGroup {
+            config.frames.push(crate::config::CanvasFrame {
                 id: new_id()?,
                 name: name.into(),
                 items: members,
                 keys: keys.into(),
             });
         } else {
-            let group = config
-                .groups
+            let frame = config
+                .frames
                 .iter_mut()
-                .find(|group| group.id == id)
-                .ok_or("Group changed before it could be saved.")?;
-            group.name = name.into();
-            group.keys = keys.into();
+                .find(|frame| frame.id == id)
+                .ok_or("Frame changed before it could be saved.")?;
+            frame.name = name.into();
+            frame.keys = keys.into();
         }
         self.commit(config)
     }
 
-    fn fit_group(
+    fn fit_frame(
         &mut self,
         id: &str,
         width: f32,
         height: f32,
         weak: &slint::Weak<Launcher>,
     ) -> Result<(), String> {
-        let group = self
+        let frame = self
             .config
-            .groups
+            .frames
             .iter()
-            .find(|group| group.id == id)
-            .ok_or("Group is missing")?;
-        let positions = group
+            .find(|frame| frame.id == id)
+            .ok_or("Frame is missing")?;
+        let positions = frame
             .items
             .iter()
             .filter_map(|id| {
@@ -2895,14 +3002,109 @@ impl Apps {
             })
             .collect::<std::collections::BTreeMap<_, _>>();
         let view = crate::canvas::fit(&positions, width, height)
-            .ok_or("Group has no items on the Canvas")?;
+            .ok_or("Frame has no items on the Canvas")?;
         crate::canvas::apply(&mut self.config, crate::canvas::Mutation::View(view))?;
         let canvas = self.config.canvas.clone();
         weak.upgrade_in_event_loop(move |ui| crate::canvas::sync(&ui, &canvas, true))
             .map_err(|error| error.to_string())
     }
 
-    fn add_ink(&mut self, mut points: Vec<crate::config::InkPoint>) -> Result<(), String> {
+    fn save_annotation(
+        &mut self,
+        id: &str,
+        text: String,
+        kind: i32,
+        style: crate::ink::Style,
+        position: (i32, i32),
+        weak: &slint::Weak<Launcher>,
+    ) -> Result<(), String> {
+        let (x, y) = position;
+        if !(1..=3).contains(&kind)
+            || !style.valid()
+            || (kind != 3 && text.trim().is_empty())
+            || text.chars().count() > 10_000
+        {
+            return Err("Enter text (10,000 characters or fewer) and a valid style".into());
+        }
+        let mut config = self.config.clone();
+        if !id.is_empty() {
+            let Some(Item::Annotation {
+                name, style: saved, ..
+            }) = config.items.iter_mut().find(|item| item.id() == id)
+            else {
+                return Err("Canvas item is missing".into());
+            };
+            *name = text;
+            *saved = style;
+        } else {
+            let id = new_id()?;
+            let mut image = String::new();
+            let mut name = text;
+            let (width, height) = if kind == 3 {
+                let Some(path) = platform::choose_image("Choose image") else {
+                    return Ok(());
+                };
+                let (file, data) = platform::read_chosen_icon(&path.to_string_lossy())?;
+                if file.ends_with(".svg")
+                    && !add_item::valid_svg(std::str::from_utf8(&data).unwrap_or_default())
+                {
+                    return Err("Choose a safe image".into());
+                }
+                let pixels = canvas_image(&data, &file)?;
+                let ratio = pixels.height() as f32 / pixels.width().max(1) as f32;
+                platform::write_icon(&file, &data).map_err(|e| e.to_string())?;
+                self.icons.insert(id.clone(), pixels);
+                name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                image = file;
+                (400, (400.0 * ratio).clamp(48.0, 1200.0) as usize)
+            } else if kind == 1 {
+                (240, 240)
+            } else {
+                (
+                    320,
+                    (name.lines().count().max(1) as f32 * style.size * 1.5 + 32.0).max(80.0)
+                        as usize,
+                )
+            };
+            let rect = crate::spatial::nearby(
+                &crate::spatial::occupied(&config),
+                crate::spatial::Rect {
+                    col: x,
+                    row: y,
+                    width,
+                    height,
+                },
+            )?;
+            config.positions.insert(id.clone(), rect);
+            config.items.push(Item::Annotation {
+                id: id.clone(),
+                name,
+                kind,
+                style,
+                image,
+            });
+            self.reveal(&id, weak);
+        }
+        self.commit(config)?;
+        let _ = weak.upgrade_in_event_loop(|ui| {
+            ui.set_annotation_editor(false);
+            ui.set_tool_mode(0);
+        });
+        Ok(())
+    }
+
+    fn add_ink(
+        &mut self,
+        mut points: Vec<crate::config::InkPoint>,
+        style: crate::ink::Style,
+    ) -> Result<(), String> {
+        if !style.valid() {
+            return Err("Invalid ink style".into());
+        }
         crate::ink::normalize(&mut points);
         if points.len() < 2 {
             return Ok(());
@@ -2920,6 +3122,7 @@ impl Apps {
         let mut config = self.config.clone();
         config.ink.push(crate::config::InkStroke {
             id: new_id()?,
+            style,
             points,
         });
         self.commit(config)
@@ -2927,7 +3130,16 @@ impl Apps {
 
     fn erase_ink(&mut self, points: &[crate::config::InkPoint]) -> Result<(), String> {
         let mut config = self.config.clone();
-        if crate::ink::erase(&mut config.ink, points, 12.0) {
+        let before = config.items.len();
+        config.items.retain(|item| {
+            !matches!(item, Item::Annotation { .. })
+                || !config
+                    .positions
+                    .get(item.id())
+                    .is_some_and(|rect| crate::ink::hits_rect(points, *rect))
+        });
+        let removed_ink = crate::ink::erase(&mut config.ink, points, 12.0);
+        if removed_ink || before != config.items.len() {
             self.commit(config)?;
         }
         Ok(())
@@ -3053,6 +3265,7 @@ impl Apps {
         let size = self.config.item_size;
         let gap = self.config.grid_gap;
         let canvas_speed = self.config.canvas_speed;
+        let font_size = self.config.font_size;
         let smooth_cursor = self.config.smooth_cursor;
         let english = self.config.english_assistance.clone();
         let ai = self.config.ai.clone();
@@ -3085,13 +3298,13 @@ impl Apps {
         let can_undo = self.edits.target(false).is_some();
         let can_redo = self.edits.target(true).is_some();
         let can_paste = self.edits.clipboard.is_some();
-        let groups = self
+        let frames = self
             .config
-            .groups
+            .frames
             .iter()
-            .filter_map(|group| {
+            .filter_map(|frame| {
                 let mut bounds: Option<(f32, f32, f32, f32)> = None;
-                for id in &group.items {
+                for id in &frame.items {
                     let Some(rect) = self.config.positions.get(id) else {
                         continue;
                     };
@@ -3105,15 +3318,15 @@ impl Apps {
                     });
                 }
                 let (x, y, right, bottom) = bounds?;
-                Some(CanvasGroupView {
-                    id: group.id.as_str().into(),
-                    name: group.name.as_str().into(),
-                    keys: group.keys.as_str().into(),
+                Some(CanvasFrameView {
+                    id: frame.id.as_str().into(),
+                    name: frame.name.as_str().into(),
+                    keys: frame.keys.as_str().into(),
                     x,
                     y,
                     width: right - x,
                     height: bottom - y,
-                    count: group.items.len() as i32,
+                    count: frame.items.len() as i32,
                 })
             })
             .collect::<Vec<_>>();
@@ -3122,14 +3335,15 @@ impl Apps {
             .ink
             .iter()
             .map(|stroke| {
-                let ink = crate::ink::view(&stroke.points);
+                let ink = crate::ink::styled_view(&stroke.points, &stroke.style);
                 (
                     ink.x,
                     ink.y,
                     ink.width,
                     ink.height,
                     ink.path,
-                    stroke.points.clone(),
+                    crate::ink::samples(&stroke.points, &stroke.style),
+                    stroke.style.clone(),
                 )
             })
             .collect::<Vec<_>>();
@@ -3340,6 +3554,7 @@ impl Apps {
             launcher.set_item_size(size);
             launcher.set_grid_gap(gap);
             launcher.set_canvas_speed(canvas_speed);
+            launcher.set_font_size(font_size);
             launcher.set_background_folder_input(background_folder.into());
             if let Some(image) = background_image {
                 launcher.set_background_image(slint::Image::from_rgba8(image));
@@ -3411,30 +3626,40 @@ impl Apps {
             launcher.set_directory_search_paths(
                 std::rc::Rc::new(slint::VecModel::from(directory_search_paths)).into(),
             );
-            launcher.set_groups(std::rc::Rc::new(slint::VecModel::from(groups)).into());
+            launcher.set_frames(std::rc::Rc::new(slint::VecModel::from(frames)).into());
             launcher.set_can_undo(can_undo);
             launcher.set_can_redo(can_redo);
             launcher.set_can_paste(can_paste);
             launcher.set_ink_strokes(
                 std::rc::Rc::new(slint::VecModel::from(
                     ink.into_iter()
-                        .map(|(x, y, width, height, path, samples)| crate::CanvasInk {
-                            x,
-                            y,
-                            width,
-                            height,
-                            path,
-                            samples: std::rc::Rc::new(slint::VecModel::from(
-                                samples
-                                    .into_iter()
-                                    .map(|point| crate::InkSample {
-                                        x: point.x,
-                                        y: point.y,
-                                    })
-                                    .collect::<Vec<_>>(),
-                            ))
-                            .into(),
-                        })
+                        .map(
+                            |(x, y, width, height, path, samples, style)| crate::CanvasInk {
+                                x,
+                                y,
+                                width,
+                                height,
+                                path,
+                                color: parse_color(&style.color),
+                                size: if style.highlighter {
+                                    style.size * 4.0
+                                } else {
+                                    style.size
+                                },
+                                opacity: style.opacity * if style.highlighter { 0.35 } else { 1.0 },
+                                dimmed: false,
+                                samples: std::rc::Rc::new(slint::VecModel::from(
+                                    samples
+                                        .into_iter()
+                                        .map(|point| crate::InkSample {
+                                            x: point.x,
+                                            y: point.y,
+                                        })
+                                        .collect::<Vec<_>>(),
+                                ))
+                                .into(),
+                            },
+                        )
                         .collect::<Vec<_>>(),
                 ))
                 .into(),
@@ -3988,6 +4213,8 @@ struct Tile {
     folder: bool,
     preview_icons: Vec<FolderIcon>,
     robot: String,
+    annotation: i32,
+    annotation_style: crate::ink::Style,
 }
 
 #[derive(Default)]
@@ -4011,6 +4238,14 @@ impl Tile {
             ..Self::default()
         };
         match item {
+            Item::Annotation {
+                kind, style, image, ..
+            } => {
+                tile.annotation = *kind;
+                tile.annotation_style = style.clone();
+                tile.icon = icons.get(item.id()).cloned();
+                tile.path = image.clone();
+            }
             Item::Robot { profile, .. } => {
                 tile.robot = profile.clone();
             }
@@ -4077,7 +4312,10 @@ impl Tile {
             Item::Website { icon, .. } | Item::File { icon, .. } | Item::Directory { icon, .. } => {
                 Some(icon)
             }
-            Item::Folder { .. } | Item::Widget { .. } | Item::Robot { .. } => None,
+            Item::Annotation { .. }
+            | Item::Folder { .. }
+            | Item::Widget { .. }
+            | Item::Robot { .. } => None,
         };
         if let Some(icon) = icon {
             tile.icon_value = serde_json::to_string(icon).unwrap_or_default();
@@ -4125,6 +4363,11 @@ impl Tile {
             self.grid_gap,
         );
         AppTile {
+            annotation: self.annotation,
+            annotation_color: parse_color(&self.annotation_style.color),
+            annotation_color_name: self.annotation_style.color.clone().into(),
+            annotation_size: self.annotation_style.size,
+            annotation_opacity: self.annotation_style.opacity,
             row: self.rect.row,
             col: self.rect.col,
             span_x: self.rect.width.max(1) as i32,
@@ -5179,4 +5422,32 @@ mod file_search_exclusion_tests {
         assert!(results.iter().any(|entry| entry.name == ".hidden"));
         std::fs::remove_dir_all(root).unwrap();
     }
+}
+
+fn parse_color(value: &str) -> slint::Color {
+    slint::Color::from_argb_encoded(
+        0xff000000 | u32::from_str_radix(value.trim_start_matches('#'), 16).unwrap_or(0xe8e5ef),
+    )
+}
+
+fn canvas_image(data: &[u8], name: &str) -> Result<SharedPixelBuffer<Rgba8Pixel>, String> {
+    if data.len() > 20 * 1024 * 1024 {
+        return Err("Choose an image smaller than 20 MB".into());
+    }
+    let pixels = decode_icon(data, name)?;
+    if pixels.width() <= 1600 && pixels.height() <= 1600 {
+        return Ok(pixels);
+    }
+    let source = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
+        pixels.width(),
+        pixels.height(),
+        pixels.as_bytes(),
+    )
+    .ok_or("Couldn't read image")?;
+    let resized = image::imageops::thumbnail(&source, 1600, 1600);
+    Ok(SharedPixelBuffer::clone_from_slice(
+        resized.as_raw(),
+        resized.width(),
+        resized.height(),
+    ))
 }
