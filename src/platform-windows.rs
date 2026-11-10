@@ -211,6 +211,34 @@ pub fn launch(text: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub fn launch_script(
+    path: &std::path::Path,
+    argument: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = std::path::absolute(path)?;
+    let path = path.as_path();
+    if !path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+    {
+        return Err(
+            "Unsupported script type on Windows; choose a directly executable .exe file".into(),
+        );
+    }
+    let mut command = Command::new(path);
+    if let Some(argument) = argument {
+        command.arg(argument);
+    }
+    command
+        .current_dir(path.parent().ok_or("Script folder is missing")?)
+        .creation_flags(0x08000200)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(())
+}
+
 pub fn launch_shell_action(script: &str, argument: &str) -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);

@@ -73,6 +73,7 @@ export struct ActionChoice {
     name: string,
 }
 export struct UserActionChoice { id: string, name: string, kind: string, source: string, tokens: string, description: string, referenced: bool }
+export struct ScriptChoice { id: string, name: string, path: string }
 export struct PrefixChoice { id: string, name: string, token: string, action-id: string, action-name: string, action-index: int }
 export struct PrefixMatch { action-id: string, name: string, query: string, query-length: int, badge-width: int }
 
@@ -1068,7 +1069,7 @@ export component Launcher inherits Window {
     private property <length> search-cursor-y;
     private property <int> search-edit-generation;
     private property <bool> search-cursor-overlay: root.smooth-cursor && root.launcher-visible && search-input.has-focus && search-input.preedit-text == "";
-    changed search-text => { if root.ai-loading { root.ai-cancel(); } root.search-edit-generation += 1; root.english-dismissed = false; root.english-changed(); }
+    changed search-text => { if root.script-active { root.engine-menu = false; } if root.ai-loading { root.ai-cancel(); } root.search-edit-generation += 1; root.english-dismissed = false; root.english-changed(); }
     in property <bool> english-suggestions-enabled;
     in property <bool> english-autocomplete-enabled;
     in property <bool> english-grammar-enabled;
@@ -1093,7 +1094,7 @@ export component Launcher inherits Window {
     in-out property <string> english-connection: "English assistance disabled";
     in-out property <bool> english-loading;
     private property <bool> english-dismissed;
-    out property <bool> english-active: root.search-editing && !root.english-dismissed && (root.english-suggestions-enabled || root.english-autocomplete-enabled || root.english-grammar-enabled) && search-input.preedit-text == "";
+    out property <bool> english-active: !root.script-active && root.search-editing && !root.english-dismissed && (root.english-suggestions-enabled || root.english-autocomplete-enabled || root.english-grammar-enabled) && search-input.preedit-text == "";
     callback english-changed();
     callback english-configure();
     in property <string> english-model;
@@ -1151,6 +1152,49 @@ export component Launcher inherits Window {
     callback reset-background();
     callback save-background-folder(string);
     callback change-background-image();
+    in property <[ScriptChoice]> scripts;
+    changed scripts => { root.script-selection = 0; root.script-offset = 0px; }
+    in-out property <string> script-id-draft;
+    in-out property <string> script-name-draft;
+    in-out property <string> script-path-draft;
+    in-out property <string> script-error;
+    out property <bool> script-active: root.search-text.starts-with("/");
+    changed script-active => { root.script-selection = 0; root.script-offset = 0px; }
+    private property <string> script-filter-text: root.script-filter(root.search-text);
+    private property <string> script-completion-id;
+    changed script-filter-text => {
+        root.script-selection = root.script-completion-id == "" ? 0 : root.script-index(root.script-matches, root.script-completion-id);
+        root.script-completion-id = "";
+        root.script-offset = 0px;
+    }
+    pure callback script-index([ScriptChoice], string) -> int;
+    private property <[ScriptChoice]> script-matches: root.filter-scripts(root.scripts, root.script-filter-text);
+    pure callback script-filter(string) -> string;
+    pure callback script-needs-completion(string, string) -> bool;
+    private property <int> script-selection;
+    private property <length> script-offset;
+    pure callback filter-scripts([ScriptChoice], string) -> [ScriptChoice];
+    callback save-script(string, string, string);
+    callback delete-script(string);
+    callback choose-script();
+    callback run-script(string, string);
+    callback new-script();
+    new-script => { root.script-id-draft = ""; root.script-name-draft = ""; root.script-path-draft = ""; root.script-error = ""; }
+    callback complete-script();
+    complete-script => {
+        if !root.busy && root.script-selection >= 0 && root.script-selection < root.script-matches.length {
+            let script = root.script-matches[root.script-selection];
+            root.script-completion-id = root.script-filter-text != root.script-filter("/" + script.name) ? script.id : "";
+            root.complete-script-name(script.name);
+        }
+    }
+    callback complete-script-name(string);
+    function launch-script() {
+        if !root.busy && root.script-selection >= 0 && root.script-selection < root.script-matches.length {
+            root.busy = true;
+            root.run-script(root.script-matches[root.script-selection].id, root.search-text);
+        }
+    }
     in property <[UserActionChoice]> user-actions;
     in-out property <int> ai-provider;
     in-out property <string> ai-address: "http://127.0.0.1:11434";
@@ -1167,9 +1211,9 @@ export component Launcher inherits Window {
     in-out property <bool> ai-key-busy;
     in-out property <bool> ai-models-loading;
     private property <[string]> ai-providers: ["Ollama", "OpenAI", "Gemini"];
-    out property <bool> ai-active: root.activated-prefix-id != "" && root.action-index-for-id(root.activated-prefix-id) >= 0 && root.user-actions[root.action-index-for-id(root.activated-prefix-id)].id == root.activated-prefix-id && root.user-actions[root.action-index-for-id(root.activated-prefix-id)].kind == "AI";
+    out property <bool> ai-active: !root.script-active && root.activated-prefix-id != "" && root.action-index-for-id(root.activated-prefix-id) >= 0 && root.user-actions[root.action-index-for-id(root.activated-prefix-id)].id == root.activated-prefix-id && root.user-actions[root.action-index-for-id(root.activated-prefix-id)].kind == "AI";
     out property <bool> home-visible: (root.search-text == "" || (root.drag-from-search && root.dragging)) && !root.settings && !root.ai-active;
-    out property <bool> search-results-visible: root.search-text != "" && !root.settings && root.activated-prefix-id == "" && !(root.drag-from-search && root.dragging);
+    out property <bool> search-results-visible: !root.script-active && root.search-text != "" && !root.settings && root.activated-prefix-id == "" && !(root.drag-from-search && root.dragging);
     callback ai-submit();
     callback ai-cancel();
     callback ai-refresh-models();
@@ -1244,7 +1288,11 @@ export component Launcher inherits Window {
     callback run-activated-prefix();
     run-activated-prefix => {
         if root.busy { return; }
-        if root.ai-active {
+        if root.script-active {
+            if root.script-needs-completion(root.search-text, root.script-matches[root.script-selection].name) { root.complete-script(); }
+            else { root.launch-script(); }
+        }
+        else if root.ai-active {
             if !root.ai-loading { root.save-ai(); root.ai-submit(); }
         } else if root.activated-prefix-id != "" {
             root.busy = true;
@@ -1318,6 +1366,7 @@ export component Launcher inherits Window {
     callback move-search-selection(int);
     callback activate-search-selection();
     activate-search-selection => {
+        if root.script-active { root.launch-script(); return; }
         if root.ai-active { return; }
         if root.search-selection >= 0 && root.search-selection < root.search-results.length && !root.busy {
             root.busy = true;
@@ -1331,6 +1380,15 @@ export component Launcher inherits Window {
     }
     callback search-web(string,string);
     move-search-selection(direction) => {
+        if root.script-active {
+            if direction == 2 { root.script-selection = max(0, root.script-selection - 1); }
+            if direction == 3 { root.script-selection = min(max(0, root.script-matches.length - 1), root.script-selection + 1); }
+            let top = root.script-selection * 64px;
+            let view-height = min(384px, max(0px, root.height - search-bar.y - search-bar.height - 210px));
+            if top < root.script-offset { root.script-offset = top; }
+            if top + 64px > root.script-offset + view-height { root.script-offset = top + 64px - view-height; }
+            return;
+        }
         if root.ai-active { return; }
         root.search-hover = -1;
         if root.search-results.length == 0 { return; }
@@ -2462,6 +2520,7 @@ export component Launcher inherits Window {
                     }
                     else if event.text == "\n" && root.english-active && root.english-suggestion-selection >= 0 { root.english-apply(root.english-suggestion-selection); accept; }
                     else if event.text == "\n" { if self.text != "" || root.activated-prefix-id != "" { root.run-activated-prefix(); } accept; }
+                    else if event.text == Key.Tab && root.script-active { root.complete-script(); accept; }
                     else if event.text == Key.Tab {
                         let matched = root.match-prefix(root.search-text);
                         if root.activated-prefix-id == "" && matched.action-id != "" { root.activate-prefix(); }
@@ -2691,7 +2750,34 @@ export component Launcher inherits Window {
             fill: #ffffff;
         }
     }
-    if root.search-text != "" && !root.settings && root.activated-prefix-id == "": Flickable {
+    if root.script-active && !root.settings: Rectangle {
+        x: search-bar.x; y: search-bar.y + search-bar.height + 16px;
+        width: search-bar.width;
+        height: 46px + (root.script-matches.length == 0 ? 64px : min(384px, min(root.script-matches.length * 64px, max(0px, root.height - search-bar.y - search-bar.height - 210px))));
+        background: Theme.field; border-radius: Theme.settings-r-card;
+        border-width: 1px; border-color: Theme.settings-border-card;
+        OrbitText { x: 16px; y: 10px; width: parent.width - 32px; height: 26px; text: "Scripts"; color: Theme.text; font-weight: 600; font-size: Theme.type-control; }
+        if root.script-matches.length == 0: OrbitText {
+            x: 16px; y: 46px; width: parent.width - 32px; height: 54px;
+            text: root.scripts.length == 0 ? "No scripts yet. Add one in Settings → Search bar → Scripts." : "No matching scripts";
+            color: Theme.secondary; font-size: Theme.type-control; wrap: word-wrap;
+        }
+        if root.script-matches.length > 0: Flickable {
+            x: 6px; y: 40px; width: parent.width - 12px; height: parent.height - 46px;
+            content-y: -root.script-offset; content-height: root.script-matches.length * 64px;
+            for script[index] in root.script-matches: Rectangle {
+                y: index * 64px; width: parent.width; height: 64px;
+                background: script-hit.has-hover ? Theme.press-overlay : index == root.script-selection ? Theme.selection : transparent;
+                border-radius: Theme.settings-r-card; border-width: index == root.script-selection ? 1px : 0px; border-color: Theme.settings-icon-accent;
+                accessible-role: button; accessible-label: "Run " + script.name + " · " + script.path;
+                accessible-action-default => { root.script-selection = index; root.launch-script(); }
+                OrbitText { x: 12px; y: 8px; width: parent.width - 24px; height: 24px; text: script.name; color: Theme.text; font-size: Theme.type-control; font-weight: 600; overflow: elide; }
+                OrbitText { x: 12px; y: 34px; width: parent.width - 24px; height: 22px; text: script.path; color: Theme.secondary; font-size: Theme.type-control; overflow: elide; }
+                script-hit := TouchArea { mouse-cursor: pointer; clicked => { root.script-selection = index; root.launch-script(); } }
+            }
+        }
+    }
+    if !root.script-active && root.search-text != "" && !root.settings && root.activated-prefix-id == "": Flickable {
         opacity: root.search-results-visible ? 1 : 0;
         x: (root.width - self.width) / 2; y: search-bar.y + search-bar.height + 26px + (english-panel.visible ? english-panel.height + 12px : 0px);
         width: min(1316px, root.width - 96px); height: max(0px,root.height - self.y - 184px);
@@ -2767,10 +2853,10 @@ export component Launcher inherits Window {
             wrap: word-wrap; overflow: elide; vertical-alignment: center;
         }
     }
-    if root.engine-menu && !root.ai-active: TouchArea { clicked => { root.engine-menu = false; } }
+    if root.engine-menu && !root.ai-active && !root.script-active: TouchArea { clicked => { root.engine-menu = false; } }
     engine-select := Rectangle {
         x: search-bar.x - self.width - Theme.space-3; y: search-bar.y + (Theme.search-min-height - self.height) / 2;
-        width: root.width < 1200px ? 104px : 128px; height: Theme.control-height; visible: !root.settings && !root.ai-active;
+        width: root.width < 1200px ? 104px : 128px; height: Theme.control-height; visible: !root.settings && !root.ai-active && !root.script-active;
         accessible-role: combobox; accessible-label: "Default search engine";
         accessible-value: root.search-engine-names[root.default-search-engine-index];
         accessible-enabled: !root.busy;
@@ -2789,7 +2875,7 @@ export component Launcher inherits Window {
         OrbitText { x: parent.width - 28px; height: parent.height; text: "⌄"; color: Theme.secondary; vertical-alignment: center; }
         engine-select-hit := TouchArea { enabled: !root.busy; mouse-cursor: pointer; clicked => { root.engine-menu = !root.engine-menu; } }
     }
-    if root.engine-menu && !root.settings && !root.ai-active: Rectangle {
+    if root.engine-menu && !root.settings && !root.ai-active && !root.script-active: Rectangle {
         x: engine-select.x; y: engine-select.y + engine-select.height + 6px;
         width: max(154px, engine-select.width); height: min(root.search-engine-names.length * 36px + 38px, root.height - self.y - 24px);
         background: Theme.sheet; border-width: Theme.border-width; border-color: Theme.border; border-radius: Theme.radius-preview;
@@ -2933,7 +3019,7 @@ export component Launcher inherits Window {
             SettingsNav { label: "Robots"; icon: @image-url("assets/robot.svg"); icon-present: true; available-width: parent.width; clicked => { RobotWorkbench.adding = false; RobotWorkbench.section = 0; RobotWorkbench.refresh-skills(); RobotWorkbench.open("", true); } }
             SettingsNav { label: "Appearance"; icon: @image-url("assets/settings.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 8; clicked => { root.settings-tab = 8; root.shortcuts-tab = false; root.shortcut-recording = false; } }
             SettingsNav { label: "Shortcuts"; icon: @image-url("assets/keyboard.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 1; clicked => { root.settings-tab = 1; root.shortcuts-tab = true; } }
-            SettingsNav { label: "Search bar"; icon: @image-url("assets/search.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab >= 2 && root.settings-tab <= 6; clicked => { root.settings-tab = 4; root.shortcuts-tab = false; root.shortcut-recording = false; } }
+            SettingsNav { label: "Search bar"; icon: @image-url("assets/search.svg"); icon-present: true; available-width: parent.width; selected: (root.settings-tab >= 2 && root.settings-tab <= 6) || root.settings-tab == 10; clicked => { root.settings-tab = 4; root.shortcuts-tab = false; root.shortcut-recording = false; } }
             SettingsNav { label: "Data"; icon: @image-url("assets/add-widgets.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 7; clicked => { root.settings-tab = 7; root.shortcuts-tab = false; root.shortcut-recording = false; root.load-widget-data(); } }
             Rectangle { vertical-stretch: 1; }
             SettingsNav { label: "Back"; icon: @image-url("assets/arrow-left.svg"); icon-present: true; available-width: parent.width; hint: root.shortcut-hints[1]; clicked => { root.search-path-editor = false; root.settings = false; } }
@@ -2946,17 +3032,18 @@ export component Launcher inherits Window {
                 OrbitText { text: root.settings-tab == 9 ? "Providers" : root.settings-tab == 0 ? "General" : root.settings-tab == 1 ? "Shortcuts" : root.settings-tab == 7 ? "Data" : root.settings-tab == 8 ? "Appearance" : "Search bar"; color: Theme.settings-text; font-size: Theme.settings-title-size; font-weight: 600; }
                 SettingsDescription { text: root.settings-tab == 9 ? "Your T3 Code provider accounts, shared by Robots. Existing authentication stays in its provider storage." : root.settings-tab == 7 ? "Manage locally saved widget content and see Orbit storage use." : root.settings-tab == 0 ? "Home screen layout, integrations and app data." : root.settings-tab == 1 ? "Choose an action, then record its shortcut. Changes are saved automatically." : root.settings-tab == 2 ? "Prefixes route a token to an action. Type one before your query to use it." : root.settings-tab == 3 ? "Choose an action to edit it, or create a new one." : root.settings-tab == 8 ? "Change the Home Screen background color or image, or restore the supplied background." : "Control how Orbit finds things and where it looks."; }
             }
-            if root.settings-tab >= 2 && root.settings-tab <= 6: GridLayout {
+            if (root.settings-tab >= 2 && root.settings-tab <= 6) || root.settings-tab == 10: GridLayout {
                 spacing: 12px;
-                SettingsTabGroup { row: 0; col: 0; width: min(3 * Theme.control-option-width + 230px + 16px, root.settings-content-width);
-                    SettingsTab { option-width: root.width < 1100px ? 80px : Theme.control-option-width; label: "General"; selected: root.settings-tab == 4; clicked => { root.settings-tab = 4; } }
-                    SettingsTab { option-width: root.width < 1100px ? 80px : Theme.control-option-width; label: "Prefixes"; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; } }
-                    SettingsTab { option-width: root.width < 1100px ? 80px : Theme.control-option-width; label: "Actions"; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; } }
+                SettingsTabGroup { row: 0; col: 0; width: min(4 * Theme.control-option-width + 230px + 24px, root.settings-content-width);
+                    SettingsTab { option-width: root.settings-content-width < 800px ? 70px : Theme.control-option-width; label: "General"; selected: root.settings-tab == 4; clicked => { root.settings-tab = 4; } }
+                    SettingsTab { option-width: root.settings-content-width < 800px ? 70px : Theme.control-option-width; label: "Prefixes"; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; } }
+                    SettingsTab { option-width: root.settings-content-width < 800px ? 70px : Theme.control-option-width; label: "Actions"; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; } }
+                    SettingsTab { option-width: root.settings-content-width < 800px ? 70px : Theme.control-option-width; label: "Scripts"; selected: root.settings-tab == 10; clicked => { root.settings-tab = 10; } }
                     SettingsTab { label: "English assistance"; option-width: root.width < 1100px ? 144px : 170px; selected: root.settings-tab == 5; clicked => { root.settings-tab = 5; root.english-refresh-models(); } }
                     SettingsTab { label: "AI"; option-width: 60px; selected: root.settings-tab == 6; clicked => { root.settings-tab = 6; } }
                 }
                 Rectangle { row: 0; col: 1; horizontal-stretch: 1; }
-                if root.settings-tab == 3 && !root.action-editor-open: SettingsButton { row: root.settings-content-width < 500px ? 1 : 0; col: root.settings-content-width < 500px ? 0 : 2; label: "New action"; option-width: 132px; primary: true; enabled: !root.busy; clicked => { root.action-id-draft = ""; root.action-name-draft = ""; root.action-kind-draft = "Shell"; root.action-source-draft = ""; root.action-description-draft = ""; root.action-tokens-draft = ""; root.action-used = false; root.action-editor-open = true; } }
+                if root.settings-tab == 3 && !root.action-editor-open: SettingsButton { row: root.settings-content-width < 1000px ? 1 : 0; col: root.settings-content-width < 1000px ? 0 : 2; label: "New action"; option-width: 132px; primary: true; enabled: !root.busy; clicked => { root.action-id-draft = ""; root.action-name-draft = ""; root.action-kind-draft = "Shell"; root.action-source-draft = ""; root.action-description-draft = ""; root.action-tokens-draft = ""; root.action-used = false; root.action-editor-open = true; } }
             }
             settings-body := Flickable {
                 width: root.settings-content-width;
@@ -3508,6 +3595,38 @@ export component Launcher inherits Window {
                     spacing: 10px;
                     SettingsButton { label: "New Prefix"; clicked => { root.prefix-id-draft = ""; root.prefix-name-draft = ""; root.prefix-token-draft = ""; root.prefix-action-index = 0; } }
                     SettingsButton { label: "Save Prefix"; option-width: 132px; primary: true; enabled: !root.busy && root.prefix-name-draft != "" && root.prefix-token-draft != "" && root.user-actions.length > 0; clicked => { root.busy = true; root.save-prefix(root.prefix-id-draft, root.prefix-name-draft, root.prefix-token-draft, root.user-actions[root.prefix-action-index].id); } }
+                }
+            }
+            if root.settings-tab == 10: VerticalLayout {
+                spacing: 12px;
+                SettingsDescription { text: "Type / in Search anything to choose a script. A space separates its name from one argument string."; }
+                if root.scripts.length == 0: SettingsDescription { text: "No scripts yet"; }
+                for script in root.scripts: SettingsCard {
+                    height: 82px;
+                    VerticalLayout { padding: 12px; spacing: 4px;
+                        HorizontalLayout {
+                            OrbitText { text: script.name; color: Theme.settings-text; font-size: Theme.type-control; font-weight: 600; horizontal-stretch: 1; overflow: elide; }
+                            SettingsButton { label: "Edit"; option-width: 64px; enabled: !root.busy; clicked => { root.script-id-draft = script.id; root.script-name-draft = script.name; root.script-path-draft = script.path; root.script-error = ""; } }
+                            SettingsButton { label: "Delete"; option-width: 76px; enabled: !root.busy; clicked => { root.busy = true; root.delete-script(script.id); } }
+                        }
+                        OrbitText { text: script.path; color: Theme.settings-text-muted; font-size: Theme.type-control; overflow: elide; }
+                    }
+                }
+                SettingsCard {
+                    height: script-form.preferred-height + 32px;
+                    script-form := VerticalLayout {
+                        padding: 16px; spacing: 12px;
+                        SettingsField { label: "Name"; placeholder: "deploy"; text <=> root.script-name-draft; }
+                        SettingsField { label: "Path"; placeholder: "/path/to/script"; text <=> root.script-path-draft; }
+                        if root.script-error != "": SettingsDescription { text: root.script-error; color: Theme.settings-danger-text; }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            SettingsButton { label: "Choose file"; option-width: 112px; enabled: !root.busy; clicked => { root.busy = true; root.sheet-operation = "choosing"; root.choose-script(); } }
+                            Rectangle { horizontal-stretch: 1; }
+                            SettingsButton { label: "New script"; option-width: 112px; enabled: !root.busy; clicked => { root.new-script(); } }
+                            SettingsButton { label: "Save script"; option-width: 120px; primary: true; enabled: !root.busy; clicked => { root.busy = true; root.save-script(root.script-id-draft, root.script-name-draft, root.script-path-draft); } }
+                        }
+                    }
                 }
             }
             if root.settings-tab == 3: VerticalLayout {

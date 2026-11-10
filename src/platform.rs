@@ -697,6 +697,21 @@ pub fn launch(text: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub fn launch_script(
+    path: &std::path::Path,
+    argument: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = std::path::absolute(path)?;
+    let path = path.as_path();
+    let mut command = Command::new(path);
+    if let Some(argument) = argument {
+        command.arg(argument);
+    }
+    command.current_dir(path.parent().ok_or("Script folder is missing")?);
+    detached(&mut command)?;
+    Ok(())
+}
+
 pub fn launch_shell_action(script: &str, argument: &str) -> Result<(), Box<dyn std::error::Error>> {
     detached(&mut shell_action_command(script, argument))?;
     Ok(())

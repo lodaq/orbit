@@ -31,7 +31,7 @@
 - `src/platform.rs`: config and Recent file access and atomic writes, installed app discovery including configured executables and executable symlinks, detached commands, the Unix socket, single-daemon lock, Hyprland monitors, native file chooser rules applied before mapping, fullscreen, and window hiding.
 - `ui/assets/`: vector artwork extracted from `doc/orbit-ui/orbit.svg`, including the Home Screen image-change icon. `search-engines/` contains bundled search engine brand icons and their source list.
 - `ui/fonts/`: embedded Inter font and its OFL license.
-- `ui/launcher.slint`: the top bar, banner, Prefix badge and search results, full-window Canvas, fixed controls, Home Screen Settings with Canvas speed, Appearance Settings, Search bar Settings with General, Prefixes and Actions, TickTick Widget Gallery and task editor, app and folder sheets, open folder panel, Icon picker, item and empty-space context menus, and delete alert; `build.rs` compiles it.
+- `ui/launcher.slint`: the top bar, banner, Prefix badge and search results, full-window Canvas, fixed controls, Home Screen Settings with Canvas speed, Appearance Settings, Search bar Settings with General, Prefixes, Actions and Scripts, TickTick Widget Gallery and task editor, app and folder sheets, open folder panel, Icon picker, item and empty-space context menus, and delete alert; `build.rs` compiles it.
 - `Cargo.toml` and `Cargo.lock`: dependencies and their locked versions. Speed results are in `doc/spec.md`, section 3.
 
 The single Canvas amendment replaces page management and swipes with free item placement, pan and zoom. Step 5 adds Websites, Files, Directories, Actions, Custom command and Installed apps. Pinning and Recent come with the dock in step 6, grid shortcuts in step 7, Settings and appearance in step 8, glyphs in step 9, and packaging in step 10.
@@ -128,3 +128,5 @@ Robot provider accounts:
 - `src/robot-workbench.rs` and `ui/robot-workbench.slint`: account selection/editing in Robot profiles, using the shared fields and controls.
 - `src/robot-provider.rs` and `src/robot-runtime.rs`: account credential resolution, import reconnection checks and explicit errors for unconnected native providers.
 - `src/backup.rs`: version-4 account metadata export/import, without provider credential values or account-directory contents.
+
+- `src/scripts.rs`: Script query parsing, file/name validation and alphabetized UI models. Config and backups retain Script entries; `src/apps.rs` uses the existing worker for edits, native choosing and direct launches. `ui/launcher.slint` provides Search bar → Scripts and the `/` list. `tests/scripts-ui.py` exercises the real Settings and launch paths, native chooser, failure feedback, persistence, long lists and compact layouts on a private display/profile/bus.
