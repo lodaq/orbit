@@ -36,6 +36,7 @@ pub mod robot_runtime;
 pub mod robot_tools;
 #[path = "robot-workbench.rs"]
 mod robot_workbench;
+mod scripts;
 #[path = "search-cursor.rs"]
 mod search_cursor;
 #[path = "search-edit.rs"]

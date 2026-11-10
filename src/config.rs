@@ -67,6 +67,8 @@ pub struct Config {
     pub ink: Vec<InkStroke>,
     #[serde(default = "default_actions")]
     pub user_actions: Vec<UserAction>,
+    #[serde(default)]
+    pub scripts: Vec<Script>,
     #[serde(default = "default_prefixes")]
     pub prefixes: Vec<Prefix>,
     #[serde(default)]
@@ -79,6 +81,13 @@ pub struct Config {
     settings_shortcut_initialized: bool,
     #[serde(default)]
     canvas_shortcuts_initialized: bool,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub struct Script {
+    pub id: String,
+    pub name: String,
+    pub path: String,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -460,6 +469,7 @@ impl Default for Config {
             groups: Vec::new(),
             ink: Vec::new(),
             user_actions: default_actions(),
+            scripts: Vec::new(),
             prefixes: default_prefixes(),
             site_searches_initialized: true,
             search_word_shortcut_initialized: true,
@@ -843,6 +853,16 @@ impl Config {
     }
 
     pub fn valid(&self) -> bool {
+        let mut script_ids = std::collections::HashSet::new();
+        if self.scripts.iter().any(|script| {
+            script.id.is_empty()
+                || !script_ids.insert(&script.id)
+                || script.name.is_empty()
+                || script.name.chars().any(char::is_whitespace)
+                || script.path.trim().is_empty()
+        }) {
+            return false;
+        }
         let action_ids: std::collections::HashSet<_> = self
             .user_actions
             .iter()

@@ -364,6 +364,11 @@ mod tests {
     #[test]
     fn canvas_backup_roundtrip_keeps_signed_positions_view_recent_and_icons() {
         let mut config = Config::default();
+        config.scripts.push(crate::config::Script {
+            id: "script".into(),
+            name: "deploy".into(),
+            path: "/missing/deploy".into(),
+        });
         config.items.push(Item::Website {
             id: "site".into(),
             name: "Site".into(),
@@ -400,6 +405,7 @@ mod tests {
         loaded.validate().unwrap();
         assert_eq!(loaded.config.positions, backup.config.positions);
         assert_eq!(loaded.config.canvas, backup.config.canvas);
+        assert!(loaded.config.scripts == backup.config.scripts);
         assert_eq!(loaded.recent.ids, backup.recent.ids);
         assert_eq!(loaded.icons, backup.icons);
     }

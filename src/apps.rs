@@ -83,6 +83,10 @@ enum Action {
     AddInk(Vec<crate::config::InkPoint>),
     EraseInk(Vec<crate::config::InkPoint>),
     EditCanvas(i32, Vec<String>, i32, i32),
+    SaveScript(String, String, String),
+    DeleteScript(String),
+    ChooseScript,
+    RunScript(String, String),
     Search(String),
     SearchWeb(String, String),
     RunPrefix(String, String),
@@ -253,7 +257,7 @@ pub fn connect(launcher: &Launcher) {
             let launching = recent_id.is_some()
                 || matches!(action, Action::OpenResult(ref item) if item.source < 0)
                 || matches!(action, Action::SearchWeb(..))
-                || matches!(action, Action::RunPrefix(..));
+                || matches!(action, Action::RunPrefix(..) | Action::RunScript(..));
             let saving = matches!(
                 action,
                 Action::Pin(_)
@@ -287,6 +291,8 @@ pub fn connect(launcher: &Launcher) {
             let save_shortcut = matches!(action, Action::SaveShortcut(..));
             let save_group = matches!(action, Action::SaveGroup(..));
             let ink_action = matches!(action, Action::AddInk(..) | Action::EraseInk(..));
+            let script_edit = matches!(action, Action::SaveScript(..) | Action::DeleteScript(..));
+            let script_run = matches!(action, Action::RunScript(..));
             let save_action = matches!(
                 action,
                 Action::SaveNamedCommand(..) | Action::DeleteNamedCommand(..)
@@ -311,7 +317,7 @@ pub fn connect(launcher: &Launcher) {
                         | Action::SaveGroup(..)
                         | Action::DeleteGroup(..)
                 );
-            let choosing = matches!(action, Action::ChoosePath(..));
+            let choosing = matches!(action, Action::ChoosePath(..) | Action::ChooseScript);
             let update = !choosing
                 && (!launching || matches!(action, Action::OpenResult(..) | Action::OpenDock(..)));
             let refreshing = matches!(action, Action::RefreshInstalledApps(_));
@@ -438,9 +444,24 @@ pub fn connect(launcher: &Launcher) {
                     launcher.invoke_finish_search_path_save();
                 });
             }
+            if script_edit {
+                let error = result.as_ref().err().cloned().unwrap_or_default();
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_script_error(error.into());
+                });
+            }
+            if script_run && let Err(error) = &result {
+                let error = error.clone();
+                let _ =
+                    weak.upgrade_in_event_loop(move |ui| crate::toast::error(&ui.as_weak(), error));
+            }
             finish(
                 &weak,
-                result.err().unwrap_or_default(),
+                if script_edit || script_run {
+                    String::new()
+                } else {
+                    result.err().unwrap_or_default()
+                },
                 reset_after_save && success,
                 launching && success,
                 if success {
@@ -587,6 +608,65 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     launcher.on_valid_name(|name| add_item::valid_name(&name));
     launcher.on_valid_command(|command| add_item::valid_command(&command));
     launcher.on_valid_url(|url| add_item::valid_url(&url));
+    launcher.on_script_filter(|text| {
+        crate::scripts::query(&text)
+            .map(|(filter, _)| filter.to_lowercase())
+            .unwrap_or_default()
+            .into()
+    });
+    launcher.on_script_needs_completion(|text, name| {
+        crate::scripts::query(&text)
+            .is_some_and(|(filter, argument)| argument.is_none() && name != filter)
+    });
+    launcher.on_script_index(|scripts, id| {
+        use slint::Model;
+        scripts
+            .iter()
+            .position(|script| script.id == id)
+            .unwrap_or(0) as i32
+    });
+    let script_ui = launcher.as_weak();
+    launcher.on_complete_script_name(move |name| {
+        if let Some(ui) = script_ui.upgrade() {
+            let text = ui.get_search_text();
+            if let Some((filter, argument)) = crate::scripts::query(&text) {
+                let end = 1 + filter.len() + usize::from(argument.is_some());
+                crate::search_edit::replace(&ui, &text, 1, end, &format!("{name} "));
+            }
+        }
+    });
+    launcher.on_filter_scripts(move |scripts, filter| {
+        use slint::Model;
+        let matches = scripts
+            .iter()
+            .filter(|script| script.name.to_lowercase().contains(filter.as_str()))
+            .collect::<Vec<_>>();
+        std::rc::Rc::new(slint::VecModel::from(matches)).into()
+    });
+    launcher.on_save_script({
+        let sender = send.clone();
+        move |id, name, path| {
+            let _ = sender.send(Action::SaveScript(id.into(), name.into(), path.into()));
+        }
+    });
+    launcher.on_delete_script({
+        let sender = send.clone();
+        move |id| {
+            let _ = sender.send(Action::DeleteScript(id.into()));
+        }
+    });
+    launcher.on_choose_script({
+        let sender = send.clone();
+        move || {
+            let _ = sender.send(Action::ChooseScript);
+        }
+    });
+    launcher.on_run_script({
+        let sender = send.clone();
+        move |id, text| {
+            let _ = sender.send(Action::RunScript(id.into(), text.into()));
+        }
+    });
     launcher.on_search(move |query| {
         let _ = sender.send(Action::Search(query.into()));
     });
@@ -1017,9 +1097,71 @@ impl Apps {
             Action::FitGroup(id, width, height) => self.fit_group(&id, width, height, weak),
             Action::AddInk(points) => self.add_ink(points),
             Action::EraseInk(points) => self.erase_ink(&points),
+            Action::SaveScript(id, name, path) => {
+                crate::scripts::validate(&name, &path)?;
+                let mut config = self.config.clone();
+                let id = if id.is_empty() { new_id()? } else { id };
+                let script = config::Script {
+                    id: id.clone(),
+                    name,
+                    path,
+                };
+                if let Some(existing) = config.scripts.iter_mut().find(|script| script.id == id) {
+                    *existing = script;
+                } else {
+                    config.scripts.push(script);
+                }
+                if config.scripts != self.config.scripts {
+                    self.commit(config)?;
+                }
+                let _ = weak.upgrade_in_event_loop(move |ui| ui.set_script_id_draft(id.into()));
+                Ok(())
+            }
+            Action::DeleteScript(id) => {
+                let mut config = self.config.clone();
+                config.scripts.retain(|script| script.id != id);
+                if config.scripts.len() == self.config.scripts.len() {
+                    return Err("Script is missing".into());
+                }
+                self.commit(config)?;
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    if ui.get_script_id_draft() == id {
+                        ui.invoke_new_script();
+                    }
+                });
+                Ok(())
+            }
+            Action::ChooseScript => {
+                let path = platform::choose_path(false);
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    if let Err(error) = platform::restore_after_chooser(&ui) {
+                        ui.set_script_error(error.to_string().into());
+                    } else if let Some(path) = path {
+                        ui.set_script_path_draft(path.to_string_lossy().as_ref().into());
+                        ui.set_script_error("".into());
+                    }
+                    ui.set_sheet_operation("".into());
+                });
+                Ok(())
+            }
+            Action::RunScript(id, text) => {
+                let script = self
+                    .config
+                    .scripts
+                    .iter()
+                    .find(|script| script.id == id)
+                    .ok_or("Script is missing")?;
+                let (filter, argument) =
+                    crate::scripts::query(&text).ok_or("Script query is missing")?;
+                if !script.name.to_lowercase().contains(&filter.to_lowercase()) {
+                    return Err("Script no longer matches".into());
+                }
+                platform::launch_script(std::path::Path::new(&script.path), argument)
+                    .map_err(|error| format!("Couldn't run '{}': {error}", script.name))
+            }
             Action::Search(query) => {
                 self.query = query.to_lowercase();
-                if !self.query.is_empty() {
+                if !self.query.is_empty() && !self.query.starts_with('/') {
                     self.load_installed_icons_matching_query();
                     self.load_search_paths();
                 }
@@ -1126,13 +1268,16 @@ impl Apps {
                     .collect::<Vec<_>>();
                 let mut seen = std::collections::HashSet::new();
                 if tokens.iter().any(|token| {
-                    token.chars().any(char::is_whitespace)
+                    token.starts_with('/')
+                        || token.chars().any(char::is_whitespace)
                         || !seen.insert(token.to_lowercase())
                         || config.prefixes.iter().any(|prefix| {
                             prefix.action_id != id && prefix.token.eq_ignore_ascii_case(token)
                         })
                 }) {
-                    return Err("Tokens must be unique and contain no spaces".into());
+                    return Err(
+                        "Tokens must be unique, contain no spaces and cannot start with /".into(),
+                    );
                 }
                 let action = UserAction {
                     id: id.clone(),
@@ -1196,11 +1341,14 @@ impl Apps {
             }
             Action::SavePrefix(id, name, token, action_id) => {
                 let token = token.trim();
-                if token.is_empty()
+                if token.starts_with('/')
+                    || token.is_empty()
                     || token.chars().any(char::is_whitespace)
                     || name.trim().is_empty()
                 {
-                    return Err("Enter a Prefix name and a Token without spaces".into());
+                    return Err(
+                        "Enter a Prefix name and a Token without spaces or a leading /".into(),
+                    );
                 }
                 let mut config = self.config.clone();
                 let id = if id.is_empty() { new_id()? } else { id };
@@ -2184,7 +2332,7 @@ impl Apps {
 
     fn compute_search_results(&self) -> Vec<Tile> {
         let mut results = Vec::new();
-        if self.query.is_empty() {
+        if self.query.is_empty() || self.query.starts_with('/') {
             return results;
         }
         let all = self.config.items.iter();
@@ -3014,6 +3162,7 @@ impl Apps {
             })
             .collect();
         let shortcuts = self.config.shortcuts.clone();
+        let scripts = crate::scripts::sorted(&self.config.scripts);
         let user_actions = self
             .config
             .user_actions
@@ -3218,6 +3367,7 @@ impl Apps {
             launcher.set_shortcuts(crate::shortcuts::model(shortcuts));
             launcher
                 .set_shortcut_hints(std::rc::Rc::new(slint::VecModel::from(shortcut_hints)).into());
+            launcher.set_scripts(std::rc::Rc::new(slint::VecModel::from(scripts)).into());
             launcher.set_user_actions(std::rc::Rc::new(slint::VecModel::from(user_actions)).into());
             launcher.set_action_names(std::rc::Rc::new(slint::VecModel::from(action_names)).into());
             launcher.set_prefixes(std::rc::Rc::new(slint::VecModel::from(prefixes)).into());
@@ -3485,6 +3635,9 @@ fn url_action_url(template: &str, query: &str) -> Result<String, String> {
 }
 
 fn match_prefix(prefixes: &[Prefix], text: &str) -> Option<PrefixMatch> {
+    if text.starts_with('/') {
+        return None;
+    }
     let prefix = prefixes.iter().find(|prefix| {
         text.starts_with(&prefix.token)
             && (text.len() == prefix.token.len()
@@ -4031,6 +4184,68 @@ mod tests {
     fn init_ui_for_test() {
         thread_local! { static INIT: () = i_slint_backend_testing::init_no_event_loop(); }
         INIT.with(|_| ());
+    }
+
+    #[test]
+    fn script_picker_filters_navigates_and_never_falls_back() {
+        init_ui_for_test();
+        let ui = Launcher::new().unwrap();
+        let (send, receive) = mpsc::channel();
+        callbacks(&ui, send, Arc::new(RequestSequence::default()));
+        ui.set_scripts(
+            std::rc::Rc::new(slint::VecModel::from(crate::scripts::sorted(&[
+                config::Script {
+                    id: "b".into(),
+                    name: "beta".into(),
+                    path: "/beta".into(),
+                },
+                config::Script {
+                    id: "a".into(),
+                    name: "Alpha".into(),
+                    path: "/alpha".into(),
+                },
+            ])))
+            .into(),
+        );
+        assert!(ui.invoke_script_needs_completion("/al".into(), "Alpha".into()));
+        assert!(!ui.invoke_script_needs_completion("/Alpha".into(), "Alpha".into()));
+        assert!(!ui.invoke_script_needs_completion("/al argument".into(), "Alpha".into()));
+        ui.set_search_text("/".into());
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::ZERO);
+        ui.invoke_move_search_selection(3);
+        ui.invoke_activate_search_selection();
+        assert!(matches!(receive.try_recv().unwrap(), Action::RunScript(id, _) if id == "b"));
+        ui.set_busy(false);
+        ui.set_search_text("/ argument".into());
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::ZERO);
+        ui.invoke_run_activated_prefix();
+        assert!(
+            matches!(receive.try_recv().unwrap(), Action::RunScript(id, text) if id == "b" && text == "/ argument")
+        );
+        ui.set_busy(false);
+        ui.set_search_text("/AL  argument text".into());
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::ZERO);
+        ui.invoke_run_activated_prefix();
+        assert!(
+            matches!(receive.try_recv().unwrap(), Action::RunScript(id, text) if id == "a" && text == "/AL  argument text")
+        );
+        ui.set_busy(false);
+        ui.set_search_text("/missing".into());
+        ui.invoke_run_activated_prefix();
+        assert!(receive.try_recv().is_err());
+        assert!(!ui.get_busy());
+        assert!(
+            match_prefix(
+                &[Prefix {
+                    id: "p".into(),
+                    name: "old".into(),
+                    token: "/".into(),
+                    action_id: "a".into()
+                }],
+                "/"
+            )
+            .is_none()
+        );
     }
 
     #[test]

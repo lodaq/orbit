@@ -192,7 +192,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Item size** | The square Canvas tile width and height in pixels, adjustable in Settings. |
 | **Item Gap** | The spacing between Canvas and Folder tiles in pixels, adjustable from 0 to 64 in Settings. |
 
-| **Search bar** | Settings tab containing General search settings, Prefixes and Actions. |
+| **Search bar** | Settings tab containing General search settings, Prefixes, Actions and Scripts. |
 
 | **Smooth cursor** | Search bar setting for the animated block cursor in Search anything. On by default; Off restores the native text cursor. |
 
@@ -287,3 +287,7 @@ Canvas replaces the retired page layout. Boxes and their Add box command are rem
 | **Account credential reference** | A system credential-store identifier for a named OpenAI API or Gemini account; never the credential value. |
 | **Account directory** | A separate absolute configuration/authentication directory reference for a native provider account. Its contents are excluded from backups. |
 | **OpenCode**, **Antigravity**, **Copilot**, **Codex / ChatGPT** | Native Robot providers whose account metadata is supported in step 1; connection and execution follow in steps 2–3. |
+
+| **Script** | A named executable file selected through `/` in Search anything; text after the first space is passed as one argument. |
+| **Scripts** | Search bar settings tab for adding, editing and deleting Script entries. |
+| **New script**, **Save script**, **Choose file** | Clear the Script editor, save its entry, or select its file with the native chooser. |
