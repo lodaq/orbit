@@ -1035,7 +1035,8 @@ impl Apps {
             _ => return None,
         };
         let tile = self.dock_tile(id)?;
-        (!tile.folder && !tile.widget && tile.robot.is_empty()).then(|| id.clone())
+        (!tile.folder && !tile.widget && tile.annotation == 0 && tile.robot.is_empty())
+            .then(|| id.clone())
     }
 
     fn load_icons(&mut self) -> Result<(), String> {
@@ -4889,6 +4890,7 @@ mod tests {
         assert_eq!(image_size(None, 200), 200);
         let tile = apps.tile(&apps.config.items[0].clone());
         assert_eq!(tile.annotation_ratio, 0.5625);
+        assert_eq!(apps.recent_id(&Action::Open("image".into())), None);
         assert_eq!(tile.min_span_x, 1);
         assert_eq!(tile.max_span_x, 128);
         // A neighbor keeps the Image from growing over it.

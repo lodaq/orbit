@@ -69,6 +69,11 @@ try:
     d.shot('image-imported.png')
     small = blue_pixels(d.work / 'image-imported.png')
 
+    # Clicking the picture leaves the launcher visible and does not launch anything.
+    d.click(before['col'] + before['width'] / 2, before['row'] + before['height'] / 2)
+    d.shot('image-clicked.png')
+    assert blue_pixels(d.work / 'image-clicked.png') == small, 'clicking the Image hid or changed it'
+
     # The handle sits in the last corner of the Image; dragging it scales the Image.
     gap = d.data()['grid_gap']
     left = before['col'] + gap / 2
