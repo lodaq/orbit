@@ -238,6 +238,9 @@ pub const WIDGETS: [&str; 21] = [
     "Remembrances",
     "Internet Usage",
 ];
+// A Canvas Image resizes between one grid cell and a large upper bound.
+pub const IMAGE_MIN_SPAN: usize = 1;
+pub const IMAGE_MAX_SPAN: usize = 128;
 pub const WIDGET_SPANS: [(usize, usize); 21] = [
     (2, 2),
     (2, 2),

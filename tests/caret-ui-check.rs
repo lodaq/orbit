@@ -326,3 +326,40 @@ fn escape_cancels_hand_pan_while_locked_or_unlocked() {
         assert_eq!(saves.get(), 0, "a cancelled pan must not save");
     }
 }
+
+#[test]
+fn touchpad_pinch_zooms_both_ways_only_on_the_visible_canvas() {
+    use std::{cell::RefCell, rc::Rc};
+    i_slint_backend_testing::init_no_event_loop();
+    let launcher = Launcher::new().unwrap();
+    launcher
+        .window()
+        .set_size(slint::LogicalSize::new(1600., 1000.));
+    launcher.set_launcher_visible(true);
+    let zooms = Rc::new(RefCell::new(Vec::new()));
+    let recorded = zooms.clone();
+    launcher
+        .global::<CanvasState>()
+        .on_zoom_at(move |x, y, factor| {
+            recorded.borrow_mut().push((x, y, factor));
+        });
+    launcher.invoke_pinch_canvas(0.25);
+    launcher.invoke_pinch_canvas(-0.2);
+    assert_eq!(*zooms.borrow(), [(800., 500., 1.25), (800., 500., 0.8)]);
+    // Lock layout still permits navigation.
+    launcher.set_layout_locked(true);
+    launcher.invoke_pinch_canvas(0.1);
+    assert_eq!(zooms.borrow().len(), 3);
+    launcher.set_settings(true);
+    launcher.invoke_pinch_canvas(0.1);
+    launcher.set_settings(false);
+    launcher.set_sheet(true);
+    launcher.invoke_pinch_canvas(0.1);
+    launcher.set_sheet(false);
+    launcher.set_search_text("query".into());
+    launcher.invoke_pinch_canvas(0.1);
+    launcher.set_search_text("".into());
+    launcher.set_launcher_visible(false);
+    launcher.invoke_pinch_canvas(0.1);
+    assert_eq!(zooms.borrow().len(), 3);
+}

@@ -38,6 +38,8 @@ ureq = { version = "=3.4.1", default-features = false, features = ["json", "rust
 keyring = { version = "=3.6.3", default-features = false, features = ["windows-native", "sync-secret-service", "crypto-rust"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# Receive native Wayland pinch events missing from Winit 0.30 without maintaining a backend fork.
+ravenrs-wayland-gestures = "=27.1.27"
 # Activate KDE's Secret Service compatibility name before the standard keyring client connects.
 dbus = "=0.9.12"
 

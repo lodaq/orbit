@@ -61,7 +61,7 @@ enum Action {
     Widget(usize, i32, i32, bool),
     AddPosition(i32, i32),
     ShowAll(f32, f32),
-    ChangeWidget(String, usize, usize),
+    ResizeItem(String, usize, usize),
     DuplicateWidget(String),
     SelectTickTickList(String, String),
     TransferData(bool),
@@ -152,7 +152,7 @@ impl Action {
         match self {
             Self::EditCanvas(command, ..) => *command != 3,
             Self::Widget(..)
-            | Self::ChangeWidget(..)
+            | Self::ResizeItem(..)
             | Self::DuplicateWidget(..)
             | Self::SaveAppearance(..)
             | Self::Pin(..)
@@ -343,7 +343,7 @@ pub fn connect(launcher: &Launcher) {
                 _ => false,
             };
             let annotation_action = matches!(action, Action::SaveAnnotation(..));
-            let action_feedback = success_message(&action);
+            let action_feedback = success_message(&action, &apps.config);
             let before = ((action.changes_layout()
                 || matches!(
                     action,
@@ -977,8 +977,8 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         let _ = sender.send(Action::Widget(variant as usize, col, row, auto));
     });
     let sender = send.clone();
-    launcher.on_widget_action(move |id, width, height| {
-        let _ = sender.send(Action::ChangeWidget(
+    launcher.on_resize_item(move |id, width, height| {
+        let _ = sender.send(Action::ResizeItem(
             id.into(),
             width as usize,
             height as usize,
@@ -1758,41 +1758,49 @@ impl Apps {
                 self.reveal(&id, weak);
                 Ok(())
             }
-            Action::ChangeWidget(id, width, height) => {
+            Action::ResizeItem(id, width, height) => {
                 let mut config = self.config.clone();
                 if let Some(rect) = config.positions.get(&id).copied() {
-                    let variant = config
-                        .items
-                        .iter()
-                        .find_map(|item| {
-                            if let Item::Widget {
-                                id: item_id,
-                                variant,
-                                ..
-                            } = item
-                            {
-                                (item_id == &id).then_some(*variant)
-                            } else {
-                                None
-                            }
-                        })
-                        .ok_or("Widget is missing")?;
-                    let (min_width, min_height) = crate::spatial::WIDGET_MIN_SPANS[variant];
-                    let (max_width, max_height) = crate::spatial::WIDGET_MAX_SPANS[variant];
-                    let min_width =
-                        crate::spatial::widget_span(min_width, config.item_size, config.grid_gap);
-                    let min_height =
-                        crate::spatial::widget_span(min_height, config.item_size, config.grid_gap);
-                    let max_width =
-                        crate::spatial::widget_span(max_width, config.item_size, config.grid_gap);
-                    let max_height =
-                        crate::spatial::widget_span(max_height, config.item_size, config.grid_gap);
+                    let item = config.items.iter().find(|item| item.id() == id);
+                    let image = is_image(item);
+                    let span = |cells| {
+                        crate::spatial::widget_span(cells, config.item_size, config.grid_gap)
+                    };
+                    let (min_width, min_height, max_width, max_height) = match item {
+                        Some(Item::Widget { variant, .. }) => {
+                            let (min_width, min_height) =
+                                crate::spatial::WIDGET_MIN_SPANS[*variant];
+                            let (max_width, max_height) =
+                                crate::spatial::WIDGET_MAX_SPANS[*variant];
+                            (
+                                span(min_width),
+                                span(min_height),
+                                span(max_width),
+                                span(max_height),
+                            )
+                        }
+                        Some(Item::Annotation { kind: 3, .. }) => {
+                            let max_span = span(crate::spatial::IMAGE_MAX_SPAN);
+                            (span(crate::spatial::IMAGE_MIN_SPAN), 1, max_span, max_span)
+                        }
+                        _ => return Err("Widget is missing".into()),
+                    };
+                    let height = if image {
+                        image_size(self.icons.get(&id), width)
+                    } else {
+                        height
+                    };
                     if width < min_width
                         || height < min_height
                         || width > max_width
                         || height > max_height
                     {
-                        return Err("This widget cannot be resized to that size".into());
+                        return Err(if image {
+                            "This image cannot be resized to that size"
+                        } else {
+                            "This widget cannot be resized to that size"
+                        }
+                        .into());
                     }
                     let rect = crate::spatial::Rect {
                         width,
@@ -1801,7 +1809,11 @@ impl Apps {
                     };
                     let positions =
                         crate::spatial::place(&crate::spatial::occupied(&config), &id, rect)
-                            .ok_or("Widget does not fit here")?;
+                            .ok_or(if image {
+                                "This image does not fit here"
+                            } else {
+                                "Widget does not fit here"
+                            })?;
                     config.positions.extend(positions);
                 }
                 config.save().map_err(|e| e.to_string())?;
@@ -3797,7 +3809,7 @@ fn read_background_image(path: &std::path::Path) -> Option<SharedPixelBuffer<Rgb
     buf
 }
 
-fn success_message(action: &Action) -> Option<&'static str> {
+fn success_message(action: &Action, config: &Config) -> Option<&'static str> {
     match action {
         Action::SaveDefaultSearchEngine(..) => Some("Search engine saved"),
         Action::RunPrefix(..) => Some("Action completed"),
@@ -3831,7 +3843,13 @@ fn success_message(action: &Action) -> Option<&'static str> {
         Action::Delete(_) => Some("Item removed"),
         Action::Drop(..) => Some("Item moved"),
         Action::Widget(..) => Some("Widget added"),
-        Action::ChangeWidget(..) => Some("Widget resized"),
+        Action::ResizeItem(id, ..) => Some(
+            if is_image(config.items.iter().find(|item| item.id() == id)) {
+                "Image resized"
+            } else {
+                "Widget resized"
+            },
+        ),
         Action::DuplicateWidget(..) => Some("Widget duplicated"),
         Action::SelectTickTickList(..) => Some("Task list changed"),
         Action::AddPredefined(..) | Action::AddInstalledApp(..) => Some("App added"),
@@ -4214,6 +4232,7 @@ struct Tile {
     preview_icons: Vec<FolderIcon>,
     robot: String,
     annotation: i32,
+    annotation_ratio: f32,
     annotation_style: crate::ink::Style,
 }
 
@@ -4245,6 +4264,14 @@ impl Tile {
                 tile.annotation_style = style.clone();
                 tile.icon = icons.get(item.id()).cloned();
                 tile.path = image.clone();
+                if *kind == 3 {
+                    // An Image resizes like a Widget, but keeps its own proportions.
+                    tile.min_span_x = crate::spatial::IMAGE_MIN_SPAN as i32;
+                    tile.min_span_y = crate::spatial::IMAGE_MIN_SPAN as i32;
+                    tile.max_span_x = crate::spatial::IMAGE_MAX_SPAN as i32;
+                    tile.max_span_y = crate::spatial::IMAGE_MAX_SPAN as i32;
+                    tile.annotation_ratio = image_ratio(tile.icon.as_ref());
+                }
             }
             Item::Robot { profile, .. } => {
                 tile.robot = profile.clone();
@@ -4364,6 +4391,7 @@ impl Tile {
         );
         AppTile {
             annotation: self.annotation,
+            annotation_ratio: self.annotation_ratio,
             annotation_color: parse_color(&self.annotation_style.color),
             annotation_color_name: self.annotation_style.color.clone().into(),
             annotation_size: self.annotation_style.size,
@@ -4535,7 +4563,7 @@ mod tests {
         let requests = RequestSequence::default();
         for action in [
             Action::Widget(7, -100, 500, true),
-            Action::ChangeWidget("widget".into(), 200, 200),
+            Action::ResizeItem("widget".into(), 200, 200),
             Action::DuplicateWidget("widget".into()),
             Action::SaveAppearance(80, 0, 5),
             Action::Pin("item".into()),
@@ -4783,7 +4811,7 @@ mod tests {
         let requests = RequestSequence::default();
         assert!(
             apps.apply(
-                Action::ChangeWidget("widget".into(), span + 1, span),
+                Action::ResizeItem("widget".into(), span + 1, span),
                 &requests,
                 &weak
             )
@@ -4791,7 +4819,7 @@ mod tests {
         );
         assert!(
             apps.apply(
-                Action::ChangeWidget("widget".into(), span - 1, span),
+                Action::ResizeItem("widget".into(), span - 1, span),
                 &requests,
                 &weak
             )
@@ -4805,6 +4833,77 @@ mod tests {
         .unwrap();
         assert_eq!(serde_json::to_value(&apps.config).unwrap(), before);
         assert!(apps.pending_reveal.is_none());
+    }
+
+    #[test]
+    fn image_resize_keeps_its_proportions_and_respects_its_neighbors() {
+        let picture =
+            SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&vec![0; 800 * 450 * 4], 800, 450);
+        let mut config = Config::default();
+        config.items.push(Item::Annotation {
+            id: "image".into(),
+            name: "Image".into(),
+            kind: 3,
+            style: crate::ink::Style::default(),
+            image: "chosen-image.png".into(),
+        });
+        config.positions.insert(
+            "image".into(),
+            crate::spatial::Rect {
+                col: 0,
+                row: 0,
+                width: 400,
+                height: 225,
+            },
+        );
+        config.items.push(Item::App(App {
+            id: "neighbor".into(),
+            name: "Neighbor".into(),
+            icon: Icon::Letter,
+            launch: Launch::Command("true".into()),
+        }));
+        config.positions.insert(
+            "neighbor".into(),
+            crate::spatial::Rect {
+                col: 400,
+                row: 0,
+                width: 136,
+                height: 136,
+            },
+        );
+        let mut apps = Apps {
+            edits: Default::default(),
+            config,
+            add_position: (0, 0),
+            icons: HashMap::from([("image".to_string(), picture.clone())]),
+            open_folder: None,
+            pending_reveal: None,
+            inventory: Inventory::default(),
+            installed_filter: String::new(),
+            query: String::new(),
+            search_paths: None,
+            recent: recent::Recent::default(),
+        };
+        // An Image keeps its own proportions when its width changes.
+        assert_eq!(image_size(Some(&picture), 200), 113);
+        assert_eq!(image_size(None, 200), 200);
+        let tile = apps.tile(&apps.config.items[0].clone());
+        assert_eq!(tile.annotation_ratio, 0.5625);
+        assert_eq!(tile.min_span_x, 1);
+        assert_eq!(tile.max_span_x, 128);
+        // A neighbor keeps the Image from growing over it.
+        let before = serde_json::to_value(&apps.config).unwrap();
+        let weak = slint::Weak::default();
+        let requests = RequestSequence::default();
+        assert!(
+            apps.apply(
+                Action::ResizeItem("image".into(), 800, 450),
+                &requests,
+                &weak
+            )
+            .is_err()
+        );
+        assert_eq!(serde_json::to_value(&apps.config).unwrap(), before);
     }
 
     #[test]
@@ -5656,6 +5755,24 @@ fn parse_color(value: &str) -> slint::Color {
     slint::Color::from_argb_encoded(
         0xff000000 | u32::from_str_radix(value.trim_start_matches('#'), 16).unwrap_or(0xe8e5ef),
     )
+}
+
+// The proportions of a Canvas Image, so a resize keeps its shape.
+fn image_ratio(pixels: Option<&SharedPixelBuffer<Rgba8Pixel>>) -> f32 {
+    pixels
+        .filter(|pixels| pixels.width() > 0)
+        .map(|pixels| pixels.height() as f32 / pixels.width() as f32)
+        .unwrap_or(1.0)
+}
+
+// The height of a Canvas Image for a chosen width; its proportions never change.
+fn image_size(pixels: Option<&SharedPixelBuffer<Rgba8Pixel>>, width: usize) -> usize {
+    (width as f32 * image_ratio(pixels)).round().max(1.0) as usize
+}
+
+// A Canvas Image is an imported picture; other Canvas content is not resizable.
+fn is_image(item: Option<&Item>) -> bool {
+    matches!(item, Some(Item::Annotation { kind: 3, .. }))
 }
 
 fn canvas_image(data: &[u8], name: &str) -> Result<SharedPixelBuffer<Rgba8Pixel>, String> {

@@ -2,6 +2,7 @@ import { OrbitText, TextDirection } from "controls.slint";
 import "fonts/amiri.ttf";
 import { Theme } from "theme.slint";
 import { AzanSettings } from "azan-settings.slint";
+import { InternetLimits } from "internet-limits.slint";
 import { AddOption } from "controls.slint";
 import { ScrollView } from "std-widgets.slint";
 
@@ -306,6 +307,7 @@ component UsageStat inherits HorizontalLayout {
 
 export component InternetUsageWidget inherits Rectangle {
     in property <WidgetView> view;
+    in property <bool> enabled: true;
     background: transparent;
     border-width: 0px;
     clip: true;
@@ -325,10 +327,18 @@ export component InternetUsageWidget inherits Rectangle {
                     value-size: 34px; unit-size: 17px;
                 }
             }
-            OrbitText {
-                text: "Updated " + root.view.updated;
-                font-size: 10px * Theme.font-scale; font-weight: 400; color: Theme.secondary;
-                horizontal-alignment: right; vertical-alignment: bottom;
+            VerticalLayout {
+                alignment: start; spacing: Theme.space-1;
+                AddOption {
+                    label: "Limit"; accessible-label: "Internet speed limits";
+                    option-width: 88px; enabled: root.enabled;
+                    clicked => { InternetLimits.open(); }
+                }
+                OrbitText {
+                    text: "Updated " + root.view.updated;
+                    font-size: 10px * Theme.font-scale; font-weight: 400; color: Theme.secondary;
+                    horizontal-alignment: right;
+                }
             }
         }
         Rectangle {
@@ -363,6 +373,7 @@ export component LocalWidget inherits Rectangle {
     if root.view.category == 11: InternetUsageWidget {
         x: 0px; y: 0px; width: parent.width; height: parent.height;
         view: root.view;
+        enabled: root.enabled;
     }
     if root.view.category == 9 || root.view.category == 10: AdhkarWidget { widget-id: root.widget-id; view: root.view; enabled: root.enabled; }
     if root.view.category == 8: AchievementsWidget { view: root.view; enabled: root.enabled; }

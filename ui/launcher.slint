@@ -7,6 +7,8 @@ export { KeyboardNavigation } from "controls.slint";
 import { OrbitText, TextDirection, KeyboardNavigation } from "controls.slint";
 export { AzanSettings } from "azan-settings.slint";
 import { AzanSettings, AzanSettingsSheet } from "azan-settings.slint";
+export { InternetLimits } from "internet-limits.slint";
+import { InternetLimits, InternetLimitsSheet } from "internet-limits.slint";
 import { Theme } from "theme.slint";
 import { Panel, MenuOption, AddItemRow, SettingsAddButton, SettingsButton, SettingsField, SettingsCard, SettingsTitle, SettingsDescription, SettingsNav, SettingsTabGroup, SettingsTab, SettingsSwitch, SettingsToggle, SettingsChip, SettingsStepper, SettingsSelect, AddOption, AddField, SmoothCaret, Kbd } from "controls.slint";
 import "fonts/inter.ttf";
@@ -29,7 +31,7 @@ export struct FolderPreview {
 }
 
 export struct AppTile {
-    annotation: int, annotation-color: color, annotation-color-name: string, annotation-size: float, annotation-opacity: float,
+    annotation: int, annotation-ratio: float, annotation-color: color, annotation-color-name: string, annotation-size: float, annotation-opacity: float,
     robot: string,
     row: int, col: int, span-x: int, span-y: int, widget: bool, widget-kind: int, widget-text: string, widget-min: int, widget-max: int, ticktick: bool, ticktick-next: bool,
     ticktick-project-id: string,
@@ -499,7 +501,7 @@ component ItemTile inherits Rectangle {
             animate opacity { duration: Theme.control-release; easing: ease-out; }
         }
     }
-    if index < items.length && items[index].widget && !root.layout-locked: Rectangle {
+    if index < items.length && (items[index].widget || items[index].annotation == 3) && !root.layout-locked: Rectangle {
         x: parent.width - 32px; y: parent.height - 32px; width: 28px; height: 28px;
         border-radius: 14px;
         background: root.resize-active ? Theme.selection : root.hovered ? Theme.hover-overlay : transparent;
@@ -642,7 +644,7 @@ export component Launcher inherits Window {
     pure callback frame-index([CanvasFrameView], string) -> int;
     callback add-widget(int,int,int,bool);
     callback duplicate-widget(string);
-    callback widget-action(string,int,int);
+    callback resize-item(string,int,int);
     private property <int> placing-widget: -1;
     private property <bool> widget-placement-target;
     private property <int> widget-placement-x;
@@ -712,11 +714,17 @@ export component Launcher inherits Window {
     in-out property <bool> can-redo;
     in-out property <bool> can-paste;
     callback edit-canvas(int, [string], float, float);
+    callback pinch-canvas(float);
+    pinch-canvas(delta) => {
+        if root.launcher-visible && root.frame-shortcuts && !InternetLimits.visible && AzanSettings.widget-id == "" {
+            root.zoom-canvas(1 + delta);
+        }
+    }
     callback zoom-canvas(float);
     zoom-canvas(factor) => {
         CanvasState.zoom-at(root.width / 2px, root.height / 2px, factor);
         root.view-dirty = true;
-        canvas-save-timer.restart();
+        canvas-save-timer.start(); canvas-save-timer.restart();
     }
     callback canvas-command(int);
     canvas-command(command) => {
@@ -849,18 +857,40 @@ export component Launcher inherits Window {
         let dy = top < 110 || height * CanvasState.zoom > available-height ? 110 - top : max(0,bottom - root.height / 1px + 156) * -1;
         if dx != 0 || dy != 0 {
             CanvasState.pan-x += dx; CanvasState.pan-y += dy;
-            root.view-dirty = true; canvas-save-timer.restart();
+            root.view-dirty = true; canvas-save-timer.start(); canvas-save-timer.restart();
         }
     }
     canvas-save-timer := Timer { interval: 300ms; triggered => { root.flush-canvas(); } }
     pure function world-x(x: length) -> length { return (x / 1px - CanvasState.pan-x) / CanvasState.zoom * 1px; }
     pure function world-y(y: length) -> length { return (y / 1px - CanvasState.pan-y) / CanvasState.zoom * 1px; }
+    // The larger drag decides the size, so a diagonal or straight drag both work.
+    function resize-delta(x: length, y: length) -> float {
+        let dx = (x - root.drag-start-x) / 1px / CanvasState.zoom;
+        let dy = (y - root.drag-start-y) / 1px / CanvasState.zoom;
+        return abs(dx) >= abs(dy) ? dx : dy;
+    }
     function flush-canvas() {
         canvas-save-timer.stop();
         if root.view-dirty {
             root.view-dirty = false;
             CanvasState.save-view(CanvasState.pan-x,CanvasState.pan-y,CanvasState.zoom);
         }
+    }
+    in-out property <bool> canvas-scrolling;
+    in-out property <bool> canvas-scroll-gesture;
+    canvas-scroll-timer := Timer {
+        interval: 250ms; running: false;
+        triggered => { root.canvas-scrolling = false; canvas-scroll-timer.stop(); }
+    }
+    callback continue-canvas-scroll(float, float) -> bool;
+    continue-canvas-scroll(dx, dy) => {
+        if !root.canvas-scrolling { return false; }
+        if !root.frame-shortcuts || root.ctrl-held || InternetLimits.visible || AzanSettings.widget-id != "" {
+            root.canvas-scrolling = false;
+            return false;
+        }
+        root.wheel-canvas(0px, 0px, dx * 1px, dy * 1px);
+        return true;
     }
     function wheel-canvas(x: length, y: length, dx: length, dy: length) {
         if root.dragging || root.panning || root.tool-active { return; }
@@ -872,10 +902,18 @@ export component Launcher inherits Window {
             CanvasState.pan-x += dx / 1px * root.canvas-speed;
             CanvasState.pan-y += dy / 1px * root.canvas-speed;
         }
+        if !root.ctrl-held {
+            root.canvas-scrolling = true;
+            if root.canvas-scroll-gesture { canvas-scroll-timer.stop(); }
+            else { canvas-scroll-timer.start(); canvas-scroll-timer.restart(); }
+        }
         root.view-dirty = true;
-        canvas-save-timer.restart();
+        canvas-save-timer.start(); canvas-save-timer.restart();
     }
     function cancel-canvas() {
+        root.canvas-scrolling = false;
+        root.canvas-scroll-gesture = false;
+        canvas-scroll-timer.stop();
         if root.panning { CanvasState.pan-x = root.pan-origin-x; CanvasState.pan-y = root.pan-origin-y; }
         root.panning = false;
         root.marquee-active = false;
@@ -1041,7 +1079,7 @@ export component Launcher inherits Window {
             } else {
                 root.selected-ids = [];
                 root.begin-drag(index,false,x,y);
-                if root.items[index].widget {
+                if root.items[index].widget || root.items[index].annotation == 3 {
                     let local-x = root.world-x(x) - (root.items[index].col + root.grid-gap / 2) * 1px;
                     let local-y = root.world-y(y) - (root.items[index].row + root.grid-gap / 2) * 1px;
                     let tile-width = (root.items[index].span-x - root.grid-gap) * 1px;
@@ -1904,6 +1942,12 @@ export component Launcher inherits Window {
         if root.resizing {
             root.dragging = true;
             root.drag-scale = root.drag-item.widget ? 1 : 1.08;
+            if root.drag-item.annotation == 3 {
+                // An Image keeps its proportions, so the larger drag sets its width.
+                root.resize-width = min(root.drag-item.max-span-x,max(root.drag-item.min-span-x,round(root.drag-item.span-x + root.resize-delta(x,y))));
+                root.resize-height = max(1,round(root.resize-width * root.drag-item.annotation-ratio));
+                return;
+            }
             root.resize-width = min(root.drag-item.max-span-x,max(root.drag-item.min-span-x,round(root.drag-item.span-x + (x - root.drag-start-x) / 1px / CanvasState.zoom)));
             root.resize-height = min(root.drag-item.max-span-y,max(root.drag-item.min-span-y,round(root.drag-item.span-y + (y - root.drag-start-y) / 1px / CanvasState.zoom)));
             return;
@@ -1933,7 +1977,7 @@ export component Launcher inherits Window {
             root.cancel-drag(); return;
         }
         if root.resizing {
-            if root.resize-valid && (root.resize-width != root.drag-item.span-x || root.resize-height != root.drag-item.span-y) { root.busy = true; root.widget-action(root.drag-item.id,root.resize-width,root.resize-height); }
+            if root.resize-valid && (root.resize-width != root.drag-item.span-x || root.resize-height != root.drag-item.span-y) { root.busy = true; root.resize-item(root.drag-item.id,root.resize-width,root.resize-height); }
             root.cancel-drag(); return;
         }
         if root.ticktick-control-pressed {
@@ -2115,6 +2159,7 @@ export component Launcher inherits Window {
         RobotWorkbench.visible = false;
         root.cancel-canvas(); root.flush-canvas();
         AzanSettings.close();
+        InternetLimits.close();
         root.clear-ai();
         root.search-context = false;
         root.canvas-context = false;
@@ -2169,6 +2214,7 @@ export component Launcher inherits Window {
         if root.panning { root.cancel-canvas(); return; }
         if root.tool-active || root.marquee-active { root.set-tool(root.tool-mode); return; }
         if AzanSettings.widget-id != "" { AzanSettings.close(); return; }
+        if InternetLimits.visible { InternetLimits.close(); return; }
         if root.search-context { root.search-context = false; return; }
         if root.canvas-context { root.canvas-context = false; return; }
         if root.frame-context-id != "" { root.frame-context-id = ""; return; }
@@ -4088,14 +4134,14 @@ export component Launcher inherits Window {
                 if root.context-index >= 0 && root.items[root.context-index].widget: MenuOption { width: 184px; label: "Duplicate"; enabled: !root.layout-locked; clicked => { root.busy = true; root.duplicate-widget(root.items[root.context-index].id); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].widget: MenuOption { width: 184px; label: "Resize · wider";
                     enabled: !root.layout-locked && root.preview-valid(root.items,root.items[root.context-index].id,root.items[root.context-index].col,root.items[root.context-index].row,root.items[root.context-index].span-x + 1,root.items[root.context-index].span-y);
-                    clicked => { root.busy = true; root.widget-action(root.items[root.context-index].id,root.items[root.context-index].span-x + 1,root.items[root.context-index].span-y); root.context-index = -1; } }
+                    clicked => { root.busy = true; root.resize-item(root.items[root.context-index].id,root.items[root.context-index].span-x + 1,root.items[root.context-index].span-y); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].widget: MenuOption { width: 184px; label: "Resize · taller";
                     enabled: !root.layout-locked && root.preview-valid(root.items,root.items[root.context-index].id,root.items[root.context-index].col,root.items[root.context-index].row,root.items[root.context-index].span-x,root.items[root.context-index].span-y + 1);
-                    clicked => { root.busy = true; root.widget-action(root.items[root.context-index].id,root.items[root.context-index].span-x,root.items[root.context-index].span-y + 1); root.context-index = -1; } }
+                    clicked => { root.busy = true; root.resize-item(root.items[root.context-index].id,root.items[root.context-index].span-x,root.items[root.context-index].span-y + 1); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].widget: MenuOption { width: 184px; label: "Resize · smaller";
                     enabled: !root.layout-locked && (root.items[root.context-index].span-x > root.items[root.context-index].min-span-x || root.items[root.context-index].span-y > root.items[root.context-index].min-span-y)
                         && root.preview-valid(root.items,root.items[root.context-index].id,root.items[root.context-index].col,root.items[root.context-index].row,max(root.items[root.context-index].min-span-x,root.items[root.context-index].span-x - 1),max(root.items[root.context-index].min-span-y,root.items[root.context-index].span-y - 1));
-                    clicked => { root.busy = true; root.widget-action(root.items[root.context-index].id,max(root.items[root.context-index].min-span-x,root.items[root.context-index].span-x - 1),max(root.items[root.context-index].min-span-y,root.items[root.context-index].span-y - 1)); root.context-index = -1; } }
+                    clicked => { root.busy = true; root.resize-item(root.items[root.context-index].id,max(root.items[root.context-index].min-span-x,root.items[root.context-index].span-x - 1),max(root.items[root.context-index].min-span-y,root.items[root.context-index].span-y - 1)); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].annotation > 0 && root.items[root.context-index].annotation != 3: MenuOption { width: 184px; label: "Edit"; enabled: !root.layout-locked; clicked => {
                     let item = root.items[root.context-index]; root.annotation-id = item.id; root.annotation-text = item.name; root.annotation-kind = item.annotation;
                     root.text-size = item.annotation-size; root.ink-opacity = item.annotation-opacity; root.ink-color-value = item.annotation-color; root.ink-color = item.annotation-color-name;
@@ -4183,6 +4229,7 @@ export component Launcher inherits Window {
         }
     }
     if AzanSettings.widget-id != "": AzanSettingsSheet { width: root.width; height: root.height; }
+    if InternetLimits.visible: InternetLimitsSheet { width: root.width; height: root.height; }
     // Keeping the sheet instantiated preserves field focus while editing.
     sheet-backdrop := Rectangle {
         width: root.width; height: root.height;

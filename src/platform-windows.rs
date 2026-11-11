@@ -104,6 +104,9 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
         let Some(launcher) = weak.upgrade() else {
             return EventResult::Propagate;
         };
+        if crate::canvas::continue_scroll(&launcher, event) {
+            return EventResult::PreventDefault;
+        }
         match event {
             winit::event::WindowEvent::ModifiersChanged(state) => {
                 modifiers = state.state();

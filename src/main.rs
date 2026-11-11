@@ -14,6 +14,8 @@ mod english_assistance;
 mod icons;
 #[path = "ink.rs"]
 mod ink;
+#[path = "internet-limits.rs"]
+mod internet_limits;
 #[path = "internet-usage.rs"]
 mod internet_usage;
 #[path = "item-drop.rs"]

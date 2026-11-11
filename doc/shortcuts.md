@@ -8,7 +8,7 @@ With Canvas focus (click a tool or empty Canvas space), Ctrl+Z undoes the last c
 
 Ctrl+J and Ctrl+L fit the next Frame; Ctrl+H and Ctrl+K fit the previous Frame, following saved order and stopping at the ends. Outside Canvas focus, Ctrl+K keeps its Search anything action. Keys 1, 2, 3 and 4 select Select, Hand, Draw and Eraser. Canvas edit, Frame navigation and tool bindings can be changed in Settings → Shortcuts. Existing conflicting assignments are preserved during migration.
 
-Wheel pans vertically, Shift+wheel pans horizontally and Ctrl+wheel zooms around the pointer. Draw shows smooth ink and Eraser dims its targets during the drag; release saves once and Escape cancels the gesture.
+Wheel pans vertically, Shift+wheel pans horizontally and Ctrl+wheel zooms around the pointer. A pan begun on the Canvas continues across Widgets for the same scroll sequence; a new scroll begun over a Widget scrolls its content. Draw shows smooth ink and Eraser dims its targets during the drag; release saves once and Escape cancels the gesture.
 
 Canvas tools: Select drags a selection rectangle; Ctrl-click or Shift-click toggles items, and Ctrl/Shift-drag adds a rectangle to the selection. Hand drags to pan. Draw saves ink; Eraser removes whole strokes. Right-click with a selection → New Frame to name it and record a shortcut. Click a Frame label or press its shortcut to fit its items. Right-click the label to edit or delete the Frame. Escape cancels an active gesture, then clears selection. Frame shortcuts require Ctrl, Alt or Super and run only on the Canvas with no layer open.
 
@@ -116,7 +116,7 @@ Focused lists move down with Ctrl+N, Ctrl+J or Ctrl+↓, and up with Ctrl+P, Ctr
 
 Canvas: Select drags a selection rectangle; Hand drags to pan; Ctrl+wheel zooms around the pointer from 25–200%. Right-click empty space → Add item opens the existing sheets and widget gallery at the clicked position. Right-click → Show all items fits the arranged content, including below 25% when necessary. Widgets scroll their own content. Escape cancels an active drag or placement preview without saving. Lock layout prevents adding, moving and resizing items while permitting navigation and widget interactions. The saved view survives hiding and restart. There are no page-switch actions or Box controls.
 
-With Canvas focus, `-` zooms out and `+` zooms in around the center of the window. Linux touchpad pinch is not supported by the current Winit backend; touchpad scrolling continues to pan.
+With Canvas focus, `-` zooms out and `+` zooms in around the center of the window. On Linux Wayland, spread two fingers to zoom in and pinch them together to zoom out around the window center. Touchpad scrolling continues to pan; Ctrl+scroll also zooms. Pinch works while layout is locked and only on the visible Canvas with no layer or edit gesture active.
 
 Robot workbench: Escape closes the workbench without cancelling work. Typing, Tab, text selection and clipboard shortcuts stay in the workbench while it is open. Send queues the chat message with the mouse; Cancel work cancels the selected conversation's queued/pending work. Approve once applies only to the displayed conversation and action. Delete conversation requires confirmation and is unavailable while that conversation has work outstanding.
 

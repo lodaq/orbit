@@ -28,7 +28,7 @@
 - `src/apps.rs`: app and folder actions, Canvas placement, search across items, folder contents and configured paths with file exclusion matching and worker cache invalidation, generic Prefix recognition/dispatch, dock pinning and Recent display, background image selection, website favicon retrieval, and cached icons capped at the displayed size; file writes and decoding run on a worker thread.
 - `src/recent.rs`: saved Recent order, duplicate removal, and the history limit.
 - `src/daemon.rs`: the resident Slint event loop and toggle delivery.
-- `src/platform.rs`: config and Recent file access and atomic writes, installed app discovery including configured executables and executable symlinks, detached commands, the Unix socket, single-daemon lock, Hyprland monitors, native file chooser rules applied before mapping, fullscreen, and window hiding.
+- `src/platform.rs`: config and Recent file access and atomic writes, installed app discovery including configured executables and executable symlinks, detached commands, the Unix socket, single-daemon lock, Hyprland monitors, native file chooser rules applied before mapping, fullscreen, native Wayland touchpad pinch input, and window hiding.
 - `ui/assets/`: vector artwork extracted from `doc/orbit-ui/orbit.svg`, including the Home Screen image-change icon. `search-engines/` contains bundled search engine brand icons and their source list.
 - `ui/fonts/`: embedded Inter font and its OFL license.
 - `ui/launcher.slint`: the top bar, banner, Prefix badge and search results, full-window Canvas, fixed controls, Home Screen Settings with Canvas speed, Appearance Settings, Search bar Settings with General, Prefixes, Actions and Scripts, TickTick Widget Gallery and task editor, app and folder sheets, open folder panel, Icon picker, item and empty-space context menus, and delete alert; `build.rs` compiles it.
@@ -61,6 +61,7 @@ The approved supplied UI update adds the reference launcher appearance, search a
 - `src/platform-windows.rs`: Windows resident launcher IPC, fullscreen window behavior, registered-file opening, process launch, system actions and Installed apps discovery.
 - `tests/canvas-groups-ui.py`: private-display selection, Frame creation/editing, shortcut conflicts, layout lock, mixed-language labels and visible ink persistence/erasing checks.
 - `tests/canvas-ui.py`: real pointer and persistence checks using a private Xvfb display, temporary config and isolated runtime socket.
+- `tests/scroll-pan-ui.py`: continuous wheel pans across Widgets, normal new Widget scrolls, unchanged item positions and view persistence on a private display/profile.
 
 The approved v2 UX specification is `Orbit_Desktop_Launcher_UX_Spec_v2.md`; it supersedes the original OS target and list-grid assumptions.
 
@@ -90,6 +91,9 @@ The approved v2 UX specification is `Orbit_Desktop_Launcher_UX_Spec_v2.md`; it s
 - `src/widget-starters.rs`: original bilingual starter text, vocabulary examples, unfinished starter habits, Quran passage attribution and a dated Cairo prayer-time example.
 - `src/widget-views.rs`: local selections, persistent shuffled rotations, completion references, habit state, today's achievements and saved prayer countdowns.
 - `src/internet-usage.rs`: worker-side vnStat JSON reading, local-day interface totals, binary unit formatting and last-successful-value caching.
+- `src/internet-limits.rs`: validated kbps conversion and atomic Linux nftables limits for this computer, with active kernel-state reading.
+- `ui/internet-limits.slint`: shared Internet Usage speed-limit sheet and its draft/loading state.
+- `tests/internet-limits-ui.py`: real widget controls and IPv4/IPv6 transfers on private display/profile/network namespaces.
 - `ui/local-widget.slint`: local widget reading hierarchy, scrollable content, fixed action footers, grouped habit rows, an Achievements summary with scrollable completion rows, and local audio actions, displayed above the Canvas input surface. `src/widget-data-ui.rs` separates vocabulary and prayer headlines for display without changing saved content.
 
 - `Panel`, `MenuOption` and `SettingsToggle` in `ui/controls.slint` share floating material, menu rows and labeled switches across the complete native interface.
@@ -110,7 +114,7 @@ Search-result saving in `src/apps.rs` resolves cached results to shortcuts; `src
 `ui/controls.slint` owns `OrbitText` and the `TextDirection` callbacks for content-aware text alignment throughout the interface.
 - `src/text-direction.rs`: shared Unicode first-strong direction detection for Arabic, English and mixed text.
 
-- `src/canvas.rs`: saved Canvas view, signed coordinates, pointer-centered zoom, fit-all recovery and Slint callbacks using the existing config worker.
+- `src/canvas.rs`: saved Canvas view, signed coordinates, pointer-centered zoom, fit-all recovery, scroll sequence ownership shared by the platform event filters, and Slint callbacks using the existing config worker.
 - `ui/canvas.slint`: shared Canvas view state and pan/zoom callbacks; launcher rendering remains in ui/launcher.slint.
 
 The 2026-11-02 single Canvas amendment supersedes historical page-related structure descriptions above. Config version 5 stores a flat item collection, signed positions and view state; legacy pages exist only for migration. There are no live pages or Boxes.
@@ -133,3 +137,5 @@ Robot provider accounts:
 - `src/scripts.rs`: Script query parsing, file/name validation and alphabetized UI models. Config and backups retain Script entries; `src/apps.rs` uses the existing worker for edits, native choosing and direct launches. `ui/launcher.slint` provides Search bar → Scripts and the `/` list. `tests/scripts-ui.py` exercises the real Settings and launch paths, native chooser, failure feedback, persistence, long lists and compact layouts on a private display/profile/bus.
 
 Canvas drawing tools extend `src/ink.rs` with stroke styles, quadratic smoothing, arrows and eraser hit detection. Canvas notes, text and image assets use the existing Item storage, placement, history and backup paths. `ui/theme.slint` scales interface typography using the General Font size setting. `tests/canvas-tools-ui.py` exercises the new tools on a private display/profile/bus.
+
+Canvas Images resize like Widgets from the handle at their corner and keep their own proportions. `src/apps.rs` holds the saved size and its limits; `ui/launcher.slint` draws the handle and the live size. `tests/image-resize-ui.py` imports an Image, resizes it with the handle and checks the result on a private display/profile/bus.

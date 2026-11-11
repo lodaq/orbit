@@ -244,10 +244,11 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         }
         return false;
     }
-    if !launcher
-        .global::<crate::AzanSettings>()
-        .get_widget_id()
-        .is_empty()
+    if launcher.global::<crate::InternetLimits>().get_visible()
+        || !launcher
+            .global::<crate::AzanSettings>()
+            .get_widget_id()
+            .is_empty()
     {
         if launcher
             .get_shortcuts()

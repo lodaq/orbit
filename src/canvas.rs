@@ -148,8 +148,185 @@ pub fn connect(launcher: &crate::Launcher, send: impl Fn(Mutation) + Clone + 'st
         }
     });
 }
+pub fn continue_scroll(
+    launcher: &crate::Launcher,
+    event: &slint::winit_030::winit::event::WindowEvent,
+) -> bool {
+    use slint::ComponentHandle;
+    use slint::winit_030::winit::event::{MouseScrollDelta, TouchPhase, WindowEvent};
+    let (delta, phase) = match event {
+        WindowEvent::MouseInput { .. } | WindowEvent::Focused(false) => {
+            launcher.set_canvas_scrolling(false);
+            launcher.set_canvas_scroll_gesture(false);
+            return false;
+        }
+        WindowEvent::MouseWheel { delta, phase, .. } => (delta, phase),
+        _ => return false,
+    };
+    match phase {
+        TouchPhase::Started => {
+            launcher.set_canvas_scrolling(false);
+            launcher.set_canvas_scroll_gesture(true);
+            return false;
+        }
+        TouchPhase::Ended | TouchPhase::Cancelled => {
+            let active = launcher.get_canvas_scrolling();
+            launcher.set_canvas_scrolling(false);
+            launcher.set_canvas_scroll_gesture(false);
+            return active;
+        }
+        TouchPhase::Moved => {}
+    }
+    if !launcher.get_canvas_scrolling() {
+        return false;
+    }
+    // Match Slint's wheel conversion before bypassing widget hit testing.
+    let (dx, dy) = match delta {
+        MouseScrollDelta::LineDelta(x, y) => (x * 60., y * 60.),
+        MouseScrollDelta::PixelDelta(delta) => {
+            let delta = delta.to_logical::<f32>(launcher.window().scale_factor() as f64);
+            (delta.x, delta.y)
+        }
+    };
+    launcher.invoke_continue_canvas_scroll(dx, dy)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn canvas_scroll_continues_when_a_widget_moves_under_the_pointer() {
+        use slint::winit_030::winit::event::{DeviceId, MouseScrollDelta, TouchPhase, WindowEvent};
+        use slint::{ComponentHandle, ModelRc, VecModel};
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = crate::Launcher::new().unwrap();
+        ui.window().set_size(slint::LogicalSize::new(1600., 1000.));
+        ui.set_launcher_visible(true);
+        crate::spatial::connect(&ui);
+        ui.set_canvas_speed(1);
+        ui.set_items(ModelRc::new(VecModel::from(vec![crate::AppTile {
+            id: "widget".into(),
+            widget: true,
+            col: 650,
+            row: 600,
+            span_x: 400,
+            span_y: 300,
+            ..Default::default()
+        }])));
+        ui.show().unwrap();
+        let position = slint::LogicalPosition::new(800., 450.);
+        ui.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved { position });
+        ui.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                position,
+                delta_x: 0.,
+                delta_y: -200.,
+            });
+        let state = ui.global::<crate::CanvasState>();
+        assert_eq!(state.get_pan_y(), -200.);
+        let scroll = |delta, phase| {
+            super::continue_scroll(
+                &ui,
+                &WindowEvent::MouseWheel {
+                    device_id: DeviceId::dummy(),
+                    delta,
+                    phase,
+                },
+            )
+        };
+        // The widget is now beneath the pointer; the same gesture keeps panning.
+        assert!(scroll(
+            MouseScrollDelta::LineDelta(0., -1.),
+            TouchPhase::Moved
+        ));
+        assert_eq!(state.get_pan_y(), -260.);
+        assert!(scroll(
+            MouseScrollDelta::LineDelta(0., 0.),
+            TouchPhase::Ended
+        ));
+        assert!(!scroll(
+            MouseScrollDelta::LineDelta(0., -1.),
+            TouchPhase::Started
+        ));
+        ui.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                position,
+                delta_x: 0.,
+                delta_y: -60.,
+            });
+        assert_eq!(
+            state.get_pan_y(),
+            -260.,
+            "a new scroll over the widget belongs to its content"
+        );
+    }
+
+    #[test]
+    fn scroll_sequence_respects_touchpad_end_mouse_idle_and_layers() {
+        use slint::ComponentHandle;
+        use slint::winit_030::winit::event::{DeviceId, MouseScrollDelta, TouchPhase, WindowEvent};
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = crate::Launcher::new().unwrap();
+        ui.window().set_size(slint::LogicalSize::new(1600., 1000.));
+        ui.set_launcher_visible(true);
+        ui.set_canvas_speed(1);
+        ui.show().unwrap();
+        let scroll = |phase| {
+            super::continue_scroll(
+                &ui,
+                &WindowEvent::MouseWheel {
+                    device_id: DeviceId::dummy(),
+                    delta: MouseScrollDelta::PixelDelta(
+                        slint::winit_030::winit::dpi::PhysicalPosition::new(0., -40.),
+                    ),
+                    phase,
+                },
+            )
+        };
+        let saves = std::rc::Rc::new(std::cell::Cell::new(0));
+        let recorded = saves.clone();
+        ui.global::<crate::CanvasState>()
+            .on_save_view(move |_, _, _| recorded.set(recorded.get() + 1));
+        let begin = || {
+            ui.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                    position: slint::LogicalPosition::new(800., 450.),
+                    delta_x: 0.,
+                    delta_y: -10.,
+                })
+        };
+        let pause = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(300));
+            slint::platform::update_timers_and_animations();
+        };
+        assert!(!scroll(TouchPhase::Started));
+        begin();
+        pause();
+        assert!(
+            ui.get_canvas_scrolling(),
+            "a paused touchpad gesture still owns the Canvas"
+        );
+        assert!(scroll(TouchPhase::Moved));
+        assert_eq!(ui.global::<crate::CanvasState>().get_pan_y(), -50.);
+        assert!(scroll(TouchPhase::Ended));
+        assert!(!ui.get_canvas_scrolling());
+        let before = saves.get();
+        begin();
+        pause();
+        assert!(
+            !ui.get_canvas_scrolling(),
+            "wheel ownership ends after idle"
+        );
+        assert!(
+            saves.get() > before,
+            "ending wheel ownership must not cancel the view save"
+        );
+        begin();
+        ui.set_settings(true);
+        assert!(!scroll(TouchPhase::Moved));
+        assert!(!ui.get_canvas_scrolling());
+    }
+
     use super::*;
     #[test]
     fn pointer_zoom_is_stable_and_fitted_view_zooms_smoothly() {

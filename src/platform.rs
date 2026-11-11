@@ -616,7 +616,37 @@ fn focus_after_show(launcher: &crate::Launcher) {
     });
 }
 
+fn connect_pinch(launcher: &crate::Launcher) {
+    use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
+    let weak = launcher.as_weak();
+    let result = slint::winit_030::invoke_from_active_event_loop(move |event_loop| {
+        let display = event_loop.owned_display_handle();
+        let Ok(handle) = display.display_handle() else {
+            return;
+        };
+        let RawDisplayHandle::Wayland(handle) = handle.as_raw() else {
+            return;
+        };
+        let result = ravenrs_wayland_gestures::listen(handle.display, move |delta| {
+            // The listener borrows Winit's display for its entire lifetime.
+            let _keep_display_alive = &display;
+            if delta.is_finite() && delta > -1.0 {
+                let _ = weak.upgrade_in_event_loop(move |launcher| {
+                    launcher.invoke_pinch_canvas(delta);
+                });
+            }
+        });
+        if let Err(error) = result {
+            eprintln!("orbit: touchpad pinch: {error}");
+        }
+    });
+    if let Err(error) = result {
+        eprintln!("orbit: touchpad pinch: {error}");
+    }
+}
+
 pub fn hide_on_input(launcher: &crate::Launcher) {
+    connect_pinch(launcher);
     let weak = launcher.as_weak();
     let focus_generation = Rc::new(Cell::new(0_u64));
     let mut fullscreen_monitor = String::new();
@@ -644,6 +674,9 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
                 }
                 launcher.set_monitor_name("".into());
                 focus_after_show(&launcher);
+            }
+            if crate::canvas::continue_scroll(&launcher, event) {
+                return EventResult::PreventDefault;
             }
             match event {
                 WindowEvent::ModifiersChanged(state) => {

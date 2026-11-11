@@ -3326,6 +3326,7 @@ dependencies = [
  "i-slint-core",
  "image",
  "keyring",
+ "ravenrs-wayland-gestures",
  "rfd",
  "rusqlite",
  "serde",
@@ -3755,6 +3756,17 @@ name = "range-alloc"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca45419789ae5a7899559e9512e58ca889e41f04f1f2445e9f4b290ceccd1d08"
+
+[[package]]
+name = "ravenrs-wayland-gestures"
+version = "27.1.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9bd309de2a1ac7dca5513adba901b9e5c0e644678c70dab72b22c80797bec190"
+dependencies = [
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+]
 
 [[package]]
 name = "raw-window-handle"
