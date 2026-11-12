@@ -215,7 +215,7 @@ fn folder_target(
 }
 
 // Legacy indexes remain readable only so old saved widgets can be migrated.
-pub const WIDGETS: [&str; 21] = [
+pub const WIDGETS: [&str; 20] = [
     "Random Text",
     "Random Quote",
     "Random Fact",
@@ -236,12 +236,11 @@ pub const WIDGETS: [&str; 21] = [
     "Habit Tracker",
     "Remembrances",
     "Remembrances",
-    "Internet Usage",
 ];
 // A Canvas Image resizes between one grid cell and a large upper bound.
 pub const IMAGE_MIN_SPAN: usize = 1;
 pub const IMAGE_MAX_SPAN: usize = 128;
-pub const WIDGET_SPANS: [(usize, usize); 21] = [
+pub const WIDGET_SPANS: [(usize, usize); 20] = [
     (2, 2),
     (2, 2),
     (2, 2),
@@ -262,9 +261,8 @@ pub const WIDGET_SPANS: [(usize, usize); 21] = [
     (2, 2),
     (3, 5),
     (3, 5),
-    (3, 2),
 ];
-pub const WIDGET_MIN_SPANS: [(usize, usize); 21] = [
+pub const WIDGET_MIN_SPANS: [(usize, usize); 20] = [
     (2, 1),
     (2, 1),
     (2, 1),
@@ -285,10 +283,8 @@ pub const WIDGET_MIN_SPANS: [(usize, usize); 21] = [
     (2, 2),
     (3, 3),
     (3, 3),
-    (3, 2),
 ];
-pub const WIDGET_MAX_SPANS: [(usize, usize); 21] = [
-    (128, 128),
+pub const WIDGET_MAX_SPANS: [(usize, usize); 20] = [
     (128, 128),
     (128, 128),
     (128, 128),

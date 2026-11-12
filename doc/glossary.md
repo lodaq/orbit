@@ -257,16 +257,6 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Recommended window** | Fajr to Sunrise for morning, or Asr to Maghrib for evening. |
 | **Permissible window** | The rest of the active morning or evening period. |
 
-## Internet Usage
-
-| Term | Meaning |
-|---|---|
-| **Internet Usage** | The widget displaying today's upload and download totals from vnStat. |
-| **Limit**, **Internet limits** | Open and edit this computer's active upload and download speed caps. |
-| **Download limit (kbps)**, **Upload limit (kbps)** | Maximum receiving and sending rates, in thousands of bits per second. |
-| **Unlimited** | No Orbit speed cap for that direction, selected with 0 or an empty field. |
-| **Apply limits**, **Remove limits** | Apply both speed caps together, or clear both. |
-
 ## Canvas
 
 | Term | Meaning |

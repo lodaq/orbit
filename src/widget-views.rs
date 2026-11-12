@@ -24,11 +24,10 @@ pub struct View {
     pub resource: String,
     pub recommended: bool,
     pub rows: Vec<(Entry, bool)>,
-    pub usage: crate::internet_usage::Usage,
 }
 
 pub fn category(variant: i32) -> Option<i32> {
-    [0, 1, 2, 3, 4, 8, 5, 6, 7, 9, 10, 11]
+    [0, 1, 2, 3, 4, 8, 5, 6, 7, 9, 10]
         .get(variant.checked_sub(9)? as usize)
         .copied()
 }
@@ -39,22 +38,6 @@ pub fn views(
     force: &str,
     opened: &[String],
 ) -> Result<Vec<View>, String> {
-    views_with_usage(
-        db,
-        specs,
-        force,
-        opened,
-        &crate::internet_usage::Usage::default(),
-    )
-}
-
-pub fn views_with_usage(
-    db: &Connection,
-    specs: &[Spec],
-    force: &str,
-    opened: &[String],
-    usage: &crate::internet_usage::Usage,
-) -> Result<Vec<View>, String> {
     specs
         .iter()
         .map(|spec| {
@@ -62,7 +45,6 @@ pub fn views_with_usage(
                 db,
                 spec,
                 spec.id == force || (opened.iter().any(|id| id == &spec.id) && spec.category == 4),
-                usage,
                 specs
                     .iter()
                     .find(|spec| spec.category == 6)
@@ -72,13 +54,7 @@ pub fn views_with_usage(
         .collect()
 }
 
-fn view(
-    db: &Connection,
-    spec: &Spec,
-    force: bool,
-    usage: &crate::internet_usage::Usage,
-    azan_id: Option<&str>,
-) -> Result<View, String> {
+fn view(db: &Connection, spec: &Spec, force: bool, azan_id: Option<&str>) -> Result<View, String> {
     let today = Local::now().format("%Y-%m-%d").to_string();
     let mut view = View {
         id: spec.id.clone(),
@@ -97,11 +73,6 @@ fn view(
         resource: String::new(),
         recommended: false,
         rows: Vec::new(),
-        usage: if spec.category == 11 {
-            usage.clone()
-        } else {
-            Default::default()
-        },
     };
     if spec.category == 6 {
         crate::azan::view(db, &mut view, chrono::Utc::now())?;
@@ -109,9 +80,6 @@ fn view(
     }
     if matches!(spec.category, 9 | 10) {
         crate::adhkar::automatic_view(db, &mut view, azan_id, chrono::Utc::now())?;
-        return Ok(view);
-    }
-    if spec.category == 11 {
         return Ok(view);
     }
     if spec.category == 8 {

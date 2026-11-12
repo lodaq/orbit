@@ -49,7 +49,6 @@ pub fn connect(ui: &Launcher) -> slint::Timer {
     std::thread::spawn(move || {
         let mut db = None;
         let mut specs = Vec::<widgets::Spec>::new();
-        let mut usage = crate::internet_usage::Cache::default();
         for work in receiver {
             if matches!(work, Work::Audio) {
                 choose_audio(&weak);
@@ -66,9 +65,6 @@ pub fn connect(ui: &Launcher) -> slint::Timer {
             if specs.is_empty() && db.is_none() && matches!(work, Work::Widgets(..) | Work::Minute)
             {
                 continue;
-            }
-            if specs.iter().any(|spec| spec.category == 11) {
-                usage.refresh_if_due();
             }
             let result = (|| {
                 let path = crate::storage::config_path()
@@ -143,10 +139,7 @@ pub fn connect(ui: &Launcher) -> slint::Timer {
                     }
                     _ => None,
                 };
-                Ok::<_, String>((
-                    reply,
-                    widgets::views_with_usage(database, &specs, &force, &opened, &usage.usage)?,
-                ))
+                Ok::<_, String>((reply, widgets::views(database, &specs, &force, &opened)?))
             })();
             let changed = matches!(
                 &work,
@@ -208,7 +201,6 @@ pub fn connect(ui: &Launcher) -> slint::Timer {
         }
     });
     connect_azan(ui, &sender);
-    connect_internet_limits(ui);
     connect_data(ui, &sender);
     connect_widgets(ui, &sender);
     let _ = sender.send(Work::Initialize);
@@ -280,14 +272,6 @@ fn view_model(view: widgets::View) -> WidgetView {
         resource: view.resource.into(),
         recommended: view.recommended,
         rows: model(rows),
-        total_value: view.usage.total_value.into(),
-        total_unit: view.usage.total_unit.into(),
-        down_value: view.usage.down_value.into(),
-        down_unit: view.usage.down_unit.into(),
-        up_value: view.usage.up_value.into(),
-        up_unit: view.usage.up_unit.into(),
-        updated: view.usage.updated.into(),
-        down_ratio: view.usage.down_ratio,
     }
 }
 
@@ -690,88 +674,6 @@ fn cleanup_audio(db: &rusqlite::Connection, database: &Path, relative: &str) {
     {
         eprintln!("orbit: couldn't remove unused audio: {error}");
     }
-}
-
-fn connect_internet_limits(ui: &Launcher) {
-    let weak = ui.as_weak();
-    ui.global::<crate::InternetLimits>().on_load(move || {
-        if let Some(ui) = weak.upgrade() {
-            internet_limits_work(&ui, None);
-        }
-    });
-    let weak = ui.as_weak();
-    ui.global::<crate::InternetLimits>()
-        .on_apply(move |remove| {
-            let Some(ui) = weak.upgrade() else {
-                return;
-            };
-            let draft = ui.global::<crate::InternetLimits>();
-            if draft.get_busy() {
-                return;
-            }
-            let limits = if remove {
-                Ok(crate::internet_limits::Limits::default())
-            } else {
-                crate::internet_limits::Limits::parse(&draft.get_download(), &draft.get_upload())
-            };
-            match limits {
-                Ok(limits) => internet_limits_work(&ui, Some(limits)),
-                Err(error) => draft.set_error(error.into()),
-            }
-        });
-}
-
-fn internet_limits_work(ui: &Launcher, limits: Option<crate::internet_limits::Limits>) {
-    let draft = ui.global::<crate::InternetLimits>();
-    let session = draft.get_session();
-    draft.set_busy(true);
-    draft.set_error("".into());
-    let weak = ui.as_weak();
-    std::thread::spawn(move || {
-        let changed = limits.is_some();
-        let result = match limits {
-            Some(limits) => crate::internet_limits::apply(&limits),
-            None => crate::internet_limits::read(),
-        };
-        let (active, error) = match result {
-            Ok(active) => (Some(active), None),
-            Err(error) => (crate::internet_limits::read().ok(), Some(error)),
-        };
-        let _ = weak.upgrade_in_event_loop(move |ui| {
-            let draft = ui.global::<crate::InternetLimits>();
-            if draft.get_session() != session {
-                return;
-            }
-            draft.set_busy(false);
-            if let Some(active) = active {
-                let (down, up) = active.values();
-                let down_label = if active.download == 0 {
-                    "Unlimited".into()
-                } else {
-                    format!("{down} kbps")
-                };
-                let up_label = if active.upload == 0 {
-                    "Unlimited".into()
-                } else {
-                    format!("{up} kbps")
-                };
-                if !changed || error.is_none() {
-                    draft.set_download(down.into());
-                    draft.set_upload(up.into());
-                }
-                draft.set_status(
-                    format!("Active · Download: {down_label}\nUpload: {up_label}").into(),
-                );
-            } else {
-                draft.set_status("Active limits unavailable".into());
-            }
-            if let Some(error) = error {
-                draft.set_error(error.into());
-            } else if changed {
-                crate::toast::success(&ui.as_weak(), "Internet limits updated");
-            }
-        });
-    });
 }
 
 fn azan_draft(ui: &Launcher) -> crate::azan::Settings {

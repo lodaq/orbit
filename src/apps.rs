@@ -71,9 +71,7 @@ enum Action {
     ChangeBackground,
     SaveDefaultSearchEngine(i32),
     SaveSmoothCursor(bool),
-    SaveEnglish(bool, bool, bool, String),
     SaveAi(crate::ai::Settings),
-    SaveEnglishModel(String, String, String, String),
     SaveLayoutLocked(bool),
     SaveShortcut(i32, String, String),
     DeleteShortcut(i32, String),
@@ -567,24 +565,6 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         if let Some(ui) = ai_ui.upgrade() {
             let _ = ai_sender.send(Action::SaveAi(crate::ai::Settings::from_ui(&ui)));
         }
-    });
-    let english_sender = send.clone();
-    launcher.on_save_english(move |suggestions, autocomplete, grammar, address| {
-        let _ = english_sender.send(Action::SaveEnglish(
-            suggestions,
-            autocomplete,
-            grammar,
-            address.into(),
-        ));
-    });
-    let model_sender = send.clone();
-    launcher.on_save_english_model(move |model, suggestions, completion, grammar| {
-        let _ = model_sender.send(Action::SaveEnglishModel(
-            model.into(),
-            suggestions.into(),
-            completion.into(),
-            grammar.into(),
-        ));
     });
     let lock_sender = send.clone();
     launcher.on_save_layout_locked(move |locked| {
@@ -1278,56 +1258,6 @@ impl Apps {
             Action::SearchWeb(query, engine) => {
                 let url = url_action_url(self.config.search_engine_template(&engine), &query)?;
                 open_url(&url).map_err(|error| format!("Couldn't open web search: {error}"))
-            }
-            Action::SaveEnglishModel(
-                model,
-                suggestions_prompt,
-                completion_prompt,
-                grammar_prompt,
-            ) => {
-                let settings = crate::english_assistance::Settings {
-                    model,
-                    suggestions_prompt,
-                    completion_prompt,
-                    grammar_prompt,
-                    ..self.config.english_assistance.clone()
-                };
-                if !settings.valid() {
-                    return Err(
-                        "Choose a local model and nonempty prompts (up to 16000 bytes each)."
-                            .into(),
-                    );
-                }
-                if self.config.english_assistance != settings {
-                    let mut config = self.config.clone();
-                    config.english_assistance = settings;
-                    config
-                        .save()
-                        .map_err(|error| format!("Couldn't save English assistance: {error}"))?;
-                    self.config = config;
-                }
-                Ok(())
-            }
-            Action::SaveEnglish(suggestions, autocomplete, grammar, address) => {
-                let settings = crate::english_assistance::Settings {
-                    suggestions,
-                    autocomplete,
-                    grammar,
-                    address,
-                    ..self.config.english_assistance.clone()
-                };
-                if !settings.valid() {
-                    return Err("Use a local Ollama address such as http://127.0.0.1:11434".into());
-                }
-                if self.config.english_assistance != settings {
-                    let mut config = self.config.clone();
-                    config.english_assistance = settings;
-                    config
-                        .save()
-                        .map_err(|error| format!("Couldn't save English assistance: {error}"))?;
-                    self.config = config;
-                }
-                Ok(())
             }
             Action::SaveSmoothCursor(enabled) => {
                 if self.config.smooth_cursor != enabled {
@@ -3280,7 +3210,6 @@ impl Apps {
         let canvas_speed = self.config.canvas_speed;
         let font_size = self.config.font_size;
         let smooth_cursor = self.config.smooth_cursor;
-        let english = self.config.english_assistance.clone();
         let ai = self.config.ai.clone();
         let layout_locked = self.config.layout_locked;
         let search_engine_index = self.config.default_search_engine_index() as i32;
@@ -3587,14 +3516,6 @@ impl Apps {
             );
             launcher.set_smooth_cursor(smooth_cursor);
             ai.update_ui(&launcher);
-            launcher.set_english_model(english.model.into());
-            launcher.set_english_suggestions_prompt(english.suggestions_prompt.into());
-            launcher.set_english_completion_prompt(english.completion_prompt.into());
-            launcher.set_english_grammar_prompt(english.grammar_prompt.into());
-            launcher.set_english_address(english.address.into());
-            launcher.set_english_suggestions_enabled(english.suggestions);
-            launcher.set_english_autocomplete_enabled(english.autocomplete);
-            launcher.set_english_grammar_enabled(english.grammar);
             launcher.set_layout_locked(layout_locked);
             launcher.set_default_search_engine_index(search_engine_index);
             launcher.invoke_default_search_engine_saved(search_engine_index);
@@ -5504,13 +5425,13 @@ mod tests {
             .dispatch_event(slint::platform::WindowEvent::KeyPressed {
                 text: slint::platform::Key::RightArrow.into(),
             });
-        assert_eq!(launcher.get_english_cursor(), 1);
+        assert_eq!(launcher.get_search_cursor_offset(), 1);
         launcher
             .window()
             .dispatch_event(slint::platform::WindowEvent::KeyPressed {
                 text: slint::platform::Key::LeftArrow.into(),
             });
-        assert_eq!(launcher.get_english_cursor(), 0);
+        assert_eq!(launcher.get_search_cursor_offset(), 0);
 
         // 2. Submit normal query without prefix: "firefox"
         launcher.set_search_text("firefox".into());
@@ -5565,19 +5486,19 @@ mod tests {
         assert_eq!(launcher.get_activated_prefix_id(), "ticktick");
         assert_eq!(launcher.get_activated_prefix_name(), "TickTick");
         assert_eq!(launcher.get_search_text(), "buy milk !high");
-        assert_eq!(launcher.get_english_cursor(), 14);
+        assert_eq!(launcher.get_search_cursor_offset(), 14);
         launcher
             .window()
             .dispatch_event(slint::platform::WindowEvent::KeyPressed {
                 text: slint::platform::Key::LeftArrow.into(),
             });
-        assert_eq!(launcher.get_english_cursor(), 13);
+        assert_eq!(launcher.get_search_cursor_offset(), 13);
         launcher
             .window()
             .dispatch_event(slint::platform::WindowEvent::KeyPressed {
                 text: slint::platform::Key::RightArrow.into(),
             });
-        assert_eq!(launcher.get_english_cursor(), 14);
+        assert_eq!(launcher.get_search_cursor_offset(), 14);
 
         // Second Up restores YouTube prefix and "funny cats & dogs"
         assert!(crate::shortcuts::handle(

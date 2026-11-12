@@ -46,8 +46,6 @@ pub struct Config {
     #[serde(default = "default_smooth_cursor")]
     pub smooth_cursor: bool,
     #[serde(default)]
-    pub english_assistance: crate::english_assistance::Settings,
-    #[serde(default)]
     pub ai: crate::ai::Settings,
     #[serde(default)]
     ai_initialized: bool,
@@ -80,8 +78,6 @@ pub struct Config {
     account_searches_initialized: bool,
     #[serde(default)]
     search_word_shortcut_initialized: bool,
-    #[serde(default)]
-    search_completion_shortcut_initialized: bool,
     #[serde(default)]
     settings_shortcut_initialized: bool,
     #[serde(default)]
@@ -481,7 +477,6 @@ impl Default for Config {
             background_folder: "/home/sebaq/Pictures/aesthetic-wallpapers/images".into(),
             default_search_engine: default_search_engine(),
             smooth_cursor: true,
-            english_assistance: Default::default(),
             ai: Default::default(),
             ai_initialized: true,
             layout_locked: false,
@@ -498,7 +493,6 @@ impl Default for Config {
             site_searches_initialized: true,
             account_searches_initialized: true,
             search_word_shortcut_initialized: true,
-            search_completion_shortcut_initialized: true,
             settings_shortcut_initialized: true,
             canvas_shortcuts_initialized: true,
         }
@@ -712,11 +706,6 @@ impl Config {
         if self.ai_initialized {
             return false;
         }
-        self.ai = crate::ai::Settings {
-            address: self.english_assistance.address.clone(),
-            local_model: self.english_assistance.model.clone(),
-            ..Default::default()
-        };
         let id = self.add_ai_action();
         if !self
             .prefixes
@@ -755,19 +744,6 @@ impl Config {
         id
     }
 
-    fn add_search_completion_shortcut(&mut self) {
-        if !self
-            .shortcuts
-            .iter()
-            .any(|entry| entry.action == 13 || entry.keys == "Ctrl+E")
-        {
-            self.shortcuts.push(crate::shortcuts::Shortcut {
-                action: 13,
-                keys: "Ctrl+E".into(),
-            });
-        }
-        self.search_completion_shortcut_initialized = true;
-    }
     fn add_search_word_shortcut(&mut self) {
         if !self
             .shortcuts
@@ -1021,6 +997,10 @@ impl Config {
                 ..
             } = item
             {
+                // Retired saved widgets are accepted only for removal during migration.
+                if *variant == 20 {
+                    continue;
+                }
                 if *variant >= crate::spatial::WIDGETS.len()
                     || text.is_empty()
                     || text.chars().count() > 1000
@@ -1125,7 +1105,7 @@ impl Config {
                 &self
                     .shortcuts
                     .iter()
-                    .filter(|entry| !matches!(entry.action, 10 | 11))
+                    .filter(|entry| !matches!(entry.action, 10 | 11 | 13))
                     .cloned()
                     .collect::<Vec<_>>(),
             )
@@ -1230,8 +1210,30 @@ fn migrate(
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let legacy = config.version < 5 || !config.legacy_pages.is_empty();
     let mut changed = config.initialize_ai();
+    let removed: Vec<_> = config
+        .items
+        .iter()
+        .chain(config.legacy_pages.iter().flat_map(|page| &page.items))
+        .filter(|item| matches!(item, Item::Widget { variant: 20, .. }))
+        .map(|item| item.id().to_owned())
+        .collect();
+    if !removed.is_empty() {
+        config
+            .items
+            .retain(|item| !removed.iter().any(|id| id == item.id()));
+        for page in &mut config.legacy_pages {
+            page.items
+                .retain(|item| !removed.iter().any(|id| id == item.id()));
+        }
+        config.positions.retain(|id, _| !removed.contains(id));
+        config.pinned.retain(|id| !removed.contains(id));
+        for frame in &mut config.frames {
+            frame.items.retain(|id| !removed.contains(id));
+        }
+        config.frames.retain(|frame| !frame.items.is_empty());
+        changed = true;
+    }
     changed |= merge_remembrances(config, progress)?;
-    changed |= config.english_assistance.migrate_prompts();
     if config.version < 3 {
         let pitch = crate::spatial::cell_pitch(config.item_size, config.grid_gap);
         for rect in config.positions.values_mut() {
@@ -1286,10 +1288,6 @@ fn migrate(
         config.version = 5;
         changed = true;
     }
-    if !config.search_completion_shortcut_initialized {
-        config.add_search_completion_shortcut();
-        changed = true;
-    }
     if !config.search_word_shortcut_initialized {
         config.add_search_word_shortcut();
         changed = true;
@@ -1315,7 +1313,7 @@ fn migrate(
     let previous_shortcuts = config.shortcuts.len();
     config
         .shortcuts
-        .retain(|entry| !matches!(entry.action, 10 | 11));
+        .retain(|entry| !matches!(entry.action, 10 | 11 | 13));
     changed |= config.shortcuts.len() != previous_shortcuts;
     let before = config.positions.clone();
     crate::spatial::reconcile(config).map_err(std::io::Error::other)?;
@@ -1498,7 +1496,7 @@ mod tests {
             token: "AI".into(),
             action_id: "youtube".into(),
         });
-        config.english_assistance.model = "my-local-model".into();
+        config.ai.local_model = "my-local-model".into();
         assert!(config.initialize_ai());
         assert_eq!(config.ai.local_model, "my-local-model");
         assert_eq!(
@@ -1533,27 +1531,6 @@ mod tests {
         assert!(config.valid());
         let prefix = config.prefixes.iter().find(|p| p.token == "ai").unwrap();
         assert_eq!(prefix.action_id, "orbit-ai-1");
-    }
-
-    #[test]
-    fn completion_shortcut_migration_preserves_conflicts_and_removal() {
-        let mut config = Config::default();
-        config.shortcuts.retain(|entry| entry.action != 13);
-        config.shortcuts[0].keys = "Ctrl+E".into();
-        config.add_search_completion_shortcut();
-        assert!(!config.shortcuts.iter().any(|entry| entry.action == 13));
-        config.shortcuts[0].keys = "Ctrl+K".into();
-        config.add_search_completion_shortcut();
-        assert!(
-            config
-                .shortcuts
-                .iter()
-                .any(|entry| entry.action == 13 && entry.keys == "Ctrl+E")
-        );
-        config.shortcuts.retain(|entry| entry.action != 13);
-        let loaded: Config = serde_json::from_value(serde_json::to_value(config).unwrap()).unwrap();
-        assert!(loaded.search_completion_shortcut_initialized);
-        assert!(!loaded.shortcuts.iter().any(|entry| entry.action == 13));
     }
 
     #[test]
@@ -1956,6 +1933,30 @@ mod canvas_frame_tests {
         let loaded: Config = serde_json::from_slice(&serde_json::to_vec(&config).unwrap()).unwrap();
         assert!(loaded.canvas_shortcuts_initialized);
         assert!(!loaded.shortcuts.iter().any(|entry| entry.action == 21));
+    }
+
+    #[test]
+    fn retired_widget_is_removed_without_losing_other_items() {
+        let config = config_with_frame();
+        let mut value = serde_json::to_value(&config).unwrap();
+        value["items"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "Widget": { "id": "retired", "name": "Retired",
+                "text": "Retired", "variant": 20, "min_number": 1, "max_number": 7 }
+            }));
+        value["frames"][0]["items"]
+            .as_array_mut()
+            .unwrap()
+            .push("retired".into());
+        value["positions"]["retired"] =
+            serde_json::json!({"col": 900, "row": 0, "width": 432, "height": 288});
+        let restored = decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(restored.items.len(), config.items.len());
+        assert_eq!(restored.frames[0].items, config.frames[0].items);
+        assert!(!restored.positions.contains_key("retired"));
+        assert!(restored.valid());
     }
 
     fn config_with_frame() -> Config {

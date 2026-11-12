@@ -386,7 +386,7 @@ def verify_items(d):
 
 
 def verify_widgets(d):
-    variants = list(range(7, 19)) + [20]
+    variants = list(range(7, 19))
     for index, variant in enumerate(variants):
         before = {item['id'] for item in d.items()}
         d.open_add('Widgets')

@@ -32,10 +32,6 @@ pub fn defaults() -> Vec<Shortcut> {
         action: 12,
         keys: "Ctrl+W".into(),
     }))
-    .chain(std::iter::once(Shortcut {
-        action: 13,
-        keys: "Ctrl+E".into(),
-    }))
     .chain(canvas_defaults())
     .collect()
 }
@@ -65,7 +61,7 @@ pub fn canvas_defaults() -> Vec<Shortcut> {
 
 pub fn valid(bindings: &[Shortcut]) -> bool {
     bindings.iter().enumerate().all(|(index, binding)| {
-        matches!(binding.action, 0..=9 | 12..=24)
+        matches!(binding.action, 0..=9 | 12 | 14..=24)
             && !binding.keys.is_empty()
             && binding.keys.len() < 80
             && !bindings[..index]
@@ -244,11 +240,10 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         }
         return false;
     }
-    if launcher.global::<crate::InternetLimits>().get_visible()
-        || !launcher
-            .global::<crate::AzanSettings>()
-            .get_widget_id()
-            .is_empty()
+    if !launcher
+        .global::<crate::AzanSettings>()
+        .get_widget_id()
+        .is_empty()
     {
         if launcher
             .get_shortcuts()
@@ -273,42 +268,6 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         }
         launcher.set_frame_recording(false);
         return true;
-    }
-    if launcher.get_english_active()
-        && launcher.get_search_editing()
-        && !launcher.get_busy()
-        && launcher.get_english_source() == launcher.get_search_text()
-    {
-        let count = launcher.get_english_suggestions().row_count() as i32;
-        if count > 0 {
-            match keys.as_str() {
-                "Ctrl+1" | "Ctrl+2" | "Ctrl+3" => {
-                    let index = i32::from(keys.as_bytes()[5] - b'1');
-                    if index < count {
-                        launcher.invoke_english_apply(index);
-                    }
-                    return true;
-                }
-                "Ctrl+N" | "Ctrl+J" | "Ctrl+Down" | "Ctrl+P" | "Ctrl+K" | "Ctrl+Up" => {
-                    let selected = launcher.get_english_suggestion_selection();
-                    let down = matches!(keys.as_str(), "Ctrl+N" | "Ctrl+J" | "Ctrl+Down");
-                    let next = if selected < 0 {
-                        if down { 0 } else { count - 1 }
-                    } else if down {
-                        (selected + 1).min(count - 1)
-                    } else {
-                        (selected - 1).max(0)
-                    };
-                    launcher.set_english_suggestion_selection(next);
-                    return true;
-                }
-                "Enter" if launcher.get_english_suggestion_selection() >= 0 => {
-                    launcher.invoke_english_apply(launcher.get_english_suggestion_selection());
-                    return true;
-                }
-                _ => (),
-            }
-        }
     }
     if list_focused
         && launcher.get_search_navigation()
@@ -393,16 +352,6 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         }
         6 if launcher.get_search_navigation() => launcher.invoke_run_activated_prefix(),
         6 if launcher.get_grid_navigation() => launcher.invoke_activate_grid(),
-        7 if launcher.get_search_editing()
-            && !launcher.get_english_completion().is_empty()
-            && (!launcher.get_activated_prefix_id().is_empty()
-                || launcher
-                    .invoke_match_prefix(launcher.get_search_text())
-                    .action_id
-                    .is_empty()) =>
-        {
-            launcher.invoke_accept_next_word();
-        }
         6..=8 => {
             let text = match action {
                 6 => "\n",
@@ -433,8 +382,6 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
             }
         }
         12 => return false,
-        13 if launcher.get_search_editing() => launcher.invoke_accept_next_word(),
-        13 => return false,
         _ => (),
     }
     true
@@ -619,104 +566,17 @@ mod tests {
     }
 
     #[test]
-    fn suggestion_keys_select_apply_and_reset_without_submitting() {
-        i_slint_backend_testing::init_no_event_loop();
-        let ui = Launcher::new().unwrap();
-        ui.set_shortcuts(model(defaults()));
-        ui.set_english_suggestions_enabled(true);
-        ui.show().unwrap();
-        ui.set_launcher_visible(true);
-        ui.invoke_focus_search();
-        input(&ui, "source");
-        ui.set_english_source(ui.get_search_text());
-        ui.set_english_suggestions(
-            std::rc::Rc::new(slint::VecModel::from(vec![
-                "one".into(),
-                "two".into(),
-                "three".into(),
-            ]))
-            .into(),
-        );
-        let applied = std::rc::Rc::new(std::cell::Cell::new(-1));
-        let result = applied.clone();
-        ui.on_english_apply(move |index| result.set(index));
-        assert!(ui.get_english_active());
-        assert_eq!(ui.get_english_suggestion_selection(), -1);
-        for (key, expected) in [
-            ("n", 0),
-            ("j", 1),
-            ("n", 2),
-            ("j", 2),
-            ("p", 1),
-            ("k", 0),
-            ("p", 0),
-        ] {
-            assert!(handle(
-                &ui,
-                &Key::Character(key.into()),
-                ModifiersState::CONTROL
-            ));
-            assert_eq!(ui.get_english_suggestion_selection(), expected);
-        }
-        assert!(handle(
-            &ui,
-            &Key::Named(NamedKey::Enter),
-            ModifiersState::empty()
-        ));
-        assert_eq!(applied.get(), 0);
-        for (key, expected) in [("1", 0), ("2", 1), ("3", 2)] {
-            assert!(handle(
-                &ui,
-                &Key::Character(key.into()),
-                ModifiersState::CONTROL
-            ));
-            assert_eq!(applied.get(), expected);
-        }
-        ui.set_english_suggestions(
-            std::rc::Rc::new(slint::VecModel::from(vec!["new".into()])).into(),
-        );
-        ui.set_english_suggestion_selection(-1);
-        assert!(handle(
-            &ui,
-            &Key::Character("p".into()),
-            ModifiersState::CONTROL
-        ));
-        assert_eq!(ui.get_english_suggestion_selection(), 0);
-        applied.set(-1);
-        handle(&ui, &Key::Character("3".into()), ModifiersState::CONTROL);
-        assert_eq!(applied.get(), -1);
-        ui.set_english_source("stale".into());
-        assert!(!handle(
-            &ui,
-            &Key::Character("n".into()),
-            ModifiersState::CONTROL
-        ));
-        ui.set_settings(true);
-        assert!(!handle(
-            &ui,
-            &Key::Character("j".into()),
-            ModifiersState::CONTROL
-        ));
-    }
-
-    #[test]
     fn retired_arrangement_actions_are_rejected_without_renumbering_search_actions() {
-        for action in [10, 11] {
+        for action in [10, 11, 13] {
             assert!(!valid(&[Shortcut {
                 action,
                 keys: "Ctrl+P".into()
             }]));
         }
-        assert!(valid(&[
-            Shortcut {
-                action: 12,
-                keys: "Ctrl+W".into()
-            },
-            Shortcut {
-                action: 13,
-                keys: "Ctrl+E".into()
-            }
-        ]));
+        assert!(valid(&[Shortcut {
+            action: 12,
+            keys: "Ctrl+W".into()
+        }]));
     }
 
     #[test]

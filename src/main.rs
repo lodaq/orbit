@@ -9,15 +9,9 @@ mod canvas;
 mod canvas_edit;
 mod config;
 mod daemon;
-#[path = "english-assistance.rs"]
-mod english_assistance;
 mod icons;
 #[path = "ink.rs"]
 mod ink;
-#[path = "internet-limits.rs"]
-mod internet_limits;
-#[path = "internet-usage.rs"]
-mod internet_usage;
 #[path = "item-drop.rs"]
 mod item_drop;
 #[cfg(not(windows))]

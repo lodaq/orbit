@@ -92,10 +92,6 @@ The approved v2 UX specification is `Orbit_Desktop_Launcher_UX_Spec_v2.md`; it s
 
 - `src/widget-starters.rs`: original bilingual starter text, vocabulary examples, unfinished starter habits, Quran passage attribution and a dated Cairo prayer-time example.
 - `src/widget-views.rs`: local selections, persistent shuffled rotations, completion references, habit state, today's achievements and saved prayer countdowns.
-- `src/internet-usage.rs`: worker-side vnStat JSON reading, local-day interface totals, binary unit formatting and last-successful-value caching.
-- `src/internet-limits.rs`: validated kbps conversion and atomic Linux nftables limits for this computer, with active kernel-state reading.
-- `ui/internet-limits.slint`: shared Internet Usage speed-limit sheet and its draft/loading state.
-- `tests/internet-limits-ui.py`: real widget controls and IPv4/IPv6 transfers on private display/profile/network namespaces.
 - `ui/local-widget.slint`: local widget reading hierarchy, scrollable content, fixed action footers, grouped habit rows, an Achievements summary with scrollable completion rows, and local audio actions, displayed above the Canvas input surface. `src/widget-data-ui.rs` separates vocabulary and prayer headlines for display without changing saved content.
 
 - `Panel`, `MenuOption` and `SettingsToggle` in `ui/controls.slint` share floating material, menu rows and labeled switches across the complete native interface.
