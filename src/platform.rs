@@ -460,6 +460,22 @@ pub fn show_or_hide(
     monitor: &str,
     ticktick: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if launcher.window().is_visible() && !ticktick {
+        let clients: Vec<serde_json::Value> = serde_json::from_str(&hyprland("j/clients")?)?;
+        let monitors: Vec<serde_json::Value> = serde_json::from_str(&hyprland("j/monitors")?)?;
+        if let Some(client) = clients
+            .iter()
+            .find(|client| client["pid"].as_u64() == Some(std::process::id().into()))
+        {
+            let workspace = client["workspace"]["name"].as_str();
+            launcher.set_launcher_visible(workspace.is_some_and(|workspace| {
+                monitors.iter().any(|monitor| {
+                    monitor["activeWorkspace"]["name"].as_str() == Some(workspace)
+                        || monitor["specialWorkspace"]["name"].as_str() == Some(workspace)
+                })
+            }));
+        }
+    }
     if launcher.get_launcher_visible() && !ticktick {
         return hide(launcher);
     }
@@ -514,6 +530,17 @@ fn restore(name: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 pub fn hide(launcher: &crate::Launcher) -> Result<(), Box<dyn std::error::Error>> {
     if launcher.get_launcher_visible() {
+        let monitors: Vec<serde_json::Value> = serde_json::from_str(&hyprland("j/monitors")?)?;
+        // A dock may reveal the parking workspace; moving into it again does not hide it.
+        if monitors
+            .iter()
+            .any(|monitor| monitor["specialWorkspace"]["name"].as_str() == Some("special:orbit"))
+        {
+            dispatch(
+                "hl.dsp.workspace.toggle_special(\"orbit\")",
+                "togglespecialworkspace orbit",
+            )?;
+        }
         // Keeping the surface and buffers avoids Wayland window creation on every toggle.
         dispatch(
             &format!(

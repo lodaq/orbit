@@ -61,6 +61,7 @@ The approved supplied UI update adds the reference launcher appearance, search a
 - `src/platform-windows.rs`: Windows resident launcher IPC, fullscreen window behavior, registered-file opening, process launch, system actions and Installed apps discovery.
 - `tests/canvas-groups-ui.py`: private-display selection, Frame creation/editing, shortcut conflicts, layout lock, mixed-language labels and visible ink persistence/erasing checks.
 - `tests/canvas-ui.py`: real pointer and persistence checks using a private Xvfb display, temporary config and isolated runtime socket.
+- `tests/dock-toggle-ui.py`: dock-revealed special workspace closure and repeated toggles using a private display/profile and simulated Hyprland workspaces.
 - `tests/search-state-ui.py`: private-display checks for search text, cursor and Prefix retention across toggles and focus interruptions, plus explicit Escape clearing.
 - `tests/scroll-pan-ui.py`: continuous wheel pans across Widgets, normal new Widget scrolls, unchanged item positions and view persistence on a private display/profile.
 

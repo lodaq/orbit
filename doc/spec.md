@@ -40,6 +40,8 @@ Completion verification (2026-11-10): formatting, Clippy, release build, 194 ena
 
 ## Current behavior
 
+On Linux, toggle reads Orbit's workspace and Hyprland's active workspaces when its resident window exists. A dock may reveal the parking workspace without Orbit IPC; hiding explicitly closes `special:orbit` when open, using the Hyprland Lua dispatcher with a legacy fallback. Focus notifications do not change the launcher's visible state. Search state is retained.
+
 Search anything retains its text, active Prefix, selected result, scroll position and AI answer when Orbit is toggled or hidden by a focus interruption. Escape still clears search explicitly. This state lasts for the current daemon session.
 
 Verification (2026-11-12): formatting, Clippy, the release build and 203 enabled Rust unit tests passed; eight opt-in tests remained ignored. `tests/search-state-ui.py` passed draft text, cursor position, Prefix retention, toggle, focus interruption and Escape clearing on a private Xvfb display/profile (`target/ui-check/canvas-qvnufj1a/`). The AI regression check also preserves its prompt, Prefix and answer on reopen. The normal hidden daemon was restarted. Windows runtime was not tested.
