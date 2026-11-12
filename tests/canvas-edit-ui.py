@@ -205,6 +205,49 @@ try:
     d.start()
     assert len(d.items()) == 5 and not d.data()['ink']
     d.shot('restart.png')
+    d.stop()
+    fixture = d.data()
+    fixture['items'] = fixture['items'][:1]
+    item_id = next(iter(fixture['items'][0].values()))['id']
+    fixture['positions'] = {item_id: dict(col=400, row=300, width=144, height=144)}
+    fixture['frames'] = []
+    fixture['canvas'] = dict(view=dict(x=0, y=0, zoom=1))
+    fixture['ink'] = [dict(id=name, points=[dict(x=600, y=y), dict(x=750, y=y+30)],
+                           style=dict(color='#e8e5ef', size=4, opacity=1,
+                                      arrow=name == 'arrow', highlighter=name == 'highlighter'))
+                      for name, y in [('pen', 300), ('arrow', 360), ('highlighter', 420)]]
+    d.config.write_text(json.dumps(fixture))
+    d.start()
+    d.click(40, 340)
+    d.drag((370, 270), (780, 470))
+    d.shot('mixed-selection.png')
+    chord(d, 'c')
+    chord(d, 'v')
+    d.wait(lambda: len(d.data()['ink']) == 6 and len(d.items()) == 2,
+           'mixed copy/paste did not duplicate items and strokes')
+    d.shot('mixed-paste.png')
+    chord(d, 'z')
+    d.wait(lambda: len(d.data()['ink']) == 3 and len(d.items()) == 1, 'mixed Undo failed')
+    chord(d, 'z', shift=True)
+    d.wait(lambda: len(d.data()['ink']) == 6 and len(d.items()) == 2, 'mixed Redo failed')
+    d.click(1500, 800)
+    d.drag((370, 270), (780, 470))
+    chord(d, 'x')
+    d.wait(lambda: len(d.data()['ink']) == 3 and len(d.items()) == 1, 'mixed Cut failed')
+    chord(d, 'v')
+    d.wait(lambda: len(d.data()['ink']) == 6 and len(d.items()) == 2, 'mixed cut Paste failed')
+    assert all(any(stroke['id'] == name for stroke in d.data()['ink'])
+               for name in ['pen', 'arrow', 'highlighter'])
+    d.shot('mixed-cut-paste.png')
+    # A stroke can also be selected directly without a rectangle.
+    d.click(1500, 800)
+    pen = next(stroke for stroke in d.data()['ink'] if stroke['id'] == 'pen')
+    point = pen['points'][0]
+    d.click(round(point['x'] + 20), round(point['y'] + 4))
+    chord(d, 'c')
+    chord(d, 'v')
+    d.wait(lambda: len(d.data()['ink']) == 7, 'single-stroke click Copy failed')
+    d.shot('stroke-click-copy.png')
     print('PASS wheel pan/zoom, Frame navigation, tools, clipboard, undo/redo, live ink and cancellation:', d.work)
 finally:
     d.close()

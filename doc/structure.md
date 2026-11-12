@@ -1,7 +1,7 @@
 # File structure
 
 - `src/ink.rs`: world-coordinate ink paths, bounded stroke input and whole-stroke erasing.
-- `src/canvas-edit.rs`: bounded session history and Canvas item clipboard snapshots, fresh IDs and collision-free paste placement. `tests/canvas-edit-ui.py` checks scoped edit/tool shortcuts, wheel pan/zoom, Frame navigation, live ink and gesture cancellation on a private display.
+- `src/canvas-edit.rs`: bounded session history and Canvas item and ink clipboard snapshots, fresh IDs and collision-free paste placement. `tests/canvas-edit-ui.py` checks scoped edit/tool shortcuts, wheel pan/zoom, Frame navigation, live ink, mixed item/stroke clipboard edits and gesture cancellation on a private display.
 - Canvas Frames reuse `src/config.rs` storage, `src/spatial.rs` selection and reconciliation, `src/apps.rs` worker saves and fit navigation, and `src/shortcuts.rs` recording and conflict checks. `ui/assets/tool-*.svg` supplies the four toolbar icons.
 
 - `src/t3-providers.rs`: bounded local T3 Code provider/model import, secret-free account references and connection fingerprints.

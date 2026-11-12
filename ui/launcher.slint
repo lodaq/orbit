@@ -19,7 +19,7 @@ import { Palette, ScrollView, Slider } from "std-widgets.slint";
 export struct CompletedReference { id: string, date: string, title: string, done: bool }
 export struct CanvasFrameView { id: string, name: string, keys: string, x: float, y: float, width: float, height: float, count: int }
 export struct InkSample { x: float, y: float }
-export struct CanvasInk { x: float, y: float, width: float, height: float, path: string, samples: [InkSample], color: color, size: float, opacity: float, dimmed: bool }
+export struct CanvasInk { id: string, x: float, y: float, width: float, height: float, path: string, samples: [InkSample], color: color, size: float, opacity: float, dimmed: bool }
 
 export struct ShortcutEntry { action: int, keys: string }
 export struct ShortcutGroup { action: int, entries: [ShortcutEntry] }
@@ -638,7 +638,7 @@ export component Launcher inherits Window {
     pure callback preview-valid([AppTile],string,int,int,int,int) -> bool;
     pure callback selection-has([string], string) -> bool;
     pure callback selection-toggle([string], string) -> [string];
-    pure callback marquee-select([AppTile],float,float,float,float,[string],bool) -> [string];
+    pure callback marquee-select([AppTile],[CanvasInk],float,float,float,float,[string],bool) -> [string];
     pure callback ink-view([InkSample], int, int, float) -> CanvasInk;
     pure callback preview-erase([CanvasInk], float, float, float, float) -> [CanvasInk];
     pure callback frame-index([CanvasFrameView], string) -> int;
@@ -963,10 +963,13 @@ export component Launcher inherits Window {
         canvas-focus.focus();
     }
     function finish-marquee() {
-        if root.marquee-active && !root.marquee-additive
+        if root.marquee-active
             && abs(root.marquee-end-x - root.marquee-start-x) < 4px
             && abs(root.marquee-end-y - root.marquee-start-y) < 4px {
-            root.selected-ids = [];
+            root.selected-ids = root.marquee-select([],root.ink-strokes,
+                root.world-x(root.marquee-start-x) / 1px - 3,root.world-y(root.marquee-start-y) / 1px - 3,
+                root.world-x(root.marquee-start-x) / 1px + 3,root.world-y(root.marquee-start-y) / 1px + 3,
+                root.marquee-selection,root.marquee-additive);
         }
         root.marquee-active = false;
     }
@@ -1104,7 +1107,7 @@ export component Launcher inherits Window {
             if root.placing-widget >= 0 { root.update-widget-placement(x,y); }
             else if root.marquee-active {
                 root.marquee-end-x = x; root.marquee-end-y = y;
-                root.selected-ids = root.marquee-select(root.items,root.world-x(root.marquee-start-x) / 1px,root.world-y(root.marquee-start-y) / 1px,root.world-x(x) / 1px,root.world-y(y) / 1px,root.marquee-selection,root.marquee-additive);
+                root.selected-ids = root.marquee-select(root.items,root.ink-strokes,root.world-x(root.marquee-start-x) / 1px,root.world-y(root.marquee-start-y) / 1px,root.world-x(x) / 1px,root.world-y(y) / 1px,root.marquee-selection,root.marquee-additive);
             }
             else if root.panning {
                 CanvasState.pan-x = root.pan-origin-x + (x - root.pan-start-x) / 1px * root.canvas-speed;
@@ -2518,8 +2521,9 @@ export component Launcher inherits Window {
                 x: stroke.x * 1px; y: stroke.y * 1px; fit: preserve;
                 width: stroke.width * 1px; height: stroke.height * 1px;
                 commands: stroke.path;
-                fill: transparent; stroke: stroke.color; stroke-width: stroke.size * 1px;
+                fill: transparent; stroke-width: stroke.size * 1px;
                 opacity: stroke.opacity * (stroke.dimmed ? 0.2 : 1);
+                stroke: root.selection-has(root.selected-ids,stroke.id) ? Theme.selection-border : stroke.color;
                 stroke-line-cap: round; stroke-line-join: round;
             }
             if root.ink-draft.length > 0: Path {

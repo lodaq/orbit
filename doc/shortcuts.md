@@ -125,3 +125,5 @@ Scripts: type `/` to list saved scripts, then filter by name. Up/Down select wit
 Tab and Enter script-name completion append a space when no argument separator exists, placing the cursor ready for arguments. Existing argument text and spacing are preserved.
 
 Note, Text, Image, Arrow, Highlighter and Laser are available from the Canvas toolbar. Their style controls are at the top right. Laser is temporary and remains available with Lock layout. Eraser dims targeted Canvas strokes, notes, text and images until release.
+
+Canvas clipboard shortcuts also include Draw, Arrow and Highlighter strokes, alone or in mixed selections with items and Widgets. Select strokes by clicking their footprint or dragging a selection rectangle; selected strokes use the selection color. Cut/Copy/Paste preserve stroke styles and relative positions. Undo/Redo restore the complete edit. Laser remains temporary. Text fields keep native clipboard and history shortcuts.

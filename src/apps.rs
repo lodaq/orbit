@@ -3350,6 +3350,7 @@ impl Apps {
             .map(|stroke| {
                 let ink = crate::ink::styled_view(&stroke.points, &stroke.style);
                 (
+                    stroke.id.clone(),
                     ink.x,
                     ink.y,
                     ink.width,
@@ -3647,7 +3648,8 @@ impl Apps {
                 std::rc::Rc::new(slint::VecModel::from(
                     ink.into_iter()
                         .map(
-                            |(x, y, width, height, path, samples, style)| crate::CanvasInk {
+                            |(id, x, y, width, height, path, samples, style)| crate::CanvasInk {
+                                id: id.into(),
                                 x,
                                 y,
                                 width,

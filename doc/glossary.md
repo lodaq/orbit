@@ -277,7 +277,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Draw** | Canvas tool for saving freehand ink. |
 | **Eraser** | Canvas tool that removes whole ink strokes. |
 | **Undo**, **Redo** | Restore the previous or next Canvas content edit in the current session. View navigation is excluded. |
-| **Cut**, **Copy**, **Paste** | Move or duplicate selected Canvas items using the session's Canvas clipboard. |
+| **Cut**, **Copy**, **Paste** | Move or duplicate selected Canvas items and ink strokes using the session's Canvas clipboard. |
 
 | **Canvas** | The single freely pannable and zoomable space holding launcher Items and Widgets. |
 | **Pan** | Move the Canvas view by dragging with Hand. |

@@ -395,14 +395,25 @@ pub fn connect(launcher: &crate::Launcher) {
         ))
         .into()
     });
-    launcher.on_marquee_select(|items, x1, y1, x2, y2, selection, additive| {
+    launcher.on_marquee_select(|items, ink, x1, y1, x2, y2, selection, additive| {
         use slint::Model;
         let selection = selection
             .iter()
             .map(|selected| selected.to_string())
             .collect::<Vec<_>>();
+        let mut selected = marquee_select(&items, x1, y1, x2, y2, &selection, additive);
+        for stroke in ink.iter() {
+            if stroke.x < x1.max(x2)
+                && stroke.x + stroke.width > x1.min(x2)
+                && stroke.y < y1.max(y2)
+                && stroke.y + stroke.height > y1.min(y2)
+                && !selection_has(&selected, &stroke.id)
+            {
+                selected.push(stroke.id.to_string());
+            }
+        }
         std::rc::Rc::new(slint::VecModel::from(
-            marquee_select(&items, x1, y1, x2, y2, &selection, additive)
+            selected
                 .into_iter()
                 .map(slint::SharedString::from)
                 .collect::<Vec<_>>(),

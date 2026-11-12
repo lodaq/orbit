@@ -81,6 +81,7 @@ impl History {
 
 pub struct Clipboard {
     items: Vec<(Item, Rect)>,
+    ink: Vec<InkStroke>,
     cut: bool,
 }
 
@@ -99,28 +100,49 @@ impl Clipboard {
                     .map(|rect| (item.clone(), *rect))
             })
             .collect();
-        (!items.is_empty()).then_some(Self { items, cut })
+        let ink: Vec<_> = config
+            .ink
+            .iter()
+            .filter(|stroke| selection.contains(&stroke.id))
+            .cloned()
+            .collect();
+        (!items.is_empty() || !ink.is_empty()).then_some(Self { items, ink, cut })
     }
 
     pub fn cut(&self, config: &mut Config) {
+        config
+            .ink
+            .retain(|stroke| !self.ink.iter().any(|cut| cut.id == stroke.id));
         config
             .items
             .retain(|item| !self.items.iter().any(|(cut, _)| cut.id() == item.id()));
     }
 
     pub fn paste(&self, config: &mut Config, x: i32, y: i32) -> Result<Vec<String>, String> {
-        let left = self.items.iter().map(|(_, r)| r.col).min().unwrap_or(0);
-        let top = self.items.iter().map(|(_, r)| r.row).min().unwrap_or(0);
-        let right = self
+        let bounds: Vec<_> = self
             .items
             .iter()
-            .map(|(_, r)| i64::from(r.col) + r.width as i64)
+            .map(|(_, r)| *r)
+            .chain(self.ink.iter().map(|stroke| {
+                let view = crate::ink::styled_view(&stroke.points, &stroke.style);
+                Rect {
+                    col: view.x.floor() as i32,
+                    row: view.y.floor() as i32,
+                    width: view.width.ceil() as usize + 1,
+                    height: view.height.ceil() as usize + 1,
+                }
+            }))
+            .collect();
+        let left = bounds.iter().map(|r| r.col).min().unwrap_or(0);
+        let top = bounds.iter().map(|r| r.row).min().unwrap_or(0);
+        let right = bounds
+            .iter()
+            .map(|r| i64::from(r.col) + r.width as i64)
             .max()
             .unwrap_or(0);
-        let bottom = self
-            .items
+        let bottom = bounds
             .iter()
-            .map(|(_, r)| i64::from(r.row) + r.height as i64)
+            .map(|r| i64::from(r.row) + r.height as i64)
             .max()
             .unwrap_or(0);
         let anchor = crate::spatial::nearby(
@@ -132,6 +154,8 @@ impl Clipboard {
                 height: (bottom - i64::from(top)) as usize,
             },
         )?;
+        let offset_x = i64::from(anchor.col) - i64::from(left);
+        let offset_y = i64::from(anchor.row) - i64::from(top);
         let preserve = self.cut
             && self.items.iter().all(|(item, _)| {
                 !config
@@ -146,15 +170,27 @@ impl Clipboard {
                 replace_id(&mut item)?;
             }
             let id = item.id().to_owned();
-            let col = i32::try_from(i64::from(anchor.col) + i64::from(rect.col) - i64::from(left))
+            let col = i32::try_from(i64::from(rect.col) + offset_x)
                 .map_err(|_| "Canvas position is too far away")?;
-            let row = i32::try_from(i64::from(anchor.row) + i64::from(rect.row) - i64::from(top))
+            let row = i32::try_from(i64::from(rect.row) + offset_y)
                 .map_err(|_| "Canvas position is too far away")?;
             config
                 .positions
                 .insert(id.clone(), Rect { col, row, ..*rect });
             config.items.push(item);
             selected.push(id);
+        }
+        for stroke in &self.ink {
+            let mut stroke = stroke.clone();
+            if !self.cut || config.ink.iter().any(|existing| existing.id == stroke.id) {
+                stroke.id = crate::apps::new_id()?;
+            }
+            for point in &mut stroke.points {
+                point.x += offset_x as f32;
+                point.y += offset_y as f32;
+            }
+            selected.push(stroke.id.clone());
+            config.ink.push(stroke);
         }
         Ok(selected)
     }
@@ -230,6 +266,43 @@ mod tests {
         config.positions.get_mut("a").unwrap().row = 400;
         history.record(before, &config);
         assert!(history.target(true).is_none());
+    }
+
+    #[test]
+    fn mixed_clipboard_preserves_stroke_styles_offsets_and_cut_ids_once() {
+        let mut config = config();
+        for (id, arrow, highlighter) in [
+            ("pen", false, false),
+            ("arrow", true, false),
+            ("highlight", false, true),
+        ] {
+            config.ink.push(InkStroke {
+                id: id.into(),
+                points: vec![
+                    crate::config::InkPoint { x: 200.0, y: 100.0 },
+                    crate::config::InkPoint { x: 250.0, y: 150.0 },
+                ],
+                style: crate::ink::Style {
+                    arrow,
+                    highlighter,
+                    ..Default::default()
+                },
+            });
+        }
+        let original = config.ink.clone();
+        let selection = vec!["a".into(), "pen".into(), "arrow".into(), "highlight".into()];
+        let mut clipboard = Clipboard::capture(&config, &selection, true).unwrap();
+        clipboard.cut(&mut config);
+        assert!(config.items.is_empty() && config.ink.is_empty());
+        assert_eq!(clipboard.paste(&mut config, 500, 500).unwrap(), selection);
+        for (before, after) in original.iter().zip(&config.ink) {
+            assert_eq!(before.style, after.style);
+            assert_eq!(after.points[1].x - after.points[0].x, 50.0);
+        }
+        clipboard.pasted();
+        let copied = clipboard.paste(&mut config, 900, 900).unwrap();
+        assert!(copied.iter().all(|id| !selection.contains(id)));
+        assert!(config.valid());
     }
 
     #[test]
