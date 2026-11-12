@@ -4077,7 +4077,7 @@ fn finish(
         }
         launcher.set_busy(false);
         if saved {
-            launcher.invoke_reset_launcher();
+            launcher.invoke_reset_launcher(false);
         }
         if launched && let Err(error) = platform::hide(&launcher) {
             eprintln!("orbit: {error}");
@@ -5057,7 +5057,16 @@ mod tests {
             Action::RunPrefix(..) | Action::SearchWeb(..) | Action::OpenResult(..)
         )));
         ui.set_ai_answer("answer".into());
-        ui.invoke_reset_launcher();
+        let draft = ui.get_search_text();
+        let prefix = ui.get_activated_prefix_id();
+        ui.set_launcher_visible(false);
+        ui.invoke_reset_launcher(true);
+        ui.set_launcher_visible(true);
+        assert_eq!(ui.get_search_text(), draft);
+        assert_eq!(ui.get_activated_prefix_id(), prefix);
+        assert_eq!(ui.get_ai_answer(), "answer");
+        assert!(ui.get_ai_active());
+        ui.invoke_reset_launcher(false);
         assert!(ui.get_ai_answer().is_empty());
         assert!(ui.get_home_visible());
         ui.set_search_text("ordinary search".into());

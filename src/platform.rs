@@ -463,7 +463,7 @@ pub fn show_or_hide(
     if launcher.get_launcher_visible() && !ticktick {
         return hide(launcher);
     }
-    launcher.invoke_reset_launcher();
+    launcher.invoke_reset_launcher(true);
     if launcher.window().is_visible() {
         // The resident window stays fullscreen; requesting it again closes the special workspace.
         restore(monitor)?;

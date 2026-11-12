@@ -71,7 +71,7 @@ pub fn show_or_hide(
     if launcher.get_launcher_visible() && !ticktick {
         return hide(launcher);
     }
-    launcher.invoke_reset_launcher();
+    launcher.invoke_reset_launcher(true);
     launcher.show()?;
     launcher.window().with_winit_window(|window| {
         window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(

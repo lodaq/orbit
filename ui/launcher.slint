@@ -1838,7 +1838,7 @@ export component Launcher inherits Window {
     callback drop-item(string, int, int, string);
     callback cancel-pointer();
     cancel-pointer => { root.cancel-canvas(); root.cancel-drag(); }
-    callback reset-launcher();
+    callback reset-launcher(bool);
     callback finish-drag();
     callback close-top-layer();
     merge-timer := Timer {
@@ -2155,12 +2155,20 @@ export component Launcher inherits Window {
     }
     canvas-focus := FocusScope { width: 0px; height: 0px; changed has-focus => { if self.has-focus { KeyboardNavigation.list-focused = false; } } }
     finish-drag => { if root.drop-pending { root.cancel-drag(); } }
-    reset-launcher => {
+    reset-launcher(preserve-search) => {
         RobotWorkbench.visible = false;
         root.cancel-canvas(); root.flush-canvas();
         AzanSettings.close();
         InternetLimits.close();
-        root.clear-ai();
+        if !preserve-search {
+            root.clear-ai();
+            root.search-text = "";
+            root.search-history-index = -1;
+            root.activated-prefix-id = "";
+            root.activated-prefix-name = "";
+            root.search-selection = 0;
+            root.search-offset = 0px;
+        }
         root.search-context = false;
         root.canvas-context = false;
         root.frame-context-id = "";
@@ -2182,16 +2190,10 @@ export component Launcher inherits Window {
         root.folder-closing = false;
         folder-close-timer.stop();
         root.engine-menu = false;
-        root.search-text = "";
-        root.search-history-index = -1;
-        root.activated-prefix-id = "";
-        root.activated-prefix-name = "";
         root.settings = false;
         root.shortcuts-tab = false;
         root.shortcut-editor = false;
         root.shortcut-recording = false;
-        root.search-selection = 0;
-        root.search-offset = 0px;
         root.search-path-editor = false;
         root.sheet = false;
         root.alert = false;
