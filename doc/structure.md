@@ -136,3 +136,5 @@ Canvas drawing tools extend `src/ink.rs` with stroke styles, quadratic smoothing
 Canvas Images resize like Widgets from the handle at their corner and keep their own proportions. `src/apps.rs` holds the saved size and its limits; `ui/launcher.slint` draws the handle and the live size. `tests/image-resize-ui.py` imports an Image, resizes it with the handle and checks the result on a private display/profile/bus.
 
 - `src/inbox.rs`: stores failed TickTick additions and removes successful retries.
+
+- System clipboard Image transfers use the existing arboard backend through `src/storage.rs`; `src/apps.rs` imports them on the worker. `tests/image-paste-ui.py` checks real clipboard paste, Undo/Redo, Canvas Copy/Paste and restart on a private display/profile.

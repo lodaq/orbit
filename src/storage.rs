@@ -714,3 +714,39 @@ mod icon_tests {
         );
     }
 }
+
+// Called only on the worker: clipboard transfers and PNG encoding can block.
+pub fn clipboard_image() -> Result<Option<Vec<u8>>, String> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|error| format!("Couldn't open clipboard: {error}"))?;
+    let picture = match clipboard.get_image() {
+        Ok(picture) => picture,
+        Err(arboard::Error::ContentNotAvailable) => return Ok(None),
+        Err(error) => return Err(format!("Couldn't paste image: {error}")),
+    };
+    let width = u32::try_from(picture.width).map_err(|_| "Image is too large")?;
+    let height = u32::try_from(picture.height).map_err(|_| "Image is too large")?;
+    if width == 0 || height == 0 || picture.bytes.len() > 20 * 1024 * 1024 {
+        return Err("Paste an image smaller than 20 MB".into());
+    }
+    let mut data = std::io::Cursor::new(Vec::new());
+    image::write_buffer_with_format(
+        &mut data,
+        &picture.bytes,
+        width,
+        height,
+        image::ExtendedColorType::Rgba8,
+        image::ImageFormat::Png,
+    )
+    .map_err(|error| format!("Couldn't save pasted image: {error}"))?;
+    Ok(Some(data.into_inner()))
+}
+
+pub fn copy_canvas() -> Result<arboard::Clipboard, String> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|error| format!("Couldn't open clipboard: {error}"))?;
+    clipboard
+        .set_text("Orbit Canvas items")
+        .map_err(|error| format!("Couldn't copy Canvas items: {error}"))?;
+    Ok(clipboard)
+}

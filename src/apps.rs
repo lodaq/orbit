@@ -2567,6 +2567,8 @@ impl Apps {
                 else {
                     return Ok(());
                 };
+                // Replace an older external image so Copy/Paste uses this selection.
+                self.edits.system_clipboard = Some(platform::copy_canvas()?);
                 if command == 2 {
                     clipboard.cut(&mut config);
                     self.commit(config)?;
@@ -2578,6 +2580,9 @@ impl Apps {
                 Vec::new()
             }
             4 => {
+                if let Some(data) = platform::clipboard_image()? {
+                    return self.paste_image(&data, x, y, weak);
+                }
                 let Some(clipboard) = &self.edits.clipboard else {
                     return Ok(());
                 };
@@ -2952,6 +2957,49 @@ impl Apps {
             .map_err(|error| error.to_string())
     }
 
+    fn paste_image(
+        &mut self,
+        data: &[u8],
+        x: i32,
+        y: i32,
+        weak: &slint::Weak<Launcher>,
+    ) -> Result<(), String> {
+        let id = new_id()?;
+        let file = format!("clipboard-{id}.png");
+        let pixels = canvas_image(data, &file)?;
+        let height = image_size(Some(&pixels), 400).clamp(48, 1200);
+        let mut config = self.config.clone();
+        let rect = crate::spatial::nearby(
+            &crate::spatial::occupied(&config),
+            crate::spatial::Rect {
+                col: x,
+                row: y,
+                width: 400,
+                height,
+            },
+        )?;
+        platform::write_icon(&file, data).map_err(|error| error.to_string())?;
+        config.positions.insert(id.clone(), rect);
+        config.items.push(Item::Annotation {
+            id: id.clone(),
+            name: "Image".into(),
+            kind: 3,
+            style: crate::ink::Style::default(),
+            image: file,
+        });
+        self.commit(config)?;
+        self.icons.insert(id.clone(), pixels);
+        self.reveal(&id, weak);
+        let canvas = self.config.canvas.clone();
+        weak.upgrade_in_event_loop(move |ui| {
+            ui.set_selected_ids(
+                std::rc::Rc::new(slint::VecModel::from(vec![slint::SharedString::from(id)])).into(),
+            );
+            crate::canvas::sync(&ui, &canvas, true);
+        })
+        .map_err(|error| error.to_string())
+    }
+
     fn save_annotation(
         &mut self,
         id: &str,
@@ -3239,7 +3287,7 @@ impl Apps {
             .collect::<Vec<slint::SharedString>>();
         let can_undo = self.edits.target(false).is_some();
         let can_redo = self.edits.target(true).is_some();
-        let can_paste = self.edits.clipboard.is_some();
+        let can_paste = true;
         let frames = self
             .config
             .frames

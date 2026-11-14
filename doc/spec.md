@@ -38,6 +38,12 @@ Verification (2026-11-10): formatting, Clippy, release build and 194 Rust tests 
 
 Completion verification (2026-11-10): formatting, Clippy, release build, 194 enabled Rust tests and the private-display Script UI check passed. Tab fills the selected name without launching; Enter completes a partial name before running on the next press. Completion preserves arguments and the selected file among duplicate names. Trailing-space completion, repeated Tab without extra spaces, and preserving existing arguments also passed; captures: `target/ui-check/canvas-b1jdm7x5/`. Windows runtime and performance budgets were not rechecked.
 
+## Clipboard images (authorized 2026-11-14)
+
+With Canvas focus, Ctrl+V or Context menu → Paste imports an image from the system clipboard. Pasted images use existing Image placement, storage, resizing, Undo/Redo and backup behavior. System images take priority over the session Canvas clipboard; copying or cutting a Canvas selection replaces the system clipboard with an Orbit marker so the next Paste uses that selection. Text fields retain native paste. Layout lock blocks image paste. Clipboard transfer and image encoding run on the worker, with a 20 MB decoded-image limit.
+
+Verification (2026-11-14): formatting, Clippy, release build and 186 enabled unit tests passed (eight opt-in tests ignored). `tests/image-paste-ui.py` passed real Ctrl+V and Context menu paste, visible image content, layout lock, Undo/Redo, Canvas Copy/Paste and restart persistence on a private Xvfb display/profile (`target/ui-check/canvas-_2fyz9w1/`). The normal daemon was restarted hidden. Native Wayland and Windows runtime were not tested.
+
 ## Current behavior
 
 On Linux, toggle reads Orbit's workspace and Hyprland's active workspaces when its resident window exists. A dock may reveal the parking workspace without Orbit IPC; hiding explicitly closes `special:orbit` when open, using the Hyprland Lua dispatcher with a legacy fallback. Focus notifications do not change the launcher's visible state. Search state is retained.

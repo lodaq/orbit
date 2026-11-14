@@ -42,6 +42,7 @@ pub struct History {
     past: Vec<State>,
     future: Vec<State>,
     pub clipboard: Option<Clipboard>,
+    pub system_clipboard: Option<arboard::Clipboard>,
 }
 
 impl History {
