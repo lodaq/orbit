@@ -28,6 +28,8 @@ enum Work {
     Play(String),
     Minute,
     Adhkar(String, String, String),
+    InboxRetry(String),
+    InboxDelete(String),
     AzanSave(
         String,
         crate::azan::Settings,
@@ -114,6 +116,18 @@ pub fn connect(ui: &Launcher) -> slint::Timer {
                         None
                     }
                     Work::Data(request) => Some(handle(database, &path, request)?),
+                    Work::InboxDelete(id) => {
+                        crate::inbox::remove(database, id)?;
+                        None
+                    }
+                    Work::InboxRetry(id) => {
+                        // The task leaves the Inbox only when TickTick accepts it.
+                        let task = crate::inbox::task(database, id)?;
+                        let draft = crate::apps::parse_ticktick_query(&task.query)?;
+                        crate::apps::add_ticktick_draft(&draft)?;
+                        crate::inbox::remove(database, id)?;
+                        None
+                    }
                     Work::Finish(id, entry) => {
                         let spec = specs
                             .iter()
@@ -149,6 +163,7 @@ pub fn connect(ui: &Launcher) -> slint::Timer {
                 })
             );
             let data_request = matches!(&work, Work::Data(_));
+            let retry = matches!(&work, Work::InboxRetry(_));
             let azan_save = match &work {
                 Work::AzanSave(id, _, _, session) => Some((id.clone(), *session)),
                 _ => None,
@@ -178,12 +193,20 @@ pub fn connect(ui: &Launcher) -> slint::Timer {
                         }
                         ui.global::<LocalWidgets>()
                             .set_views(model(views.into_iter().map(view_model).collect()));
+                        if retry {
+                            crate::toast::success(&ui.as_weak(), "Task added to TickTick");
+                            crate::ticktick_ui::refresh(&ui);
+                        }
                     }
                     Err(error) => {
                         if data_request {
                             update(&ui, Err(error.clone()), false);
                         } else {
                             crate::toast::error(&ui.as_weak(), error.clone());
+                        }
+                        // A failed retry keeps the task, so the other widgets stay readable.
+                        if retry {
+                            return;
                         }
                         let views = failed_specs
                             .into_iter()
@@ -371,6 +394,21 @@ fn connect_widgets(ui: &Launcher, sender: &mpsc::Sender<Work>) {
     let send = sender.clone();
     ui.global::<LocalWidgets>().on_play(move |id| {
         let _ = send.send(Work::Play(id.into()));
+    });
+    let weak = ui.as_weak();
+    ui.global::<LocalWidgets>()
+        .on_request_delete_ticktick(move |id| {
+            if let Some(ui) = weak.upgrade() {
+                ui.invoke_confirm_inbox_delete(id);
+            }
+        });
+    let send = sender.clone();
+    ui.global::<LocalWidgets>().on_delete_ticktick(move |id| {
+        let _ = send.send(Work::InboxDelete(id.into()));
+    });
+    let send = sender.clone();
+    ui.global::<LocalWidgets>().on_add_ticktick(move |id| {
+        let _ = send.send(Work::InboxRetry(id.into()));
     });
     let send = sender.clone();
     ui.global::<LocalWidgets>()

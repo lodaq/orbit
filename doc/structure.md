@@ -20,7 +20,6 @@
 - `src/robot-tools/tests.rs` and `mcp-tests.rs`: approval, local side-effect, process timeout, MCP fixture and redaction checks; web source checks live beside the parser.
 - `doc/adr/0002-robot-execution.md`: Robot storage, execution and permission decisions, with implementation status.
 
-- `tasks/plan.md` and `tasks/todo.md`: the current English assistance repair plan, ordered tasks and acceptance checks.
 
 - `src/main.rs`: the `daemon`, `toggle` and `ticktick` commands.
 - `src/config.rs`: versioned flat Canvas config and saved Canvas speed, legacy layout migration, background color, image and image-folder settings, app, file and directory search paths, file-search exclusion defaults, named Actions and Prefixes, first-run data, and damaged config recovery.
@@ -82,10 +81,8 @@ The approved v2 UX specification is `Orbit_Desktop_Launcher_UX_Spec_v2.md`; it s
 
 - `src/website-icons.rs`: debounced Website icon preview worker, stale-result checks, in-memory fetched drafts and custom/automatic icon selection for Save.
 
-- `doc/english-assistance.md`: approved local Search anything suggestions, autocomplete and grammar feedback, including settings, staged behavior, verification results and measured limits.
 
-- `src/english-assistance.rs`: local Ollama model discovery and settings, editable prompts, background model requests, latest-text cancellation, source-aware completion edits, response validation and assistance results.
-- `src/search-edit.rs`: native selection replacements and grouped undo/redo for assistance edits.
+- `src/search-edit.rs`: native selection replacements and grouped undo/redo for Script name completion.
 
 - `src/ai.rs`: independent AI provider/model settings, local model discovery, credential-store access, single-question HTTP requests, response validation and cancelled/stale-result protection.
 - Search bar → AI and the AI Prefix answer panel in `ui/launcher.slint` reuse shared controls and native text selection/clipboard behavior.
@@ -137,3 +134,5 @@ Robot provider accounts:
 Canvas drawing tools extend `src/ink.rs` with stroke styles, quadratic smoothing, arrows and eraser hit detection. Canvas notes, text and image assets use the existing Item storage, placement, history and backup paths. `ui/theme.slint` scales interface typography using the General Font size setting. `tests/canvas-tools-ui.py` exercises the new tools on a private display/profile/bus.
 
 Canvas Images resize like Widgets from the handle at their corner and keep their own proportions. `src/apps.rs` holds the saved size and its limits; `ui/launcher.slint` draws the handle and the live size. `tests/image-resize-ui.py` imports an Image, resizes it with the handle and checks the result on a private display/profile/bus.
+
+- `src/inbox.rs`: stores failed TickTick additions and removes successful retries.

@@ -93,11 +93,11 @@ This pass applies the Apple design and Frontend UI Engineering skills to every e
 - Context menus and selectors: anchored floating surfaces with flat, left-aligned rows, a visible selection indicator, explicit destructive labels and a subtle shadow. Opening a nonmodal menu does not dim the whole launcher.
 - Add/Edit, task editing, Icon picker, Move to Page and alerts: one panel material, 20 px panel corners, 24 px content insets where space permits, visible Cancel and primary actions, and a dimmed backdrop. Headers and small controls use the same type hierarchy. Narrow panels fit inside the viewport.
 - Folders: preserve their source-anchored movement, give contents the same tile feedback, and keep a clear heading above the scrolling grid.
-- AI, English assistance, Data and Toasts: use the same surface and type tokens, preserve selectable answers and real loading/error/empty states, and never add a decorative loading delay.
+- AI, Data and Toasts: use the same surface and type tokens, preserve selectable answers and real loading/error/empty states, and never add a decorative loading delay.
 
 Use 10 px control corners, 22 px widget corners and 20 px sheet corners. Motion is short and non-bouncing for discrete controls; dragging remains direct. No full-screen background motion, stacked translucent text layers, macOS key names, new network work, or replacement artwork.
 
-Primary actions use a slightly deeper lavender so white control text clears 4.5:1 contrast. The original icon and background artwork is retained. Settings uses labeled switches and shared multiline fields for English assistance; task lists, priorities and Move to Page use the shared selector. At narrow desktop widths, Settings reduces its sidebar and gutters. Page-edge drags resist progressively and return without a hard stop.
+Primary actions use a slightly deeper lavender so white control text clears 4.5:1 contrast. The original icon and background artwork is retained. Settings uses labeled switches and shared multiline fields; task lists, priorities and Move to Page use the shared selector. At narrow desktop widths, Settings reduces its sidebar and gutters. Page-edge drags resist progressively and return without a hard stop.
 
 The TickTick header click region includes its visible New task (+) control; press and release there opens the task editor.
 
@@ -105,7 +105,7 @@ Memory follow-up (2026-10-25): runtime checks during this pass measured approxim
 
 The task editor keeps its header and actions outside a scrollable, top-aligned field body. New task uses a compact 512 px maximum height; task details use 730 px, both bounded by the viewport.
 
-UI verification (2026-10-25): native Hyprland paths exercised the populated launcher, dock, search, AI view, folders, empty-space and item menus, Add item → Icon picker, Delete → Cancel, Move to Page, General, Search bar, Prefixes, Actions, English assistance, AI settings and Data. Compact Settings was checked at a 1024×576 logical desktop using Slint scaling. A large saved widget layout did not fit that smaller page, so compact page reflow is not accepted by this UI pass. Screenshots from the isolated session are in `target/ui-check/apple-design/`. No TickTick task was created, changed or deleted during the checks.
+UI verification (2026-10-25): native Hyprland paths exercised the populated launcher, dock, search, AI view, folders, empty-space and item menus, Add item → Icon picker, Delete → Cancel, Move to Page, General, Search bar, Prefixes, Actions, AI settings and Data. Compact Settings was checked at a 1024×576 logical desktop using Slint scaling. A large saved widget layout did not fit that smaller page, so compact page reflow is not accepted by this UI pass. Screenshots from the isolated session are in `target/ui-check/apple-design/`. No TickTick task was created, changed or deleted during the checks.
 
 
 ## Widget grid and dock alignment
@@ -167,7 +167,7 @@ Verification (2026-10-27): rebuilt release opened from Settings → Search bar �
 
 ## Search result placement
 
-Search result Context menus use the shared floating Panel and MenuOption controls for Pin and Add to Page. Dragging retains the source pointer target while hiding the result surface and English assistance, revealing the existing Page and placement preview. Free-space placement, dock pinning and page-edge navigation use the existing spatial rules. Release commits once; Esc or an invalid drop preserves the search. Search engine fallback tiles remain launch-only.
+Search result Context menus use the shared floating Panel and MenuOption controls for Pin and Add to Page. Dragging retains the source pointer target while hiding the result surface, revealing the existing Page and placement preview. Free-space placement, dock pinning and page-edge navigation use the existing spatial rules. Release commits once; Esc or an invalid drop preserves the search. Search engine fallback tiles remain launch-only.
 
 Verification (2026-10-27): the release launcher on an isolated X11 display passed Context menu → Add to Page, Context menu → Pin, result drag → Page, result drag → dock, Esc cancellation, moving an existing saved result without duplicating its ID, and page-edge creation followed by placement. Checked saved paths, types, positions, exclusive dock ownership and unchanged config timestamps for repeated Pin or Add to Page. Captures: `target/ui-check/search-results/`.
 

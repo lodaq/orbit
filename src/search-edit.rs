@@ -149,30 +149,16 @@ mod tests {
         ui.show().unwrap();
         ui.set_launcher_visible(true);
         ui.invoke_focus_search();
-        key(&ui, "I want improve English.");
-        replace(
-            &ui,
-            "I want improve English.",
-            0,
-            23,
-            "I want to improve English.",
-        );
-        assert_eq!(ui.get_search_text(), "I want to improve English.");
+        key(&ui, "/al تقرير");
+        replace(&ui, "/al تقرير", 1, 3, "Alpha");
+        assert_eq!(ui.get_search_text(), "/Alpha تقرير");
         history(&ui, false);
-        assert_eq!(ui.get_search_text(), "I want improve English.");
+        assert_eq!(ui.get_search_text(), "/al تقرير");
+        history(&ui, true);
+        assert_eq!(ui.get_search_text(), "/Alpha تقرير");
         replace(&ui, "stale text", 0, 10, "incorrect");
-        assert_eq!(ui.get_search_text(), "I want improve English.");
-        ui.set_search_text("🙂 He go home.".into());
-        replace(&ui, "🙂 He go home.", 8, 10, "goes");
-        assert_eq!(ui.get_search_text(), "🙂 He goes home.");
-        history(&ui, false);
-        assert_eq!(ui.get_search_text(), "🙂 He go home.");
-        replace(&ui, "🙂 He go home.", 8, 11, "");
-        assert_eq!(ui.get_search_text(), "🙂 He home.");
-        history(&ui, false);
-        assert_eq!(ui.get_search_text(), "🙂 He go home.");
-        ui.set_search_text("🙂 go home".into());
-        replace(&ui, "🙂 go home", 1, 2, "wrong");
-        assert_eq!(ui.get_search_text(), "🙂 go home");
+        assert_eq!(ui.get_search_text(), "/Alpha تقرير");
+        replace(&ui, "/Alpha تقرير", 8, 9, "wrong");
+        assert_eq!(ui.get_search_text(), "/Alpha تقرير");
     }
 }

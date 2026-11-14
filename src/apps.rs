@@ -1615,7 +1615,7 @@ impl Apps {
             }
             Action::Widget(variant, col, row, auto) => {
                 let (col, row) = if auto { self.add_position } else { (col, row) };
-                if !matches!(variant, 7..=18 | 20) {
+                if !matches!(variant, 7..=18 | 21) {
                     return Err("Unknown widget type".into());
                 }
                 let id = new_id()?;
@@ -3397,7 +3397,9 @@ impl Apps {
                     })
             })
             .collect();
-        let shortcut_groups = (0..25)
+        let shortcut_groups = (0..=9)
+            .chain([12])
+            .chain(14..=24)
             .map(|action| {
                 (
                     action,
@@ -3930,6 +3932,18 @@ fn resolve_ticktick_project<'a>(
 
 fn create_ticktick_task(query: &str) -> Result<crate::ticktick::Task, String> {
     let draft = parse_ticktick_query(query)?;
+    match add_ticktick_draft(&draft) {
+        Ok(task) => Ok(task),
+        Err(error) => {
+            // Keep the task in the Inbox widget so it can be added later.
+            let _ = crate::inbox::save(query);
+            Err(error)
+        }
+    }
+}
+
+// The TickTick request for a parsed task, used by the Prefix and by the Inbox widget.
+pub(crate) fn add_ticktick_draft(draft: &TickTickDraft) -> Result<crate::ticktick::Task, String> {
     let token = crate::ticktick::load_token()?.ok_or("Connect TickTick in Settings first")?;
     let projects = crate::ticktick::projects(&token)?;
     let inbox = crate::ticktick::inbox_project(&token)?;

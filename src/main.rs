@@ -10,6 +10,8 @@ mod canvas_edit;
 mod config;
 mod daemon;
 mod icons;
+#[path = "inbox.rs"]
+mod inbox;
 #[path = "ink.rs"]
 mod ink;
 #[path = "item-drop.rs"]

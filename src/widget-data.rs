@@ -49,7 +49,7 @@ pub fn open(path: &Path) -> Result<Connection, String> {
     let version: i32 = db
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .map_err(|e| e.to_string())?;
-    if version > 6 {
+    if version > 7 {
         return Err("This widget database needs a newer version of Orbit.".into());
     }
     if version < 2 {
@@ -67,6 +67,11 @@ pub fn open(path: &Path) -> Result<Connection, String> {
     if version < 6 {
         let tx = db.transaction().map_err(|e| e.to_string())?;
         tx.execute_batch("CREATE TABLE achievement_task_titles(id TEXT PRIMARY KEY, title TEXT NOT NULL); PRAGMA user_version=6;").map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+    }
+    if version < 7 {
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS inbox_tasks(id TEXT PRIMARY KEY, query TEXT NOT NULL CHECK(length(trim(query))>0)); PRAGMA user_version=7;").map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
     }
     Ok(db)
@@ -574,7 +579,7 @@ mod tests {
         assert_eq!(
             db.pragma_query_value(None, "user_version", |r| r.get::<_, i32>(0))
                 .unwrap(),
-            6
+            7
         );
         let morning = entry(&db, 9, 1).unwrap();
         assert_eq!(

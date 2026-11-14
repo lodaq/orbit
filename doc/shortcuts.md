@@ -94,7 +94,6 @@ With Search anything focused, Left and Right move through text. Up recalls the p
 
 The top-bar Lock layout / Unlock layout button has no default shortcut. While locked, layout changes are disabled; pan, zoom and Show all items remain available.
 
-English assistance: **Accept next word** uses Ctrl+E by default while Search anything has a visible next-word prediction at the end of the query. It is configurable in Settings → Shortcuts. Existing Ctrl+E assignments are preserved; Tab also accepts a visible prediction; an exact Prefix Token takes priority.
 
 Personal Hyprland binding: **Alt+T** runs `orbit ticktick`, opening Search anything with the TickTick Prefix active. Type a task and press Enter.
 
@@ -106,11 +105,9 @@ The launcher footer does not display shortcut hints. The shortcuts themselves an
 
 Search results: right-click → Pin or Add to Canvas. Drag a result to reveal the Canvas, then drop on free space or the dock. Esc cancels without adding the item. Lock layout disables placement.
 
-Search bar shortcuts keep their English letter positions on Arabic layouts, including Ctrl+A (select all), Ctrl+E (accept the available next-word prediction), Ctrl+W (delete previous word), clipboard and undo shortcuts. Ordinary Arabic typing is unchanged. Arabic-leading search text aligns right; English-leading text aligns left.
+Search bar shortcuts keep their English letter positions on Arabic layouts, including Ctrl+A (select all), Ctrl+W (delete previous word), clipboard and undo shortcuts. Ordinary Arabic typing is unchanged. Arabic-leading search text aligns right; English-leading text aligns left.
 
-Accept next word also completes the current partial word. The Autocomplete row shows the exact word or spelling replacement Ctrl+E and Accept word will apply; the inline ghost shows only the untyped suffix. A grammar issue is applied by clicking that issue, independently of Ctrl+E.
 
-English Suggestions: Ctrl+1, Ctrl+2 and Ctrl+3 apply the corresponding displayed rewrite. Ctrl+N or Ctrl+J highlights the next suggestion; Ctrl+P or Ctrl+K highlights the previous one. Enter applies the highlighted suggestion without submitting. Navigation stops at the ends; the first down/up selects the first/last suggestion. Editing or refreshing suggestions clears the highlight. While suggestions are available in Search anything, Ctrl+K navigates them; otherwise it retains its search-focus action.
 
 Focused lists move down with Ctrl+N, Ctrl+J or Ctrl+↓, and up with Ctrl+P, Ctrl+K or Ctrl+↑. This applies to Search anything results, Scripts and Settings selects. Ctrl+K keeps its existing Search anything and Canvas Frame actions when no list has focus.
 

@@ -27,6 +27,10 @@ pub struct View {
 }
 
 pub fn category(variant: i32) -> Option<i32> {
+    // The Inbox keeps its own failed tasks instead of a content collection.
+    if variant == 21 {
+        return Some(11);
+    }
     [0, 1, 2, 3, 4, 8, 5, 6, 7, 9, 10]
         .get(variant.checked_sub(9)? as usize)
         .copied()
@@ -87,6 +91,27 @@ fn view(db: &Connection, spec: &Spec, force: bool, azan_id: Option<&str>) -> Res
         view.details = today;
         return Ok(view);
     }
+    if spec.category == 11 {
+        for task in crate::inbox::list(db)? {
+            let draft = crate::apps::parse_ticktick_query(&task.query).ok();
+            view.rows.push((
+                Entry {
+                    id: task.id,
+                    content: draft
+                        .as_ref()
+                        .map_or_else(|| task.query.clone(), |draft| draft.title.clone()),
+                    attribution: draft.as_ref().map_or_else(String::new, task_details),
+                    resource: String::new(),
+                    learned: false,
+                },
+                false,
+            ));
+        }
+        if view.rows.is_empty() {
+            view.content = "No failed tasks. A task that TickTick could not add waits here.".into();
+        }
+        return Ok(view);
+    }
     if spec.category == 7 {
         let done = data::finished_ids(db, &today)?;
         let mut statement = db
@@ -135,6 +160,24 @@ fn view(db: &Connection, spec: &Spec, force: bool, azan_id: Option<&str>) -> Res
         .into();
     }
     Ok(view)
+}
+
+// The list, priority and date a failed task will use when it is added.
+fn task_details(draft: &crate::apps::TickTickDraft) -> String {
+    let mut parts = Vec::new();
+    if let Some(list) = &draft.list {
+        parts.push(list.clone());
+    }
+    match draft.priority {
+        5 => parts.push("High".into()),
+        3 => parts.push("Medium".into()),
+        1 => parts.push("Low".into()),
+        _ => {}
+    }
+    if draft.today {
+        parts.push("Today".into());
+    }
+    parts.join(" · ")
 }
 
 fn select(db: &Connection, spec: &Spec, today: &str, force: bool) -> Result<Option<Entry>, String> {

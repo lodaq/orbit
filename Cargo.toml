@@ -10,7 +10,7 @@ chrono-tz = "=0.10.4"
 rusqlite = { version = "=0.41.0", default-features = false, features = ["bundled"] }
 # Use the already bundled Slint core to apply native text edits independently of held shortcut modifiers.
 i-slint-core = "=1.18.1"
-# Release the local model on normal process termination without platform-specific signal code.
+# Exit the event loop cleanly on normal process termination.
 ctrlc = { version = "=3.5.2", features = ["termination"] }
 # Slint supplies the launcher and GPU-accelerated FemtoVG renderer.
 slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "unstable-winit-030"] }

@@ -609,6 +609,7 @@ export component Launcher inherits Window {
     callback choose-widget-audio();
     callback restore-widget-word(string);
     in-out property <string> widget-data-resource;
+    changed alert => { if !root.alert { root.inbox-delete-id = ""; } }
     changed items => { root.load-local-widgets(root.items,false); }
     callback delete-widget-data(string);
     in-out property <bool> widget-data-busy;
@@ -641,6 +642,16 @@ export component Launcher inherits Window {
     pure callback frame-index([CanvasFrameView], string) -> int;
     callback add-widget(int,int,int,bool);
     callback duplicate-widget(string);
+    // The Widget Gallery lists the saved widget types; the Inbox keeps its own type.
+    pure function widget-variant(index: int) -> int {
+        return index == 12 ? 21 : 7 + index;
+    }
+    pure function widget-width(index: int) -> int {
+        return index == 1 ? 4 : index == 8 || index == 11 ? 3 : 2;
+    }
+    pure function widget-height(index: int) -> int {
+        return index == 11 ? 5 : index == 12 ? 3 : 2;
+    }
     callback resize-item(string,int,int);
     private property <int> placing-widget: -1;
     private property <bool> widget-placement-target;
@@ -1655,6 +1666,9 @@ export component Launcher inherits Window {
     in-out property <bool> busy;
     in-out property <bool> sheet;
     private property <bool> alert;
+    private property <string> inbox-delete-id;
+    callback confirm-inbox-delete(string);
+    confirm-inbox-delete(id) => { root.inbox-delete-id = id; root.alert = true; root.banner = ""; cancel-delete.focus(); }
     in-out property <bool> picker;
     private property <int> context-index: -1;
     private property <bool> canvas-context;
@@ -2656,7 +2670,7 @@ export component Launcher inherits Window {
     Rectangle { x: root.width < 1200px ? 16px : 48px; y: 40px; width: root.width < 1200px ? 80px : 90px; height: 32px; TouchArea { } Image { width: parent.width; height: parent.height; source: @image-url("assets/orbit.svg"); image-fit: contain; } }
     search-bar := Rectangle {
         x: (root.width - self.width) / 2; y: 34px; width: min(root.ai-active && !root.settings ? 820px : 560px, max(240px, root.width - 440px));
-        height: max(Theme.search-min-height, min(176px, search-measure.preferred-height + 2 * (Theme.search-padding + Theme.search-cursor-inset) + (completion-ghost.visible && completion-ghost.next-line ? root.search-cursor-height : 0px)));
+        height: max(Theme.search-min-height, min(176px, search-measure.preferred-height + 2 * (Theme.search-padding + Theme.search-cursor-inset)));
         background: Theme.search-background;
         border-width: 0px; border-radius: Theme.radius-sheet - Theme.space-1;
         if root.search-focused: Rectangle { x: -3px; y: -3px; width: parent.width + 6px; height: parent.height + 6px; border-width: Theme.focus-width; border-color: Theme.search-focus-border; border-radius: parent.border-radius + 3px; }
@@ -3159,7 +3173,7 @@ export component Launcher inherits Window {
             }
             if (root.settings-tab >= 2 && root.settings-tab <= 6) || root.settings-tab == 10: GridLayout {
                 spacing: 12px;
-                SettingsTabGroup { row: 0; col: 0; width: min(4 * Theme.control-option-width + 230px + 24px, root.settings-content-width);
+                SettingsTabGroup { row: 0; col: 0; width: min(4 * Theme.control-option-width + 60px + 24px, root.settings-content-width);
                     SettingsTab { option-width: root.settings-content-width < 800px ? 70px : Theme.control-option-width; label: "General"; selected: root.settings-tab == 4; clicked => { root.settings-tab = 4; } }
                     SettingsTab { option-width: root.settings-content-width < 800px ? 70px : Theme.control-option-width; label: "Prefixes"; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; } }
                     SettingsTab { option-width: root.settings-content-width < 800px ? 70px : Theme.control-option-width; label: "Actions"; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; } }
@@ -4328,8 +4342,8 @@ export component Launcher inherits Window {
                                 width: root.sheet-content-width;
                                 property <int> columns: self.width >= 440px ? 2 : 1;
                                 property <length> card-width: (self.width - (self.columns - 1) * Theme.space-3) / self.columns;
-                                height: ceil(12 / self.columns) * (236px + Theme.space-3) - Theme.space-3;
-                                for name[index] in ["TickTick Tasks", "TickTick Focus Task", "Random Quote", "Random Fact", "Motivation", "Affirmation", "Vocabulary Builder", "Achievements", "Quran Player", "Azan Reminder", "Habit Tracker", "Remembrances"]: Rectangle {
+                                height: ceil(13 / self.columns) * (236px + Theme.space-3) - Theme.space-3;
+                                for name[index] in ["TickTick Tasks", "TickTick Focus Task", "Random Quote", "Random Fact", "Motivation", "Affirmation", "Vocabulary Builder", "Achievements", "Quran Player", "Azan Reminder", "Habit Tracker", "Remembrances", "Inbox"]: Rectangle {
                                     x: mod(index, gallery.columns) * (gallery.card-width + Theme.space-3);
                                     y: floor(index / gallery.columns) * (236px + Theme.space-3);
                                     width: gallery.card-width; height: 236px;
@@ -4341,7 +4355,7 @@ export component Launcher inherits Window {
                                     }
                                     OrbitText {
                                         x: Theme.space-3; y: 48px; width: parent.width - 2 * Theme.space-3; height: 32px;
-                                        text: index == 11 ? "Morning and evening · follows Azan Reminder" : index >= 2 ? "Local content · Settings → Data" : index == 0 ? "2 × 2 · choose a list" : "4 × 2 · focus task";
+                                        text: index == 11 ? "Morning and evening · follows Azan Reminder" : index == 12 ? "Tasks TickTick could not add" : index >= 2 ? "Local content · Settings → Data" : index == 0 ? "2 × 2 · choose a list" : "4 × 2 · focus task";
                                         color: Theme.secondary; font-size: Theme.type-hint; wrap: word-wrap;
                                     }
                                     Rectangle {
@@ -4351,7 +4365,7 @@ export component Launcher inherits Window {
                                         border-color: Theme.separator; border-radius: Theme.radius-control;
                                         OrbitText {
                                             x: Theme.space-2; y: Theme.space-2; width: parent.width - 2 * Theme.space-2; height: parent.height - 2 * Theme.space-2;
-                                            text: index == 0 ? "Tasks\n☐ Task" : index == 1 ? "Focus task\n☐ Task" : index == 2 ? "“\nMake room" : index == 3 ? "360°\nA full circle" : index == 4 ? "One small\nstep" : index == 5 ? "I can take\nthis step" : index == 6 ? "curious\nفضولي" : index == 7 ? "Today\n✓ Finished" : index == 8 ? "بِسْمِ اللَّهِ\nQuran 1:1" : index == 9 ? "Next prayer\nSaved times" : index == 10 ? "☐ Read\n☐ Learn" : "أذكار الصباح\n1 / 25";
+                                            text: index == 0 ? "Tasks\n☐ Task" : index == 1 ? "Focus task\n☐ Task" : index == 2 ? "“\nMake room" : index == 3 ? "360°\nA full circle" : index == 4 ? "One small\nstep" : index == 5 ? "I can take\nthis step" : index == 6 ? "curious\nفضولي" : index == 7 ? "Today\n✓ Finished" : index == 8 ? "بِسْمِ اللَّهِ\nQuran 1:1" : index == 9 ? "Next prayer\nSaved times" : index == 10 ? "☐ Read\n☐ Learn" : index == 11 ? "أذكار الصباح\n1 / 25" : "Buy milk\nAdd";
                                             color: Theme.secondary; font-size: Theme.type-hint; wrap: word-wrap; vertical-alignment: center;
                                         }
                                     }
@@ -4359,15 +4373,15 @@ export component Launcher inherits Window {
                                         x: Theme.space-3; y: 184px; option-width: (parent.width - 2 * Theme.space-3 - Theme.space-2) / 2;
                                         label: "Auto"; primary: true; accessible-label: "Add " + name + " automatically";
                                         enabled: !root.busy && !root.layout-locked;
-                                        clicked => { root.busy = true; root.add-widget(7 + index,0,0,true); root.sheet = false; }
+                                        clicked => { root.busy = true; root.add-widget(root.widget-variant(index),0,0,true); root.sheet = false; }
                                     }
                                     AddOption {
                                         x: (parent.width + Theme.space-2) / 2; y: 184px; option-width: (parent.width - 2 * Theme.space-3 - Theme.space-2) / 2;
                                         label: "Place"; accessible-label: "Place " + name; enabled: !root.busy && !root.layout-locked;
                                         clicked => {
-                                            root.placing-widget = 7 + index;
-                                            root.placing-width = (index == 1 ? 4 : index == 8 || index >= 11 ? 3 : 2) * root.item-size;
-                                            root.placing-height = (index == 11 ? 5 : 2) * root.item-size;
+                                            root.placing-widget = root.widget-variant(index);
+                                            root.placing-width = root.widget-width(index) * root.item-size;
+                                            root.placing-height = root.widget-height(index) * root.item-size;
                                             root.widget-placement-target = false; root.sheet = false;
                                         }
                                     }
@@ -4617,7 +4631,7 @@ export component Launcher inherits Window {
             VerticalLayout {
                 padding: 24px; spacing: 16px;
                 OrbitText {
-                    text: root.items[root.editing].folder ? ("Delete folder '" + root.app-name + "'? Its apps will move to the Canvas.")
+                    text: root.inbox-delete-id != "" ? "Delete this failed task?" : root.items[root.editing].folder ? ("Delete folder '" + root.app-name + "'? Its apps will move to the Canvas.")
                         : ("Delete '" + root.app-name + "' from Orbit?");
                     color: Theme.text; font-size: 17px * Theme.font-scale; wrap: word-wrap;
                 }
@@ -4626,8 +4640,8 @@ export component Launcher inherits Window {
                     spacing: 12px;
                     cancel-delete := AddOption { label: "Cancel"; enabled: !root.busy; clicked => { root.alert = false; } }
                     AddOption {
-                        label: "Delete"; destructive: true; enabled: !root.layout-locked && !root.busy;
-                        clicked => { root.busy = true; root.delete-item(root.editing-id); }
+                        label: "Delete"; destructive: true; enabled: (root.inbox-delete-id != "" || !root.layout-locked) && !root.busy;
+                        clicked => { if root.inbox-delete-id != "" { LocalWidgets.delete-ticktick(root.inbox-delete-id); root.inbox-delete-id = ""; root.alert = false; } else { root.busy = true; root.delete-item(root.editing-id); } }
                     }
                 }
             }

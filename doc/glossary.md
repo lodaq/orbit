@@ -213,13 +213,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Fetched icon** | The preview of a Website icon retrieved automatically. |
 | **Retry** | Fetch the Website icon again after a completed attempt. |
 
-| **English assistance** | Search bar settings for local English suggestions, autocomplete and grammar feedback. |
-| **Suggestions** | Clickable improved versions of the sentence in Search anything; choosing one replaces text without submitting. |
-| **Autocomplete** | An optional completion or spelling correction of the current word, or a next-word prediction after whitespace, accepted with the configured Accept next word shortcut. |
-| **Grammar feedback** | English mistakes with simple explanations and clickable corrections. |
-| **Accept next word** | The configurable action that applies the displayed Autocomplete word or spelling replacement. |
 
-- **Model prompts** — editable system instructions sent to the selected local model for each English assistance feature.
 
 | **App search path** | An absolute directory scanned for immediate executable files (including valid executable symlinks on Linux), or an individual executable included by Refresh. |
 
@@ -304,3 +298,5 @@ Canvas replaces the retired page layout. Boxes and their Add box command are rem
 | **Laser** | A temporary red pointer trail, excluded from saved data and history. |
 | **Opacity** | How solid Canvas content appears, from 10% to 100%. |
 | **Font size** | General setting controlling all Orbit interface text; 12 px by default. |
+
+- **Inbox**: Widget holding failed TickTick additions until a successful retry.

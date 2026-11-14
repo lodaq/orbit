@@ -211,7 +211,14 @@ fn matches_view(task: &TickTickTask, id: &str, completed: bool) -> bool {
 
 pub fn create_from_prefix(ui: &Launcher, query: &str) {
     ui.set_busy(false);
-    let result = crate::apps::parse_ticktick_query(query).and_then(|draft| {
+    let draft = match crate::apps::parse_ticktick_query(query) {
+        Ok(draft) => draft,
+        Err(error) => {
+            crate::toast::error(&ui.as_weak(), &error);
+            return;
+        }
+    };
+    let result: Result<Request, String> = (|| {
         if !ui.get_ticktick_connected() && !ui.get_ticktick_loading() {
             return Err("Connect or refresh TickTick in Settings first".into());
         }
@@ -232,11 +239,33 @@ pub fn create_from_prefix(ui: &Launcher, query: &str) {
             draft.today,
             query.into(),
         ))
-    });
+    })();
     match result {
         Ok(request) => start(ui, request),
-        Err(error) => crate::toast::error(&ui.as_weak(), &error),
+        Err(error) => {
+            keep_in_inbox(ui, query);
+            crate::toast::error(&ui.as_weak(), &error);
+        }
     }
+}
+
+// A task that TickTick could not add waits in the Inbox widget until it is added by hand.
+fn keep_in_inbox(ui: &Launcher, query: &str) {
+    let query = query.to_owned();
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        if crate::inbox::save(&query).is_err() {
+            return;
+        }
+        let _ = weak.upgrade_in_event_loop(|ui| {
+            crate::toast::info(&ui.as_weak(), "Task kept in the Inbox widget");
+            ui.invoke_load_local_widgets(ui.get_items(), false);
+        });
+    });
+}
+
+pub fn refresh(ui: &Launcher) {
+    start(ui, Request::Refresh(String::new()));
 }
 
 fn start(ui: &Launcher, request: Request) {
@@ -395,13 +424,16 @@ fn start(ui: &Launcher, request: Request) {
                     if mutation {
                         ui.set_ticktick_tasks(model(before));
                     }
-                    if let Request::PrefixSave(_, _, _, _, _, query) = &request
-                        && ui.get_search_text().is_empty()
-                        && ui.get_activated_prefix_name() == prefix_name
-                    {
-                        ui.set_search_text(query.as_str().into());
-                        ui.invoke_search(query.as_str().into());
-                        ui.invoke_focus_search();
+                    if let Request::PrefixSave(_, _, _, _, _, query) = &request {
+                        // The task stays in the Inbox widget until it is added by hand.
+                        keep_in_inbox(&ui, query);
+                        if ui.get_search_text().is_empty()
+                            && ui.get_activated_prefix_name() == prefix_name
+                        {
+                            ui.set_search_text(query.as_str().into());
+                            ui.invoke_search(query.as_str().into());
+                            ui.invoke_focus_search();
+                        }
                     }
                     if form {
                         ui.set_ticktick_open(true);

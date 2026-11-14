@@ -69,6 +69,7 @@ pub fn show_or_hide(
     ticktick: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if launcher.get_launcher_visible() && !ticktick {
+        launcher.invoke_reset_launcher(false);
         return hide(launcher);
     }
     launcher.invoke_reset_launcher(true);

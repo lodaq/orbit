@@ -14,6 +14,9 @@ export global LocalWidgets {
     callback finish(string,string);
     callback play(string);
     callback adhkar(string,string,string);
+    callback add-ticktick(string);
+    callback request-delete-ticktick(string);
+    callback delete-ticktick(string);
 }
 
 component WidgetAction inherits AddOption {
@@ -254,6 +257,51 @@ component AchievementsWidget inherits Rectangle {
     }
 }
 
+component InboxWidget inherits Rectangle {
+    in property <WidgetView> view;
+    in property <bool> enabled;
+    if root.view.rows.length == 0: OrbitText {
+        text: "No failed tasks"; color: Theme.secondary; font-size: Theme.type-hint;
+    }
+    tasks := ScrollView {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        enabled: root.enabled; horizontal-scrollbar-policy: always-off;
+        VerticalLayout {
+            x: 0px; y: 0px;
+            width: tasks.visible-width; height: self.preferred-height;
+            alignment: start; spacing: 0px;
+            for row in root.view.rows: Rectangle {
+                height: max(48px, title.preferred-height + metadata.preferred-height + Theme.space-3);
+                title := OrbitText {
+                    x: 0px; y: Theme.space-2;
+                    width: max(0px, parent.width - 100px);
+                    height: self.preferred-height; text: row.content;
+                    color: Theme.text; font-size: Theme.type-body; wrap: word-wrap;
+                }
+                metadata := OrbitText {
+                    x: 0px; y: title.y + title.height + 2px;
+                    width: title.width; height: row.attribution == "" ? 0px : self.preferred-height;
+                    text: row.attribution; color: Theme.secondary; font-size: Theme.type-hint; wrap: word-wrap;
+                }
+                WidgetAction {
+                    x: parent.width - 96px; y: (parent.height - self.height) / 2;
+                    label: "Retry"; option-width: 56px; enabled: root.enabled;
+                    accessible-label: "Retry " + row.content;
+                    clicked => { LocalWidgets.add-ticktick(row.id); }
+                }
+                WidgetAction {
+                    x: parent.width - 40px; y: (parent.height - self.height) / 2;
+                    settings-style: true; label: ""; icon: @image-url("inbox-delete.svg"); icon-present: true;
+                    option-width: 40px; destructive: true; enabled: root.enabled;
+                    accessible-label: "Delete " + row.content;
+                    clicked => { LocalWidgets.request-delete-ticktick(row.id); }
+                }
+                Rectangle { y: parent.height - 1px; height: 1px; width: parent.width; background: Theme.border; }
+            }
+        }
+    }
+}
+
 export component LocalWidget inherits Rectangle {
     in property <string> widget-id;
     in property <bool> enabled: true;
@@ -263,7 +311,8 @@ export component LocalWidget inherits Rectangle {
     if root.view.category == 9 || root.view.category == 10: AdhkarWidget { widget-id: root.widget-id; view: root.view; enabled: root.enabled; }
     if root.view.category == 8: AchievementsWidget { view: root.view; enabled: root.enabled; }
     if root.view.category == 6: AzanWidget { widget-id: root.widget-id; view: root.view; enabled: root.enabled; }
-    if root.view.category != 6 && root.view.category != 8 && root.view.category != 9 && root.view.category != 10: VerticalLayout {
+    if root.view.category == 11: InboxWidget { view: root.view; enabled: root.enabled; }
+    if root.view.category != 6 && root.view.category != 8 && root.view.category != 9 && root.view.category != 10 && root.view.category != 11: VerticalLayout {
         spacing: Theme.space-3;
         content-scroll := ScrollView {
             enabled: root.enabled;

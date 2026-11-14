@@ -1,4 +1,4 @@
-"""Search survives toggles and focus interruptions on a private display/profile."""
+"""Toggle clears search; focus interruptions preserve it on a private display/profile."""
 import importlib
 import json
 import subprocess
@@ -35,15 +35,17 @@ try:
     d.toggle()
     time.sleep(.3)
     resume()
-    visible_text('toggled', 'OrbitDraft')
-    d.text('x')
-    visible_text('cursor-preserved', 'OrbitDrafxt')
+    visible_text('toggled', 'Search anything')
+    d.text('OrbitDraft')
+    d.key('Left')
     # Focusing the private root exercises the daemon's focus-loss hide timer.
     d.x.XSetInputFocus(d.connection, d.root, 1, 0)
     d.flush()
     time.sleep(.6)
     resume()
-    visible_text('interrupted', 'OrbitDrafxt')
+    visible_text('interrupted', 'OrbitDraft')
+    d.text('x')
+    visible_text('cursor-preserved', 'OrbitDrafxt')
     d.key('Escape')
     visible_text('explicit-clear', 'Search anything')
     d.click(900, 60)
@@ -52,12 +54,10 @@ try:
     d.key('Tab')
     d.text('orbit')
     visible_text('prefix', 'orbit')
-    badge = Image.open(d.work / 'prefix.png').crop((725, 43, 786, 74)).tobytes()
     d.toggle()
     time.sleep(.3)
     resume()
-    visible_text('prefix-restored', 'orbit')
-    assert Image.open(d.work / 'prefix-restored.png').crop((725, 43, 786, 74)).tobytes() == badge, 'Prefix badge changed'
+    visible_text('prefix-cleared', 'Search anything')
     print('PASS search draft, cursor, Prefix, toggle, interruption and explicit clear:', d.work)
 finally:
     d.close()

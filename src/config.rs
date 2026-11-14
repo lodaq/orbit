@@ -1462,6 +1462,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn retired_assistance_settings_and_shortcuts_are_dropped() {
+        let config = Config::default();
+        let mut value = serde_json::to_value(&config).unwrap();
+        value["english_assistance"] =
+            serde_json::json!({"suggestions": true, "model": "old-model"});
+        value["search_completion_shortcut_initialized"] = true.into();
+        value["shortcuts"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"action":13,"keys":"Ctrl+E"}));
+        let restored = decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(!restored.shortcuts.iter().any(|entry| entry.action == 13));
+        assert_eq!(restored.ai.local_model, config.ai.local_model);
+        assert_eq!(restored.ai.address, config.ai.address);
+        let saved = serde_json::to_value(restored).unwrap();
+        assert!(saved.get("english_assistance").is_none());
+        assert!(
+            saved
+                .get("search_completion_shortcut_initialized")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn ai_migration_of_omitted_action_fields_does_not_duplicate_defaults() {
         let mut value = serde_json::to_value(Config::default()).unwrap();
         for field in ["ai_initialized", "ai", "user_actions", "prefixes"] {
