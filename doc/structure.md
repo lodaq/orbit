@@ -4,22 +4,6 @@
 - `src/canvas-edit.rs`: bounded session history and Canvas item and ink clipboard snapshots, fresh IDs and collision-free paste placement. `tests/canvas-edit-ui.py` checks scoped edit/tool shortcuts, wheel pan/zoom, Frame navigation, live ink, mixed item/stroke clipboard edits and gesture cancellation on a private display.
 - Canvas Frames reuse `src/config.rs` storage, `src/spatial.rs` selection and reconciliation, `src/apps.rs` worker saves and fit navigation, and `src/shortcuts.rs` recording and conflict checks. `ui/assets/tool-*.svg` supplies the four toolbar icons.
 
-- `src/t3-providers.rs`: bounded local T3 Code provider/model import, secret-free account references and connection fingerprints.
-- `src/robot-native.rs` and `src/robot-native/tests.rs`: direct Codex app-server, ACP and Pi RPC execution, permission routing, bounded output, credential redaction and cancellation fixtures.
-- `tests/native-provider-fixture.py`: offline stdio agent for protocol and permission checks.
-
-- `robot-capabilities.md`: authorized Robot capability boundaries, integration points, build order and release gates.
-- `src/robot-data.rs`: versioned `robots.db`, validated Robot/Role profiles, immutable conversation context, ordered activity, ratings, deletion and transactional backup snapshots. The execution and workbench layers will use this storage API.
-- `src/robot-data/tests.rs`: persistence, conversation snapshots, Unicode titles, history, deletion, validation and import rollback checks.
-- `src/robot-tools.rs`: memory-only local approvals, bounded file/Skill reads, atomic text writes, directory listing, approved process execution and Robot keyring lookups.
-- `src/robot-tools/mcp.rs`: bounded stdio JSON-RPC sessions, MCP initialization/discovery, enabled-tool checks and credential redaction.
-- `src/robot-tools/web.rs`: provider-independent Brave Search with linked sources and a keyring credential.
-- `src/robot-provider.rs`: native Ollama, OpenAI Responses and Gemini multi-turn requests, tool-call parsing, in-memory provider continuation state and resumed conversation context.
-- `src/robot-runtime.rs`: one worker's persistent command queue, conversation-bound approvals, cancellation, Skill loading, automatic enabled MCP calls and saved activity, independent of launcher visibility. The workbench will own its single Handle and consume its events.
-- `src/robot-provider/tests.rs` and `src/robot-runtime/tests.rs`: provider protocol fixtures, queue order, context snapshots, approval/cancellation, restart recovery, observer-independent completion and an isolated Skill/MCP/report workflow.
-- `src/robot-tools/tests.rs` and `mcp-tests.rs`: approval, local side-effect, process timeout, MCP fixture and redaction checks; web source checks live beside the parser.
-- `doc/adr/0002-robot-execution.md`: Robot storage, execution and permission decisions, with implementation status.
-
 
 - `src/main.rs`: the `daemon`, `toggle` and `ticktick` commands.
 - `src/config.rs`: versioned flat Canvas config and saved Canvas speed, legacy layout migration, background color, image and image-folder settings, app, file and directory search paths, file-search exclusion defaults, named Actions and Prefixes, first-run data, and damaged config recovery.
@@ -84,9 +68,6 @@ The approved v2 UX specification is `Orbit_Desktop_Launcher_UX_Spec_v2.md`; it s
 
 - `src/search-edit.rs`: native selection replacements and grouped undo/redo for Script name completion.
 
-- `src/ai.rs`: independent AI provider/model settings, local model discovery, credential-store access, single-question HTTP requests, response validation and cancelled/stale-result protection.
-- Search bar → AI and the AI Prefix answer panel in `ui/launcher.slint` reuse shared controls and native text selection/clipboard behavior.
-
 - `src/widget-starters.rs`: original bilingual starter text, vocabulary examples, unfinished starter habits, Quran passage attribution and a dated Cairo prayer-time example.
 - `src/widget-views.rs`: local selections, persistent shuffled rotations, completion references, habit state, today's achievements and saved prayer countdowns.
 - `ui/local-widget.slint`: local widget reading hierarchy, scrollable content, fixed action footers, grouped habit rows, an Achievements summary with scrollable completion rows, and local audio actions, displayed above the Canvas input surface. `src/widget-data-ui.rs` separates vocabulary and prayer headlines for display without changing saved content.
@@ -114,20 +95,6 @@ Search-result saving in `src/apps.rs` resolves cached results to shortcuts; `src
 
 The 2026-11-02 single Canvas amendment supersedes historical page-related structure descriptions above. Config version 5 stores a flat item collection, signed positions and view state; legacy pages exist only for migration. There are no live pages or Boxes.
 - `doc/adr/0001-single-canvas.md`: the Canvas model and original-config migration backup decision.
-
-Robot workbench integration:
-- `tests/robot-management-ui.py`: private-display, temporary-profile checks for chat replies, shell approval, repeated actions, management collections, Robot name propagation, restart persistence and compact layouts.
-- Robot database schema 4 stores validated shared collections and includes them in backup snapshots. `ui/robot-workbench.slint` separates eight-section management from Canvas chat; `src/robot-workbench.rs` handles explicit Skill/provider refresh, collection changes, repeated commands and profile duplication on the worker.
-- `src/robot-workbench.rs`: worker-side profile/Role/tool management, conversation navigation, exact approval routing and runtime event delivery. Import suspends the idle runtime before the data directory is replaced.
-- `ui/robot-workbench.slint`: shared Robot settings and workbench layer, including approval review, conversation history, ratings and permanent deletion.
-- `ui/assets/robot.svg`: one shared 2D Robot illustration for Canvas items and entry points.
-
-Robot provider accounts:
-- `robot-provider-capabilities.md`: approved account, connection and native execution extension and acceptance gates.
-- `src/robot-data.rs`: named account metadata, validation, schema-3 persistence and immutable per-conversation connection snapshots.
-- `src/robot-workbench.rs` and `ui/robot-workbench.slint`: account selection/editing in Robot profiles, using the shared fields and controls.
-- `src/robot-provider.rs` and `src/robot-runtime.rs`: account credential resolution, import reconnection checks and explicit errors for unconnected native providers.
-- `src/backup.rs`: version-4 account metadata export/import, without provider credential values or account-directory contents.
 
 - `src/scripts.rs`: Script query parsing, file/name validation and alphabetized UI models. Config and backups retain Script entries; `src/apps.rs` uses the existing worker for edits, native choosing and direct launches. `ui/launcher.slint` provides Search bar → Scripts and the `/` list. `tests/scripts-ui.py` exercises the real Settings and launch paths, native chooser, failure feedback, persistence, long lists and compact layouts on a private display/profile/bus.
 

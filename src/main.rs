@@ -1,7 +1,6 @@
 #[path = "add-item.rs"]
 mod add_item;
 mod adhkar;
-mod ai;
 mod apps;
 mod azan;
 mod canvas;
@@ -22,18 +21,6 @@ mod platform;
 #[path = "platform-windows.rs"]
 mod platform;
 mod recent;
-#[path = "robot-data.rs"]
-pub mod robot_data;
-#[path = "robot-native.rs"]
-mod robot_native;
-#[path = "robot-provider.rs"]
-mod robot_provider;
-#[path = "robot-runtime.rs"]
-pub mod robot_runtime;
-#[path = "robot-tools.rs"]
-pub mod robot_tools;
-#[path = "robot-workbench.rs"]
-mod robot_workbench;
 mod scripts;
 #[path = "search-cursor.rs"]
 mod search_cursor;
@@ -42,8 +29,6 @@ mod search_edit;
 mod shortcuts;
 mod spatial;
 mod storage;
-#[path = "t3-providers.rs"]
-mod t3_providers;
 #[path = "text-direction.rs"]
 mod text_direction;
 mod ticktick;

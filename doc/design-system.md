@@ -93,7 +93,7 @@ This pass applies the Apple design and Frontend UI Engineering skills to every e
 - Context menus and selectors: anchored floating surfaces with flat, left-aligned rows, a visible selection indicator, explicit destructive labels and a subtle shadow. Opening a nonmodal menu does not dim the whole launcher.
 - Add/Edit, task editing, Icon picker, Move to Page and alerts: one panel material, 20 px panel corners, 24 px content insets where space permits, visible Cancel and primary actions, and a dimmed backdrop. Headers and small controls use the same type hierarchy. Narrow panels fit inside the viewport.
 - Folders: preserve their source-anchored movement, give contents the same tile feedback, and keep a clear heading above the scrolling grid.
-- AI, Data and Toasts: use the same surface and type tokens, preserve selectable answers and real loading/error/empty states, and never add a decorative loading delay.
+- Data and Toasts: use the same surface and type tokens, preserve real loading/error/empty states, and never add a decorative loading delay.
 
 Use 10 px control corners, 22 px widget corners and 20 px sheet corners. Motion is short and non-bouncing for discrete controls; dragging remains direct. No full-screen background motion, stacked translucent text layers, macOS key names, new network work, or replacement artwork.
 
@@ -105,7 +105,7 @@ Memory follow-up (2026-10-25): runtime checks during this pass measured approxim
 
 The task editor keeps its header and actions outside a scrollable, top-aligned field body. New task uses a compact 512 px maximum height; task details use 730 px, both bounded by the viewport.
 
-UI verification (2026-10-25): native Hyprland paths exercised the populated launcher, dock, search, AI view, folders, empty-space and item menus, Add item → Icon picker, Delete → Cancel, Move to Page, General, Search bar, Prefixes, Actions, AI settings and Data. Compact Settings was checked at a 1024×576 logical desktop using Slint scaling. A large saved widget layout did not fit that smaller page, so compact page reflow is not accepted by this UI pass. Screenshots from the isolated session are in `target/ui-check/apple-design/`. No TickTick task was created, changed or deleted during the checks.
+UI verification (2026-10-25): native Hyprland paths exercised the populated launcher, dock, search, folders, empty-space and item menus, Add item → Icon picker, Delete → Cancel, Move to Page, General, Search bar, Prefixes, Actions, Data. Compact Settings was checked at a 1024×576 logical desktop using Slint scaling. A large saved widget layout did not fit that smaller page, so compact page reflow is not accepted by this UI pass. Screenshots from the isolated session are in `target/ui-check/apple-design/`. No TickTick task was created, changed or deleted during the checks.
 
 
 ## Widget grid and dock alignment

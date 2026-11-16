@@ -3342,7 +3342,6 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "sha2",
  "shlex 1.3.0",
  "slint",
  "slint-build",

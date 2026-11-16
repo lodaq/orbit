@@ -10,12 +10,17 @@ use std::path::Path;
 #[derive(Serialize, Deserialize)]
 struct Backup {
     version: u32,
+    #[serde(deserialize_with = "read_config")]
     config: Config,
     recent: Recent,
     installed_apps: Vec<InstalledApp>,
     icons: BTreeMap<String, Vec<u8>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    robots: Option<crate::robot_data::Snapshot>,
+}
+
+fn read_config<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Config, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    crate::config::decode(&serde_json::to_vec(&value).map_err(serde::de::Error::custom)?)
+        .map_err(serde::de::Error::custom)
 }
 
 pub fn transfer_data(import: bool) -> Result<Option<String>, String> {
@@ -54,9 +59,6 @@ fn export_data(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
         recent,
         installed_apps,
         icons: BTreeMap::new(),
-        robots: Some(crate::robot_data::export(
-            &config_path()?.with_file_name("robots.db"),
-        )?),
     };
     let directory = config_path()?.with_file_name("icons");
     if directory.exists() {
@@ -165,27 +167,6 @@ impl Backup {
         if !matches!(self.version, 1..=5) || !self.config.valid() {
             return Err("Unsupported backup or invalid Canvas".into());
         }
-        if self.version < 4
-            && self
-                .robots
-                .as_ref()
-                .is_some_and(|robots| !robots.accounts.is_empty())
-        {
-            return Err("Provider accounts require backup version 4".into());
-        }
-        if self.version < 5
-            && self
-                .robots
-                .as_ref()
-                .is_some_and(|robots| !robots.catalog.is_empty())
-        {
-            return Err("Robot collections require backup version 5".into());
-        }
-        match (self.version, &self.robots) {
-            (1, None) => {}
-            (2..=5, Some(robots)) => robots.validate()?,
-            _ => return Err("Missing or incompatible Robot backup data".into()),
-        }
         for name in self.icons.keys() {
             if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
                 return Err("Invalid icon filename".into());
@@ -196,7 +177,7 @@ impl Backup {
                 Item::Annotation { kind: 3, image, .. } => {
                     self.validate_icon(&Icon::File(image.clone()))?
                 }
-                Item::Annotation { .. } | Item::Widget { .. } | Item::Robot { .. } => {}
+                Item::Annotation { .. } | Item::Widget { .. } => {}
                 Item::App(app) => self.validate_icon(&app.icon)?,
                 Item::Folder { apps, .. } => {
                     for app in apps {
@@ -224,9 +205,6 @@ impl Backup {
     }
 
     fn write(&self, directory: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(robots) = &self.robots {
-            crate::robot_data::Database::open(&directory.join("robots.db"))?.restore(robots)?;
-        }
         fs::create_dir(directory.join("icons"))?;
         for (name, data) in &self.icons {
             write_file(&directory.join("icons").join(name), data)?;
@@ -257,113 +235,6 @@ fn write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn robot_backup_is_versioned_and_restored_in_staging() {
-        use crate::robot_data::{Database, Entry, McpServer, Model, Profile, Provider, Role};
-        let mut db = Database::open(Path::new(":memory:")).unwrap();
-        db.save_role(&Role {
-            id: "writer".into(),
-            name: "كاتب".into(),
-            instructions: "Include linked sources.".into(),
-        })
-        .unwrap();
-        db.save_profile(&Profile {
-            id: "robot".into(),
-            name: "Research".into(),
-            project: "/tmp/project".into(),
-            model: Model {
-                account: None,
-                provider: Provider::OpenAi,
-                id: "existing-model".into(),
-                ollama_address: None,
-            },
-            role_id: Some("writer".into()),
-            skills: vec!["/tmp/skills/research/SKILL.md".into()],
-            mcp_servers: vec![McpServer {
-                id: "search".into(),
-                command: "search-mcp".into(),
-                arguments: vec![],
-                secret_env: BTreeMap::from([("API_KEY".into(), "search-key".into())]),
-                enabled_tools: vec!["search".into()],
-            }],
-        })
-        .unwrap();
-        db.start("conversation", "robot", "ابحث عن Rust", 10)
-            .unwrap();
-        db.append(
-            "conversation",
-            &Entry::Reply {
-                text: "[Source](https://www.rust-lang.org)".into(),
-            },
-            20,
-        )
-        .unwrap();
-        db.rate("conversation", 5).unwrap();
-        db.save_catalog(&crate::robot_data::CatalogEntry {
-            id: "review".into(),
-            kind: "prompt".into(),
-            name: "Review".into(),
-            content: "Review the project".into(),
-        })
-        .unwrap();
-        let backup = Backup {
-            version: 5,
-            config: Config::default(),
-            recent: Recent { ids: vec![] },
-            installed_apps: vec![],
-            icons: BTreeMap::new(),
-            robots: Some(db.snapshot().unwrap()),
-        };
-        let bytes = serde_json::to_vec(&backup).unwrap();
-        let loaded: Backup = serde_json::from_slice(&bytes).unwrap();
-        loaded.validate().unwrap();
-        assert_eq!(loaded.robots, backup.robots);
-        let directory = std::env::temp_dir().join(format!(
-            "orbit-robot-backup-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir(&directory).unwrap();
-        loaded.write(&directory).unwrap();
-        let mut expected = backup.robots.unwrap();
-        expected.disable_tools();
-        assert_eq!(
-            crate::robot_data::export(&directory.join("robots.db")).unwrap(),
-            expected
-        );
-        assert!(directory.join("config.json").exists());
-        fs::remove_dir_all(directory).unwrap();
-        let mut json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        json["version"] = 4.into();
-        assert!(
-            serde_json::from_value::<Backup>(json.clone())
-                .unwrap()
-                .validate()
-                .is_err()
-        );
-        json["robots"]["catalog"] = serde_json::json!([]);
-        json["version"] = 2.into();
-        serde_json::from_value::<Backup>(json.clone())
-            .unwrap()
-            .validate()
-            .unwrap();
-        json["version"] = 3.into();
-        json.as_object_mut().unwrap().remove("robots");
-        assert!(
-            serde_json::from_value::<Backup>(json.clone())
-                .unwrap()
-                .validate()
-                .is_err()
-        );
-        json["version"] = 1.into();
-        serde_json::from_value::<Backup>(json)
-            .unwrap()
-            .validate()
-            .unwrap();
-    }
     #[test]
     fn canvas_backup_roundtrip_keeps_signed_positions_view_recent_and_icons() {
         let mut config = Config::default();
@@ -400,7 +271,6 @@ mod tests {
             },
             installed_apps: vec![],
             icons: BTreeMap::from([("site.svg".into(), b"<svg/>".to_vec())]),
-            robots: None,
         };
         backup.validate().unwrap();
         let saved = serde_json::to_vec(&backup).unwrap();

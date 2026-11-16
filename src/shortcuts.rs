@@ -229,17 +229,7 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
     let list_focused = launcher
         .global::<crate::KeyboardNavigation>()
         .get_list_focused();
-    if launcher.global::<crate::RobotWorkbench>().get_visible() {
-        if launcher
-            .get_shortcuts()
-            .iter()
-            .any(|binding| binding.action == 1 && binding.keys == keys)
-        {
-            launcher.invoke_close_top_layer();
-            return true;
-        }
-        return false;
-    }
+
     if !launcher
         .global::<crate::AzanSettings>()
         .get_widget_id()
@@ -347,9 +337,7 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
                 return false;
             }
         }
-        6 if launcher.get_ai_active() && launcher.get_search_focused() => {
-            launcher.invoke_run_activated_prefix()
-        }
+
         6 if launcher.get_search_navigation() => launcher.invoke_run_activated_prefix(),
         6 if launcher.get_grid_navigation() => launcher.invoke_activate_grid(),
         6..=8 => {

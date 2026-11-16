@@ -1,33 +1,8 @@
 # V2 authority
 
-Robot management uses **Robots**, **Skills**, **Providers**, **Actions**, **MCPs**, **Credentials**, **Projects** and **Roles**. A Robot **Action** is a reusable prompt or shell-command instruction run through that Robot's tools and permissions. **Refresh from ~/.agents** rereads installed Skill paths; **Fetch from T3 Code** rereads shared provider configuration. **Send** queues the chat message. These terms supersede the earlier workbench labels for this flow.
-
 The user approved `Orbit_Desktop_Launcher_UX_Spec_v2.md` on 2026-10-20 as authoritative wherever it conflicts with this document. Windows and Arch Linux, spatial grids, widgets, exclusive dock ownership, new UI terms, and the complete v2 build sequence are authorized. Existing visual artwork and nonconflicting performance and coding rules remain in force. The older build-step restriction does not apply to v2.
 
 # Orbit glossary
-
-| Term | Meaning |
-|---|---|
-| **Providers** | The second Settings tab, listing shared T3 Code provider instances and cached models for Robots. |
-| **Connection fingerprint** | A hash of provider connection settings that detects account changes without saving credential values. |
-| **Command-scoped permission** | Explicit permission for one native Robot command to use the displayed file, program, network and native MCP access. |
-
-## Robots
-
-| Term | Meaning |
-|---|---|
-| **Robot** | A persistent agent with a selected project, model, reusable Role, Skills and enabled MCP tools. First release permits one executing Robot at a time. |
-| **Role** | Named reusable instructions, copied into a conversation when it starts. |
-| **Project** | The local directory where a Robot works; it is a working directory, not a security boundary. |
-| **Workbench** | The Robot's layer over the Canvas, containing project context, conversations, progress, tool activity and results. |
-| **Conversation** | Persistent commands, replies and tool activity, with the starting model and Role instructions retained when resumed. |
-| **Rating** | Optional one-to-five-star feedback saved for a conversation. |
-| **Command queue** | Accepted commands waiting for the single Robot execution worker, in submission order. |
-| **Interrupted** | A saved command that was queued or running when the worker stopped; it requires a new explicit command and is never replayed automatically. |
-| **Skill** | An installed Codex `SKILL.md` workflow selected for a Robot to follow using Orbit's tools. |
-| **MCP server** | A configured local stdio process exposing tools; explicitly enabled tools run automatically. |
-| **Tool activity** | The saved record of a tool request, its outcome and any approval decision. A historical approval does not authorize execution. |
-| **Team** | A later feature combining a lead and specialist Robots working sequentially in one project. |
 
 
 For v2 desktop layout terms, including Item Size, Item Gap, Widget Gallery, widget footprints, placement preview, insertion edge, folder center and Remove from Home, follow `Orbit_Desktop_Launcher_UX_Spec_v2.md`. Compatible terms are approved alongside the definitions below; the single Canvas amendment in spec.md supersedes page terminology.
@@ -217,14 +192,6 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 
 | **App search path** | An absolute directory scanned for immediate executable files (including valid executable symlinks on Linux), or an individual executable included by Refresh. |
 
-| **AI** | The Action and Search bar settings for asking one question inside Orbit using a local Ollama model, OpenAI or Gemini. |
-| **AI provider** | Ollama, OpenAI or Gemini, selected for the AI Prefix. |
-| **Model ID** | The provider-specific model name used for an AI request. |
-| **API key** | A cloud provider credential entered in a masked field and stored in the system credential store. |
-| **Ask** | Send the current AI prompt as a fresh question. |
-| **Answer** | Selectable, temporary plain-text output of the AI request. |
-| **Copy** | Copy the AI answer to the clipboard. |
-
 | **Finished ID** | A saved reference to a completed item, including its source table and item ID. |
 | **Achievements** | Today's completed items on the Home Screen; the full dated history is available in Data. |
 | **Learn** | Mark the displayed Vocabulary entry as learned. Undo restores it to future selections. |
@@ -272,18 +239,6 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | **Show all items** | Fits every arranged Canvas Item within the visible area. |
 
 Canvas replaces the retired page layout. Boxes and their Add box command are removed. Their former text is retained only in the original migration backup.
-
-| **Profile** | A Robot's saved project, provider/model, Role, Skills and MCP configuration. |
-| **Queue command** | Submit a command for the selected Robot; acceptance appears after it is saved. |
-| **Approve once** | Authorize only the displayed local action for its owning conversation. |
-| **Cancel work** | Stop pending work for the selected conversation; an already executing operation can finish or time out. |
-| **Credential reference** | A name pointing to a secret in the system credential store; the value is excluded from backups. |
-
-| **Provider account** | A named provider instance selected by a Robot. Several accounts may use one provider. |
-| **Account name** | The label distinguishing saved accounts, such as Personal or Work. |
-| **Account credential reference** | A system credential-store identifier for a named OpenAI API or Gemini account; never the credential value. |
-| **Account directory** | A separate absolute configuration/authentication directory reference for a native provider account. Its contents are excluded from backups. |
-| **OpenCode**, **Antigravity**, **Copilot**, **Codex / ChatGPT** | Native Robot providers whose account metadata is supported in step 1; connection and execution follow in steps 2–3. |
 
 | **Script** | A named executable file selected through `/` in Search anything; text after the first space is passed as one argument. |
 | **Scripts** | Search bar settings tab for adding, editing and deleting Script entries. |

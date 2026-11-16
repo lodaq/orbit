@@ -46,10 +46,6 @@ pub struct Config {
     #[serde(default = "default_smooth_cursor")]
     pub smooth_cursor: bool,
     #[serde(default)]
-    pub ai: crate::ai::Settings,
-    #[serde(default)]
-    ai_initialized: bool,
-    #[serde(default)]
     pub layout_locked: bool,
     #[serde(default = "crate::shortcuts::defaults")]
     pub shortcuts: Vec<crate::shortcuts::Shortcut>,
@@ -107,7 +103,6 @@ pub enum ActionKind {
     Url,
     Shell,
     TickTick,
-    Ai,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -149,6 +144,79 @@ struct LegacyPage {
     items: Vec<Item>,
 }
 
+fn parse(data: &[u8]) -> Result<Config, Box<dyn std::error::Error>> {
+    let mut value: serde_json::Value = serde_json::from_slice(data)?;
+    let mut retired_actions = std::collections::HashSet::new();
+    if let Some(actions) = value.get_mut("user_actions").and_then(|v| v.as_array_mut()) {
+        actions.retain(|action| {
+            if action["kind"] == "Ai" {
+                if let Some(id) = action["id"].as_str() {
+                    retired_actions.insert(id.to_owned());
+                }
+                false
+            } else {
+                true
+            }
+        });
+    }
+    if let Some(prefixes) = value.get_mut("prefixes").and_then(|v| v.as_array_mut()) {
+        prefixes.retain(|prefix| {
+            !prefix["action_id"]
+                .as_str()
+                .is_some_and(|id| retired_actions.contains(id))
+        });
+    }
+    let mut removed = std::collections::HashSet::new();
+    let mut discard = |items: &mut serde_json::Value| {
+        if let Some(items) = items.as_array_mut() {
+            items.retain(|item| {
+                if let Some(retired) = item.get("Robot") {
+                    if let Some(id) = retired["id"].as_str() {
+                        removed.insert(id.to_owned());
+                    }
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+    };
+    discard(&mut value["items"]);
+    if let Some(pages) = value["pages"].as_array_mut() {
+        for page in pages {
+            discard(&mut page["items"]);
+        }
+    }
+    if !removed.is_empty() {
+        if let Some(positions) = value["positions"].as_object_mut() {
+            positions.retain(|id, _| !removed.contains(id));
+        }
+        for key in ["frames", "groups"] {
+            if let Some(frames) = value[key].as_array_mut() {
+                for frame in frames.iter_mut() {
+                    if let Some(items) = frame["items"].as_array_mut() {
+                        items.retain(|id| !id.as_str().is_some_and(|id| removed.contains(id)));
+                    }
+                }
+                frames.retain(|frame| {
+                    frame["items"]
+                        .as_array()
+                        .is_none_or(|items| !items.is_empty())
+                });
+            }
+        }
+    }
+    for key in ["items", "pages", "positions", "frames", "groups"] {
+        if value[key].is_null() {
+            value
+                .as_object_mut()
+                .ok_or("Invalid configuration")?
+                .remove(key);
+        }
+    }
+    Ok(serde_json::from_value(value)?)
+}
+
 fn legacy_version() -> u32 {
     1
 }
@@ -162,11 +230,7 @@ pub enum Item {
         style: crate::ink::Style,
         image: String,
     },
-    Robot {
-        id: String,
-        name: String,
-        profile: String,
-    },
+
     Widget {
         id: String,
         name: String,
@@ -294,10 +358,7 @@ impl Item {
                 icon,
                 path,
             } => (id, name, icon, Launch::Directory(path.clone())),
-            Self::Annotation { .. }
-            | Self::Folder { .. }
-            | Self::Widget { .. }
-            | Self::Robot { .. } => return None,
+            Self::Annotation { .. } | Self::Folder { .. } | Self::Widget { .. } => return None,
         };
         Some(App {
             id: id.clone(),
@@ -341,8 +402,7 @@ impl Item {
             | Self::File { name, .. }
             | Self::Directory { name, .. }
             | Self::Folder { name, .. }
-            | Self::Widget { name, .. }
-            | Self::Robot { name, .. } => name,
+            | Self::Widget { name, .. } => name,
         }
     }
 
@@ -354,8 +414,7 @@ impl Item {
             | Self::File { id, .. }
             | Self::Directory { id, .. }
             | Self::Folder { id, .. }
-            | Self::Widget { id, .. }
-            | Self::Robot { id, .. } => id,
+            | Self::Widget { id, .. } => id,
         }
     }
 }
@@ -477,8 +536,6 @@ impl Default for Config {
             background_folder: "/home/sebaq/Pictures/aesthetic-wallpapers/images".into(),
             default_search_engine: default_search_engine(),
             smooth_cursor: true,
-            ai: Default::default(),
-            ai_initialized: true,
             layout_locked: false,
             shortcuts: crate::shortcuts::defaults(),
             file_search_paths: Vec::new(),
@@ -542,7 +599,6 @@ fn builtin_actions() -> Vec<UserAction> {
             "https://en.wikipedia.org/wiki/Special:Search?search=%s",
         ),
         ("ticktick", "TickTick", ActionKind::TickTick, ""),
-        ("orbit-ai", "AI", ActionKind::Ai, ""),
         (
             "browser-search",
             "Browser Search",
@@ -653,7 +709,6 @@ fn default_prefixes() -> Vec<Prefix> {
         ("claude", "Claude", "c", "claude"),
         ("wikipedia", "Wikipedia", "w", "wikipedia"),
         ("ticktick", "TickTick", "t", "ticktick"),
-        ("orbit-ai", "AI", "ai", "orbit-ai"),
         ("browser-search", "Browser Search", "s", "browser-search"),
         (
             "github-repo-search",
@@ -702,48 +757,6 @@ fn default_prefixes() -> Vec<Prefix> {
 }
 
 impl Config {
-    fn initialize_ai(&mut self) -> bool {
-        if self.ai_initialized {
-            return false;
-        }
-        let id = self.add_ai_action();
-        if !self
-            .prefixes
-            .iter()
-            .any(|p| p.token.eq_ignore_ascii_case("ai"))
-        {
-            self.prefixes.push(Prefix {
-                id: id.clone(),
-                name: "AI".into(),
-                token: "ai".into(),
-                action_id: id,
-            });
-        }
-        self.ai_initialized = true;
-        true
-    }
-    fn add_ai_action(&mut self) -> String {
-        if let Some(action) = self.user_actions.iter().find(|a| a.kind == ActionKind::Ai) {
-            return action.id.clone();
-        }
-        let mut id = "orbit-ai".to_owned();
-        let mut suffix = 1;
-        while self.user_actions.iter().any(|a| a.id == id)
-            || self.prefixes.iter().any(|p| p.id == id)
-        {
-            id = format!("orbit-ai-{suffix}");
-            suffix += 1;
-        }
-        self.user_actions.push(UserAction {
-            id: id.clone(),
-            name: "AI".into(),
-            kind: ActionKind::Ai,
-            source: String::new(),
-            description: "Ask a local model, OpenAI or Gemini inside Orbit.".into(),
-        });
-        id
-    }
-
     fn add_search_word_shortcut(&mut self) {
         if !self
             .shortcuts
@@ -1196,7 +1209,7 @@ fn merge_remembrances(
 }
 
 pub fn decode(data: &[u8]) -> Result<Config, Box<dyn std::error::Error>> {
-    let mut config: Config = serde_json::from_slice(data)?;
+    let mut config = parse(data)?;
     if !config.valid() {
         return Err("Invalid Canvas configuration".into());
     }
@@ -1209,7 +1222,7 @@ fn migrate(
     progress: Option<&std::path::Path>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let legacy = config.version < 5 || !config.legacy_pages.is_empty();
-    let mut changed = config.initialize_ai();
+    let mut changed = false;
     let removed: Vec<_> = config
         .items
         .iter()
@@ -1409,7 +1422,7 @@ fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
         config.save()?;
         return Ok((config, String::new()));
     };
-    let Ok(mut config) = serde_json::from_slice::<Config>(&text) else {
+    let Ok(mut config) = parse(&text) else {
         platform::backup_config()?;
         return Ok((
             Config::default(),
@@ -1474,8 +1487,6 @@ mod tests {
             .push(serde_json::json!({"action":13,"keys":"Ctrl+E"}));
         let restored = decode(&serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(!restored.shortcuts.iter().any(|entry| entry.action == 13));
-        assert_eq!(restored.ai.local_model, config.ai.local_model);
-        assert_eq!(restored.ai.address, config.ai.address);
         let saved = serde_json::to_value(restored).unwrap();
         assert!(saved.get("english_assistance").is_none());
         assert!(
@@ -1483,78 +1494,6 @@ mod tests {
                 .get("search_completion_shortcut_initialized")
                 .is_none()
         );
-    }
-
-    #[test]
-    fn ai_migration_of_omitted_action_fields_does_not_duplicate_defaults() {
-        let mut value = serde_json::to_value(Config::default()).unwrap();
-        for field in ["ai_initialized", "ai", "user_actions", "prefixes"] {
-            value.as_object_mut().unwrap().remove(field);
-        }
-        let mut config: Config = serde_json::from_value(value).unwrap();
-        assert!(config.initialize_ai());
-        assert_eq!(
-            config
-                .user_actions
-                .iter()
-                .filter(|a| a.kind == ActionKind::Ai)
-                .count(),
-            1
-        );
-        assert_eq!(
-            config.prefixes.iter().filter(|p| p.token == "ai").count(),
-            1
-        );
-        assert!(config.valid());
-    }
-
-    #[test]
-    fn ai_migration_preserves_user_tokens_and_is_one_time() {
-        let mut config = Config::default();
-        config.ai_initialized = false;
-        config.user_actions.retain(|a| a.kind != ActionKind::Ai);
-        config.prefixes.retain(|p| p.token != "ai");
-        config.prefixes.push(Prefix {
-            id: "custom-ai".into(),
-            name: "Custom".into(),
-            token: "AI".into(),
-            action_id: "youtube".into(),
-        });
-        config.ai.local_model = "my-local-model".into();
-        assert!(config.initialize_ai());
-        assert_eq!(config.ai.local_model, "my-local-model");
-        assert_eq!(
-            config
-                .prefixes
-                .iter()
-                .filter(|p| p.token.eq_ignore_ascii_case("ai"))
-                .count(),
-            1
-        );
-        assert_eq!(config.prefixes.last().unwrap().action_id, "youtube");
-        assert!(config.valid());
-        let count = config.user_actions.len();
-        assert!(!config.initialize_ai());
-        assert_eq!(config.user_actions.len(), count);
-        let saved = serde_json::to_value(&config).unwrap();
-        assert!(saved["ai"].get("api_key").is_none());
-    }
-
-    #[test]
-    fn ai_migration_installs_prefix_without_action_id_collisions() {
-        let mut config = Config::default();
-        config.ai_initialized = false;
-        config
-            .user_actions
-            .iter_mut()
-            .find(|a| a.id == "orbit-ai")
-            .unwrap()
-            .kind = ActionKind::Shell;
-        config.prefixes.retain(|p| p.token != "ai");
-        assert!(config.initialize_ai());
-        assert!(config.valid());
-        let prefix = config.prefixes.iter().find(|p| p.token == "ai").unwrap();
-        assert_eq!(prefix.action_id, "orbit-ai-1");
     }
 
     #[test]
@@ -1673,8 +1612,8 @@ mod tests {
                     .any(|action| action.id == action_id)
             );
         }
-        assert_eq!(config.prefixes.len(), 27);
-        assert_eq!(config.user_actions.len(), 21);
+        assert_eq!(config.prefixes.len(), 26);
+        assert_eq!(config.user_actions.len(), 20);
     }
 
     #[test]
@@ -2143,5 +2082,44 @@ mod canvas_tool_tests {
         });
         crate::spatial::reconcile(&mut config).unwrap();
         assert!(!config.valid());
+    }
+}
+
+#[cfg(test)]
+mod retired_items_test {
+    #[test]
+    fn retains_other_items_from_existing_profiles() {
+        let mut value = serde_json::to_value(super::Config::default()).unwrap();
+        value["items"] = serde_json::json!([{"Robot":{"id":"old","name":"Old","profile":"old"}}, {"Directory":{"id":"dir","name":"Files","path":"/tmp","icon":"Letter"}}]);
+        value["frames"] =
+            serde_json::json!([{"id":"frame","name":"Saved","keys":"","items":["old","dir"]}]);
+        let config = super::decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(config.frames[0].items, ["dir"]);
+        assert_eq!(config.items.len(), 1);
+        assert_eq!(config.items[0].id(), "dir");
+    }
+}
+
+#[cfg(test)]
+mod retired_search_test {
+    #[test]
+    fn removes_retired_actions_and_only_their_prefixes() {
+        let mut value = serde_json::to_value(super::Config::default()).unwrap();
+        let actions = value["user_actions"].as_array_mut().unwrap();
+        let expected = actions.len();
+        actions.push(serde_json::json!({"id":"old-ai", "name":"AI", "kind":"Ai", "source":"", "description":""}));
+        value["prefixes"].as_array_mut().unwrap().push(
+            serde_json::json!({"id":"old-prefix", "name":"AI", "token":"ai", "action_id":"old-ai"}),
+        );
+        value["ai"] = serde_json::json!({"provider":1});
+        let config = super::decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(config.user_actions.len(), expected);
+        assert!(
+            config
+                .prefixes
+                .iter()
+                .all(|prefix| prefix.action_id != "old-ai")
+        );
+        assert!(serde_json::to_value(config).unwrap().get("ai").is_none());
     }
 }

@@ -10,8 +10,6 @@ The current desktop integration targets Arch Linux with Hyprland. Windows suppor
 
 **Spatial Canvas.** Arrange apps, websites, files, directories, Folders and Widgets on a pannable, zoomable Canvas. Lock the layout to prevent accidental moves; use Show all items to fit the arrangement. The Dock keeps Pinned and Recent Items close at hand.
 
-**Robot workspaces.** Add AI Robots to the Canvas and open separate conversations. Settings manages Robot profiles, Skills, Providers, Actions, MCP definitions, credential references, Projects and Roles. Queued work and approval prompts are scoped to conversations. Native provider capabilities vary; see [provider capabilities](robot-provider-capabilities.md) before relying on tool or MCP support.
-
 **Bookmark replacement.** Websites are Items on your Canvas. The icon is fetched once and saved, so each one opens in your browser with a single click.
 
 **File search replacement.** Point Orbit at the folders you care about. It indexes them on the first search and keeps the index until a path changes.
@@ -45,9 +43,5 @@ cargo fmt -- --check
 cargo clippy -- -D warnings
 cargo test
 ```
-
-- [Product specification](doc/spec.md), [project rules](doc/rules.md), and [glossary](doc/glossary.md).
-- [Shortcuts](doc/shortcuts.md) and [source structure](doc/structure.md).
-- [Robot execution decisions](doc/adr/0002-robot-execution.md).
 
 Keep API keys in the supported system credential store. Test launcher input and provider workflows with an isolated desktop and test profile, rather than the normal desktop session.

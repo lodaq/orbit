@@ -71,7 +71,6 @@ enum Action {
     ChangeBackground,
     SaveDefaultSearchEngine(i32),
     SaveSmoothCursor(bool),
-    SaveAi(crate::ai::Settings),
     SaveLayoutLocked(bool),
     SaveShortcut(i32, String, String),
     DeleteShortcut(i32, String),
@@ -107,8 +106,6 @@ enum Action {
     ChoosePath(bool, u64),
     SavePath(String, String, bool, String, u64),
     SaveFolder(String, String, u64),
-    AddRobot(String, String),
-    RenameRobot(String, String),
     Delete(String),
     Open(String),
     OpenFolder(String),
@@ -164,7 +161,6 @@ impl Action {
             | Self::SaveAnnotation(..)
             | Self::AddInk(..)
             | Self::EraseInk(..)
-            | Self::AddRobot(..)
             | Self::AddPredefined(..)
             | Self::AddInstalledApp(..)
             | Self::TransferData(true) => true,
@@ -270,8 +266,6 @@ pub fn connect(launcher: &Launcher) {
                     | Action::SaveWebsite(..)
                     | Action::SavePath(..)
                     | Action::SaveFolder(..)
-                    | Action::AddRobot(..)
-                    | Action::RenameRobot(..)
                     | Action::Delete(_)
                     | Action::Drop(..)
                     | Action::AddPredefined(..)
@@ -306,7 +300,6 @@ pub fn connect(launcher: &Launcher) {
                 && !matches!(
                     action,
                     Action::Drop(..)
-                        | Action::RenameRobot(..)
                         | Action::SaveSearchPath(..)
                         | Action::DeleteSearchPath(..)
                         | Action::AddFileSearchExclusion(..)
@@ -335,9 +328,7 @@ pub fn connect(launcher: &Launcher) {
                 | Action::SaveWebsite(id, ..)
                 | Action::SavePath(id, ..)
                 | Action::SaveFolder(id, ..) => id.is_empty(),
-                Action::AddRobot(..) | Action::AddPredefined(..) | Action::AddInstalledApp(..) => {
-                    true
-                }
+                Action::AddPredefined(..) | Action::AddInstalledApp(..) => true,
                 _ => false,
             };
             let annotation_action = matches!(action, Action::SaveAnnotation(..));
@@ -349,7 +340,6 @@ pub fn connect(launcher: &Launcher) {
                         | Action::SaveWebsite(..)
                         | Action::SavePath(..)
                         | Action::SaveFolder(..)
-                        | Action::RenameRobot(..)
                         | Action::SelectTickTickList(..)
                 ))
                 && !matches!(
@@ -559,13 +549,6 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             crate::search_cursor::sync(ui.window(), hidden);
         }
     });
-    let ai_sender = send.clone();
-    let ai_ui = launcher.as_weak();
-    launcher.on_save_ai(move || {
-        if let Some(ui) = ai_ui.upgrade() {
-            let _ = ai_sender.send(Action::SaveAi(crate::ai::Settings::from_ui(&ui)));
-        }
-    });
     let lock_sender = send.clone();
     launcher.on_save_layout_locked(move |locked| {
         let _ = lock_sender.send(Action::SaveLayoutLocked(locked));
@@ -664,16 +647,6 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     let prefix_ui = launcher.as_weak();
     launcher.on_run_prefix(move |action, argument| {
         use slint::Model;
-        if let Some(ui) = prefix_ui.upgrade()
-            && ui
-                .get_user_actions()
-                .iter()
-                .any(|item| item.id == action && item.kind == "AI")
-        {
-            ui.set_busy(false);
-            ui.invoke_ai_submit();
-            return;
-        }
         if let Some(ui) = prefix_ui.upgrade()
             && ui
                 .get_user_actions()
@@ -837,14 +810,6 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     let sender = send.clone();
     launcher.on_open_item(move |index| {
         let _ = sender.send(Action::Open(index.into()));
-    });
-    let sender = send.clone();
-    launcher.on_add_robot(move |profile, name| {
-        let _ = sender.send(Action::AddRobot(profile.into(), name.into()));
-    });
-    let sender = send.clone();
-    launcher.on_rename_robot(move |profile, name| {
-        let _ = sender.send(Action::RenameRobot(profile.into(), name.into()));
     });
     let sender = send.clone();
     launcher.on_save_shortcut(move |action, existing, keys| {
@@ -1015,8 +980,7 @@ impl Apps {
             _ => return None,
         };
         let tile = self.dock_tile(id)?;
-        (!tile.folder && !tile.widget && tile.annotation == 0 && tile.robot.is_empty())
-            .then(|| id.clone())
+        (!tile.folder && !tile.widget && tile.annotation == 0).then(|| id.clone())
     }
 
     fn load_icons(&mut self) -> Result<(), String> {
@@ -1025,7 +989,7 @@ impl Apps {
         {
             for item in &self.config.items {
                 match item {
-                    Item::Annotation { .. } | Item::Widget { .. } | Item::Robot { .. } => {}
+                    Item::Annotation { .. } | Item::Widget { .. } => {}
                     Item::App(app) => icons.push((app.id.clone(), app.icon.clone())),
                     Item::Website { id, icon, .. } => icons.push((id.clone(), icon.clone())),
                     Item::Folder { apps, .. } => {
@@ -1287,7 +1251,6 @@ impl Apps {
                 let kind = match kind.as_str() {
                     "URL" => ActionKind::Url,
                     "TickTick" => ActionKind::TickTick,
-                    "AI" => ActionKind::Ai,
                     _ => ActionKind::Shell,
                 };
                 if name.trim().is_empty()
@@ -1419,18 +1382,7 @@ impl Apps {
                 self.config = config;
                 Ok(())
             }
-            Action::SaveAi(settings) => {
-                settings.valid()?;
-                if self.config.ai != settings {
-                    let mut config = self.config.clone();
-                    config.ai = settings;
-                    config
-                        .save()
-                        .map_err(|error| format!("Couldn't save AI settings: {error}"))?;
-                    self.config = config;
-                }
-                Ok(())
-            }
+
             Action::RunPrefix(action_id, argument) => {
                 let action = self
                     .config
@@ -1453,7 +1405,6 @@ impl Apps {
                         platform::launch_shell_action(&action.source, argument.trim())
                             .map_err(|error| format!("Couldn't start {}: {error}", action.name))
                     }
-                    ActionKind::Ai => Err("Use the AI Prefix from Search anything.".into()),
                     ActionKind::TickTick => create_ticktick_task(argument.trim())
                         .map(|_| ())
                         .map_err(|error| format!("Couldn't create TickTick task: {error}")),
@@ -1524,48 +1475,6 @@ impl Apps {
             }
             Action::SaveFolder(index, name, request) => {
                 self.save_folder(&index, name, requests, request)
-            }
-            Action::RenameRobot(profile, name) => {
-                let mut config = self.config.clone();
-                let mut changed = false;
-                for item in &mut config.items {
-                    if let Item::Robot {
-                        profile: saved,
-                        name: label,
-                        ..
-                    } = item
-                        && *saved == profile
-                        && *label != name
-                    {
-                        label.clone_from(&name);
-                        changed = true;
-                    }
-                }
-                if changed {
-                    config.save().map_err(|e| e.to_string())?;
-                    self.config = config;
-                }
-                Ok(())
-            }
-            Action::AddRobot(profile, name) => {
-                let db = crate::robot_data::Database::open(
-                    &platform::config_path()
-                        .map_err(|e| e.to_string())?
-                        .with_file_name("robots.db"),
-                )
-                .map_err(|e| e.to_string())?;
-                db.profile(&profile).map_err(|e| e.to_string())?;
-                self.store(
-                    "",
-                    Item::Robot {
-                        id: format!(
-                            "robot-{}",
-                            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-                        ),
-                        name,
-                        profile,
-                    },
-                )
             }
             Action::Delete(index) => self.delete(&index, weak),
             Action::Open(index) => self.open_item(&index, weak),
@@ -1916,11 +1825,6 @@ impl Apps {
                 self.save_website(&index, name, url, draft, requests, request)
             }
             Action::TransferData(import) => {
-                let _robots = if import {
-                    Some(crate::robot_workbench::before_import()?)
-                } else {
-                    None
-                };
                 let mut result = platform::transfer_data(import);
                 if import && matches!(&result, Ok(Some(_))) {
                     self.config = config::load().0;
@@ -2013,15 +1917,6 @@ impl Apps {
             }
             Item::File { name, path, .. } | Item::Directory { name, path, .. } => {
                 platform::open(path).map_err(|error| format!("Couldn't open '{}': {error}", name))
-            }
-            Item::Robot { profile, .. } => {
-                let profile = profile.clone();
-                let _ = _weak.upgrade_in_event_loop(move |ui| {
-                    ui.global::<crate::RobotWorkbench>().set_adding(false);
-                    ui.global::<crate::RobotWorkbench>()
-                        .invoke_open(profile.into(), false);
-                });
-                Ok(())
             }
             Item::Widget { variant: 7, .. } => Ok(()),
             Item::Folder { .. } => {
@@ -2430,7 +2325,7 @@ impl Apps {
                         }
                     }
                 }
-                Item::Annotation { .. } | Item::Widget { .. } | Item::Robot { .. } => {}
+                Item::Annotation { .. } | Item::Widget { .. } => {}
                 _ if item.name().to_lowercase().contains(&self.query) => {
                     push(self.tile(item));
                 }
@@ -3272,7 +3167,6 @@ impl Apps {
         let canvas_speed = self.config.canvas_speed;
         let font_size = self.config.font_size;
         let smooth_cursor = self.config.smooth_cursor;
-        let ai = self.config.ai.clone();
         let layout_locked = self.config.layout_locked;
         let search_engine_index = self.config.default_search_engine_index() as i32;
         let app_search_paths = self
@@ -3397,7 +3291,6 @@ impl Apps {
                     ActionKind::Url => "URL",
                     ActionKind::Shell => "Shell",
                     ActionKind::TickTick => "TickTick",
-                    ActionKind::Ai => "AI",
                 }
                 .into(),
                 source: action.source.clone().into(),
@@ -3578,7 +3471,6 @@ impl Apps {
                 .into(),
             );
             launcher.set_smooth_cursor(smooth_cursor);
-            ai.update_ui(&launcher);
             launcher.set_layout_locked(layout_locked);
             launcher.set_default_search_engine_index(search_engine_index);
             launcher.invoke_default_search_engine_saved(search_engine_index);
@@ -4229,7 +4121,6 @@ struct Tile {
     directory: bool,
     folder: bool,
     preview_icons: Vec<FolderIcon>,
-    robot: String,
     annotation: i32,
     annotation_ratio: f32,
     annotation_style: crate::ink::Style,
@@ -4271,9 +4162,6 @@ impl Tile {
                     tile.max_span_y = crate::spatial::IMAGE_MAX_SPAN as i32;
                     tile.annotation_ratio = image_ratio(tile.icon.as_ref());
                 }
-            }
-            Item::Robot { profile, .. } => {
-                tile.robot = profile.clone();
             }
             Item::Widget {
                 variant,
@@ -4338,10 +4226,7 @@ impl Tile {
             Item::Website { icon, .. } | Item::File { icon, .. } | Item::Directory { icon, .. } => {
                 Some(icon)
             }
-            Item::Annotation { .. }
-            | Item::Folder { .. }
-            | Item::Widget { .. }
-            | Item::Robot { .. } => None,
+            Item::Annotation { .. } | Item::Folder { .. } | Item::Widget { .. } => None,
         };
         if let Some(icon) = icon {
             tile.icon_value = serde_json::to_string(icon).unwrap_or_default();
@@ -4453,7 +4338,6 @@ impl Tile {
             file: self.file,
             directory: self.directory,
             folder: self.folder,
-            robot: self.robot.into(),
             preview_icons: std::rc::Rc::new(slint::VecModel::from(
                 self.preview_icons
                     .into_iter()
@@ -4569,7 +4453,6 @@ mod tests {
             Action::Unpin("item".into()),
             Action::Delete("item".into()),
             Action::Drop("item".into(), -100, 0, "".into()),
-            Action::AddRobot("robot".into(), "Robot".into()),
             Action::AddPredefined("lock".into(), 0),
             Action::AddInstalledApp("app".into(), 0),
             Action::TransferData(true),
@@ -5006,86 +4889,6 @@ mod tests {
         assert!(activated.badge_width > 52);
         assert!(match_prefix(&config.prefixes, "youtube cats").is_none());
         assert!(match_prefix(&config.prefixes, "yout cats").is_none());
-    }
-
-    #[test]
-    fn ai_prefix_uses_the_answer_panel_without_launching_or_hiding() {
-        init_ui_for_test();
-        let ui = Launcher::new().unwrap();
-        ui.set_shortcuts(crate::shortcuts::model(crate::shortcuts::defaults()));
-        let (send, receive) = mpsc::channel();
-        callbacks(&ui, send, Arc::new(RequestSequence::default()));
-        ui.set_user_actions(
-            std::rc::Rc::new(slint::VecModel::from(vec![UserActionChoice {
-                id: "orbit-ai".into(),
-                name: "AI".into(),
-                kind: "AI".into(),
-                ..Default::default()
-            }]))
-            .into(),
-        );
-        ui.set_prefixes(
-            std::rc::Rc::new(slint::VecModel::from(vec![PrefixChoice {
-                id: "orbit-ai".into(),
-                name: "AI".into(),
-                token: "ai".into(),
-                action_id: "orbit-ai".into(),
-                ..Default::default()
-            }]))
-            .into(),
-        );
-        let submitted = std::rc::Rc::new(std::cell::Cell::new(0));
-        let count = submitted.clone();
-        ui.on_ai_submit(move || count.set(count.get() + 1));
-        ui.show().unwrap();
-        ui.set_launcher_visible(true);
-        ui.invoke_focus_search();
-        ui.set_search_text("ai".into());
-        ui.window()
-            .dispatch_event(slint::platform::WindowEvent::KeyPressed { text: "\t".into() });
-        assert_eq!(ui.get_activated_prefix_name(), "AI");
-        assert!(ui.get_ai_active());
-        assert!(!ui.get_home_visible());
-        assert!(!ui.get_search_results_visible());
-        assert!(!ui.get_grid_navigation());
-        assert!(!ui.get_busy());
-        ui.set_search_text("hello".into());
-        assert!(!ui.get_home_visible());
-        assert!(!ui.get_search_results_visible());
-        ui.invoke_activate_search_selection();
-        use slint::winit_030::winit::keyboard::{Key, ModifiersState, NamedKey};
-        assert!(!crate::shortcuts::handle(
-            &ui,
-            &Key::Named(NamedKey::ArrowLeft),
-            ModifiersState::empty()
-        ));
-        assert!(crate::shortcuts::handle(
-            &ui,
-            &Key::Named(NamedKey::Enter),
-            ModifiersState::empty()
-        ));
-        assert_eq!(submitted.get(), 1);
-        assert!(!ui.get_busy());
-        assert!(ui.get_launcher_visible());
-        assert!(!receive.try_iter().any(|action| matches!(
-            action,
-            Action::RunPrefix(..) | Action::SearchWeb(..) | Action::OpenResult(..)
-        )));
-        ui.set_ai_answer("answer".into());
-        let draft = ui.get_search_text();
-        let prefix = ui.get_activated_prefix_id();
-        ui.set_launcher_visible(false);
-        ui.invoke_reset_launcher(true);
-        ui.set_launcher_visible(true);
-        assert_eq!(ui.get_search_text(), draft);
-        assert_eq!(ui.get_activated_prefix_id(), prefix);
-        assert_eq!(ui.get_ai_answer(), "answer");
-        assert!(ui.get_ai_active());
-        ui.invoke_reset_launcher(false);
-        assert!(ui.get_ai_answer().is_empty());
-        assert!(ui.get_home_visible());
-        ui.set_search_text("ordinary search".into());
-        assert!(ui.get_search_results_visible());
     }
 
     #[test]

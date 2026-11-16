@@ -837,21 +837,6 @@ pub fn open(address: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn configure_robot_process(command: &mut Command) {
-    command.process_group(0);
-}
-
-pub fn stop_robot_process(child: &mut std::process::Child) {
-    // Kill the group so inherited pipes do not keep tool reader workers alive.
-    let _ = Command::new("/bin/kill")
-        .args(["-KILL", "--", &format!("-{}", child.id())])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
 fn detached(command: &mut Command) -> io::Result<()> {
     let mut child = command
         .stdin(Stdio::null())

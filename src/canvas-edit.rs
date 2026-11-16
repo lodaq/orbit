@@ -205,7 +205,6 @@ fn replace_id(item: &mut Item) -> Result<(), String> {
     let id = match item {
         Item::App(app) => &mut app.id,
         Item::Annotation { id, .. }
-        | Item::Robot { id, .. }
         | Item::Widget { id, .. }
         | Item::Website { id, .. }
         | Item::File { id, .. }

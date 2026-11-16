@@ -97,10 +97,6 @@ The top-bar Lock layout / Unlock layout button has no default shortcut. While lo
 
 Personal Hyprland binding: **Alt+T** runs `orbit ticktick`, opening Search anything with the TickTick Prefix active. Type a task and press Enter.
 
-AI Prefix: type **ai**, then **Space** or **Tab**. Enter submits a fresh question to the selected Ollama, OpenAI or Gemini model and displays the answer inside Orbit. Ask submits with the mouse; Cancel invalidates the pending reply; Copy copies the answer. Backspace on an empty prompt or Esc clears the Prefix through the existing navigation rules.
-
-While AI is active, hidden-result navigation does nothing. Arrow keys edit the prompt or select answer text normally; Enter in the prompt still submits the AI question.
-
 The launcher footer does not display shortcut hints. The shortcuts themselves and Settings → Shortcuts remain available.
 
 Search results: right-click → Pin or Add to Canvas. Drag a result to reveal the Canvas, then drop on free space or the dock. Esc cancels without adding the item. Lock layout disables placement.
@@ -114,8 +110,6 @@ Focused lists move down with Ctrl+N, Ctrl+J or Ctrl+↓, and up with Ctrl+P, Ctr
 Canvas: Select drags a selection rectangle; Hand drags to pan; Ctrl+wheel zooms around the pointer from 25–200%. Right-click empty space → Add item opens the existing sheets and widget gallery at the clicked position. Right-click → Show all items fits the arranged content, including below 25% when necessary. Widgets scroll their own content. Escape cancels an active drag or placement preview without saving. Lock layout prevents adding, moving and resizing items while permitting navigation and widget interactions. The saved view survives hiding and restart. There are no page-switch actions or Box controls.
 
 With Canvas focus, `-` zooms out and `+` zooms in around the center of the window. On Linux Wayland, spread two fingers to zoom in and pinch them together to zoom out around the window center. Touchpad scrolling continues to pan; Ctrl+scroll also zooms. Pinch works while layout is locked and only on the visible Canvas with no layer or edit gesture active.
-
-Robot workbench: Escape closes the workbench without cancelling work. Typing, Tab, text selection and clipboard shortcuts stay in the workbench while it is open. Send queues the chat message with the mouse; Cancel work cancels the selected conversation's queued/pending work. Approve once applies only to the displayed conversation and action. Delete conversation requires confirmation and is unavailable while that conversation has work outstanding.
 
 Scripts: type `/` to list saved scripts, then filter by name. Up/Down select without wrapping. Tab fills the selected script name and preserves arguments. Enter completes a partial name first, then runs on the next press; a complete name or a query with arguments runs immediately. Esc clears script mode. The first space separates the name filter from one unchanged argument string. With no match, Enter does nothing. Rows can also be clicked.
 

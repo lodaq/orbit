@@ -1,5 +1,3 @@
-export { RobotWorkbench, RobotChoice, RobotActivity, RobotProvider, RobotResource } from "robot-workbench.slint";
-import { RobotWorkbench, RobotPanel } from "robot-workbench.slint";
 export { CanvasState } from "canvas.slint";
 import { CanvasState } from "canvas.slint";
 export { TextDirection } from "controls.slint";
@@ -30,7 +28,6 @@ export struct FolderPreview {
 
 export struct AppTile {
     annotation: int, annotation-ratio: float, annotation-color: color, annotation-color-name: string, annotation-size: float, annotation-opacity: float,
-    robot: string,
     row: int, col: int, span-x: int, span-y: int, widget: bool, widget-kind: int, widget-text: string, widget-min: int, widget-max: int, ticktick: bool, ticktick-next: bool,
     ticktick-project-id: string,
     min-span-x: int, min-span-y: int, max-span-x: int, max-span-y: int,
@@ -230,7 +227,7 @@ component ItemIcon inherits Rectangle {
     border-radius: self.width * 0.25;
     Image {
         width: parent.width; height: parent.height;
-        source: item.robot != "" ? @image-url("assets/robot.svg") : item.text-icon ? @image-url("assets/letter.svg") : dock && item.artwork == "website" ? @image-url("assets/dock-website.svg")
+        source: item.text-icon ? @image-url("assets/letter.svg") : dock && item.artwork == "website" ? @image-url("assets/dock-website.svg")
             : dock && item.artwork == "file" ? @image-url("assets/dock-file.svg")
             : dock && item.artwork == "command" ? @image-url("assets/dock-command.svg")
             : dock && item.artwork == "directory" ? @image-url("assets/dock-directory.svg")
@@ -715,8 +712,8 @@ export component Launcher inherits Window {
     }
 
     private property <int> dock-source-index: -1;
-    out property <bool> grid-navigation: !RobotWorkbench.visible && !root.search-context && !root.ai-active && canvas-focus.has-focus && !root.canvas-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.frame-editor && !root.annotation-editor;
-    out property <bool> frame-shortcuts: !RobotWorkbench.visible && !root.canvas-context && root.context-index < 0 && root.frame-context-id == "" && !root.tool-active && !root.marquee-active && !root.panning && !root.dragging && root.home-visible && !root.busy && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.frame-editor && !root.annotation-editor && !root.search-context;
+    out property <bool> grid-navigation: !root.search-context && canvas-focus.has-focus && !root.canvas-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.frame-editor && !root.annotation-editor;
+    out property <bool> frame-shortcuts: !root.canvas-context && root.context-index < 0 && root.frame-context-id == "" && !root.tool-active && !root.marquee-active && !root.panning && !root.dragging && root.home-visible && !root.busy && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.frame-editor && !root.annotation-editor && !root.search-context;
     out property <bool> canvas-shortcuts: root.frame-shortcuts && canvas-focus.has-focus;
     in-out property <bool> can-undo;
     in-out property <bool> can-redo;
@@ -766,7 +763,7 @@ export component Launcher inherits Window {
     callback activate-grid();
     activate-grid => { root.selected-ids = []; if root.focused-item >= 0 && root.focused-item < root.items.length { root.begin-drag(root.focused-item,false,0px,0px); root.end-drag(); } }
     callback context-focused();
-    context-focused => { if root.focused-item >= 0 && root.focused-item < root.items.length { root.context-index = root.focused-item; RobotWorkbench.common-actions = []; if root.items[root.focused-item].robot != "" { RobotWorkbench.context-actions(root.items[root.focused-item].robot); } root.context-x = (CanvasState.pan-x + root.items[root.focused-item].col * CanvasState.zoom) * 1px; root.context-y = (CanvasState.pan-y + root.items[root.focused-item].row * CanvasState.zoom) * 1px; } }
+    context-focused => { if root.focused-item >= 0 && root.focused-item < root.items.length { root.context-index = root.focused-item; root.context-x = (CanvasState.pan-x + root.items[root.focused-item].col * CanvasState.zoom) * 1px; root.context-y = (CanvasState.pan-y + root.items[root.focused-item].row * CanvasState.zoom) * 1px; } }
     private property <bool> snapping;
     snap-timer := Timer { interval: 210ms; triggered => { root.snapping = false; self.stop(); } }
     animate drag-x { duration: root.snapping ? 200ms : 0ms; easing: ease-out; }
@@ -1059,8 +1056,6 @@ export component Launcher inherits Window {
                     root.selected-ids = [root.items[index].id];
                 }
                 root.dock-context = ""; root.context-index = index; root.context-x = x; root.context-y = y;
-                RobotWorkbench.common-actions = [];
-                if root.items[index].robot != "" { RobotWorkbench.context-actions(root.items[index].robot); }
                 if index < 0 { root.set-add-position(root.world-x(x) / 1px,root.world-y(y) / 1px); }
                 canvas-focus.focus();
                 return;
@@ -1176,7 +1171,7 @@ export component Launcher inherits Window {
     private property <length> search-cursor-y;
     private property <int> search-edit-generation;
     private property <bool> search-cursor-overlay: root.smooth-cursor && root.launcher-visible && search-input.has-focus && search-input.preedit-text == "";
-    changed search-text => { if root.script-active { root.engine-menu = false; } if root.ai-loading { root.ai-cancel(); } root.search-edit-generation += 1; }
+    changed search-text => { if root.script-active { root.engine-menu = false; } root.search-edit-generation += 1; }
     out property <int> search-cursor-offset: search-input.cursor-position-byte-offset;
     in-out property <string> banner;
     in property <[AppTile]> items;
@@ -1253,35 +1248,8 @@ export component Launcher inherits Window {
         }
     }
     in property <[UserActionChoice]> user-actions;
-    in-out property <int> ai-provider;
-    in-out property <string> ai-address: "http://127.0.0.1:11434";
-    in-out property <string> ai-local-model: "qwen3:4b";
-    in-out property <string> ai-openai-model;
-    in-out property <string> ai-gemini-model;
-    in-out property <[string]> ai-local-models;
-    in-out property <int> ai-local-index;
-    in-out property <string> ai-answer;
-    in-out property <string> ai-status;
-    in-out property <string> ai-settings-status;
-    in-out property <string> ai-key-draft;
-    in-out property <bool> ai-loading;
-    in-out property <bool> ai-key-busy;
-    in-out property <bool> ai-models-loading;
-    private property <[string]> ai-providers: ["Ollama", "OpenAI", "Gemini"];
-    out property <bool> ai-active: !root.script-active && root.activated-prefix-id != "" && root.action-index-for-id(root.activated-prefix-id) >= 0 && root.user-actions[root.action-index-for-id(root.activated-prefix-id)].id == root.activated-prefix-id && root.user-actions[root.action-index-for-id(root.activated-prefix-id)].kind == "AI";
-    out property <bool> home-visible: (root.search-text == "" || (root.drag-from-search && root.dragging)) && !root.settings && !root.ai-active;
+    out property <bool> home-visible: (root.search-text == "" || (root.drag-from-search && root.dragging)) && !root.settings;
     out property <bool> search-results-visible: !root.script-active && root.search-text != "" && !root.settings && root.activated-prefix-id == "" && !(root.drag-from-search && root.dragging);
-    callback ai-submit();
-    callback ai-cancel();
-    callback ai-refresh-models();
-    callback ai-store-key(bool);
-    callback save-ai();
-    function clear-ai() { root.ai-cancel(); root.ai-answer = ""; root.ai-status = ""; }
-    changed ai-provider => { root.clear-ai(); root.ai-key-draft = ""; }
-    changed ai-local-model => { root.clear-ai(); }
-    changed ai-openai-model => { root.clear-ai(); }
-    changed ai-gemini-model => { root.clear-ai(); }
-    changed ai-address => { root.clear-ai(); }
     in property <[PrefixChoice]> prefixes;
     in property <[string]> action-names;
     private property <string> action-id-draft;
@@ -1304,10 +1272,10 @@ export component Launcher inherits Window {
     private property <string> prefix-action-draft;
     private property <int> prefix-action-index;
     private property <int> action-kind-index;
-    private property <[string]> action-kinds: ["Shell", "URL", "TickTick", "AI"];
+    private property <[string]> action-kinds: ["Shell", "URL", "TickTick"];
     out property <string> activated-prefix-name;
     out property <string> activated-prefix-id;
-    changed activated-prefix-id => { root.clear-ai(); }
+    changed activated-prefix-id => {  }
     private property <length> activated-prefix-width: 78px;
     callback save-user-action(string, string, string, string, string, string);
     callback delete-user-action(string);
@@ -1320,7 +1288,7 @@ export component Launcher inherits Window {
     pure callback action-index-for-id(string) -> int;
     function activate-prefix() {
         root.engine-menu = false;
-        root.clear-ai();
+
         let matched = root.match-prefix(root.search-text);
         let has-match = matched.action-id != "";
         root.activated-prefix-id = matched.action-id;
@@ -1328,7 +1296,7 @@ export component Launcher inherits Window {
         root.activated-prefix-width = min(132px, max(52px, matched.badge-width * 1px));
         if has-match {
             root.search-text = matched.query;
-            root.search(root.ai-active ? "" : root.search-text);
+            root.search(root.search-text);
             root.search-selection = 0;
             root.search-offset = 0px;
             search-input.focus();
@@ -1356,9 +1324,7 @@ export component Launcher inherits Window {
             if root.script-needs-completion(root.search-text, root.script-matches[root.script-selection].name) { root.complete-script(); }
             else { root.launch-script(); }
         }
-        else if root.ai-active {
-            if !root.ai-loading { root.save-ai(); root.ai-submit(); }
-        } else if root.activated-prefix-id != "" {
+ else if root.activated-prefix-id != "" {
             root.busy = true;
             root.run-prefix(root.activated-prefix-id, root.search-text);
         } else { root.activate-search-selection(); }
@@ -1378,7 +1344,7 @@ export component Launcher inherits Window {
     private property <int> saved-default-search-engine-index;
     changed settings => {
         root.engine-menu = false;
-        root.clear-ai(); root.ai-key-draft = "";
+
         if root.settings {
             root.saved-size = root.item-size; root.saved-grid-gap = root.grid-gap;
             root.saved-canvas-speed = root.canvas-speed;
@@ -1447,12 +1413,7 @@ export component Launcher inherits Window {
         root.activated-prefix-name = entry.prefix-name;
         root.activated-prefix-width = entry.prefix-width > 0px ? entry.prefix-width : 78px;
         root.search-text = entry.text;
-        let is-ai = entry.prefix-id != "" && root.action-index-for-id(entry.prefix-id) >= 0 && root.user-actions[root.action-index-for-id(entry.prefix-id)].kind == "AI";
-        if !is-ai {
-            root.search(root.search-text);
-        } else {
-            root.search("");
-        }
+        root.search(root.search-text);
         root.search-selection = 0;
         root.search-hover = -1;
         root.search-offset = 0px;
@@ -1485,12 +1446,11 @@ export component Launcher inherits Window {
     private property <string> search-detail: search-detail-index >= 0 && search-detail-index < root.search-results.length ? (root.search-results[search-detail-index].path != "" ? root.search-results[search-detail-index].path : root.search-results[search-detail-index].url != "" ? root.search-results[search-detail-index].url : root.search-results[search-detail-index].command) : "";
     private property <length> search-offset;
     private property <int> search-columns: max(1, floor(min(1316px, root.width - 96px) / 160px));
-    out property <bool> search-navigation: !root.search-context && !root.ai-active && root.search-text != "" && !root.settings && !root.sheet && !root.folder-open && !root.picker && !root.alert && !root.ticktick-open;
+    out property <bool> search-navigation: !root.search-context && root.search-text != "" && !root.settings && !root.sheet && !root.folder-open && !root.picker && !root.alert && !root.ticktick-open;
     callback move-search-selection(int);
     callback activate-search-selection();
     activate-search-selection => {
         if root.script-active { root.launch-script(); return; }
-        if root.ai-active { return; }
         if root.search-selection >= 0 && root.search-selection < root.search-results.length && !root.busy {
             root.busy = true;
             let result = root.search-results[root.search-selection];
@@ -1513,7 +1473,6 @@ export component Launcher inherits Window {
             if top + 64px > root.script-offset + view-height { root.script-offset = top + 64px - view-height; }
             return;
         }
-        if root.ai-active { return; }
         root.search-hover = -1;
         if root.search-results.length == 0 { return; }
         let column = mod(root.search-selection, root.search-columns);
@@ -1546,7 +1505,7 @@ export component Launcher inherits Window {
     callback unpin-dock-item(string);
     callback remove-recent-item(string);
     out property <bool> search-focused: search-input.has-focus;
-    out property <bool> search-editing: root.search-focused && !RobotWorkbench.visible && root.launcher-visible && !root.settings && !root.sheet && !root.folder-open && !root.picker && !root.alert && !root.ticktick-open;
+    out property <bool> search-editing: root.search-focused && root.launcher-visible && !root.settings && !root.sheet && !root.folder-open && !root.picker && !root.alert && !root.ticktick-open;
     callback focus-search();
     focus-search => { if !root.sheet && !root.folder-open && root.context-index < 0 && root.dock-context == "" { root.settings = false; search-input.focus(); } }
 
@@ -1672,7 +1631,7 @@ export component Launcher inherits Window {
     in-out property <bool> picker;
     private property <int> context-index: -1;
     private property <bool> canvas-context;
-    changed launcher-visible => { if root.launcher-visible { root.load-local-widgets(root.items,true); } if !root.launcher-visible { root.cancel-canvas(); root.flush-canvas(); root.canvas-context = false; root.clear-ai(); root.ai-key-draft = ""; root.marquee-active = false; root.ink-draft = []; root.erase-draft = []; root.tool-active = false; } }
+    changed launcher-visible => { if root.launcher-visible { root.load-local-widgets(root.items,true); } if !root.launcher-visible { root.cancel-canvas(); root.flush-canvas(); root.canvas-context = false;  root.marquee-active = false; root.ink-draft = []; root.erase-draft = []; root.tool-active = false; } }
     private property <string> dock-context;
     private property <string> context-id;
     private property <int> editing: -1;
@@ -1794,8 +1753,6 @@ export component Launcher inherits Window {
     callback cancel-add();
     callback delete-item(string);
     callback open-item(string);
-    callback add-robot(string, string);
-    callback rename-robot(string, string);
     callback launch-folder-app(string,string);
     callback open-folder(string);
     callback close-folder();
@@ -2120,11 +2077,10 @@ export component Launcher inherits Window {
     canvas-focus := FocusScope { width: 0px; height: 0px; changed has-focus => { if self.has-focus { KeyboardNavigation.list-focused = false; } } }
     finish-drag => { if root.drop-pending { root.cancel-drag(); } }
     reset-launcher(preserve-search) => {
-        RobotWorkbench.visible = false;
         root.cancel-canvas(); root.flush-canvas();
         AzanSettings.close();
         if !preserve-search {
-            root.clear-ai();
+
             root.search-text = "";
             root.search-history-index = -1;
             root.activated-prefix-id = "";
@@ -2175,7 +2131,6 @@ export component Launcher inherits Window {
         search-input.focus();
     }
     close-top-layer => {
-        if RobotWorkbench.visible { RobotWorkbench.visible = false; return; }
         if root.panning { root.cancel-canvas(); return; }
         if root.tool-active || root.marquee-active { root.set-tool(root.tool-mode); return; }
         if AzanSettings.widget-id != "" { AzanSettings.close(); return; }
@@ -2205,7 +2160,7 @@ export component Launcher inherits Window {
         else if root.settings { root.settings = false; search-input.focus(); }
         else if root.selected-ids.length > 0 { root.selected-ids = []; }
         else if root.engine-menu { root.engine-menu = false; }
-        else if root.activated-prefix-id != "" { root.search-text = ""; root.clear-ai(); root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); canvas-focus.focus(); }
+        else if root.activated-prefix-id != "" { root.search-text = "";  root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); canvas-focus.focus(); }
         else if root.search-text != "" { root.search-text = ""; root.search(""); canvas-focus.focus(); }
         else { root.hide-launcher(); }
     }
@@ -2345,8 +2300,7 @@ export component Launcher inherits Window {
         else { root.save-folder(root.editing-id, root.app-name); }
     }
     function edit-item(index: int) {
-        if root.items[index].robot != "" { root.context-index = -1; RobotWorkbench.adding = false; RobotWorkbench.open(root.items[index].robot, true); }
-        else if root.items[index].folder { root.edit-folder(index); }
+        if root.items[index].folder { root.edit-folder(index); }
         else if root.items[index].app { root.edit-app(index); }
         else {
             root.context-index = -1;
@@ -2669,7 +2623,7 @@ export component Launcher inherits Window {
     }
     Rectangle { x: root.width < 1200px ? 16px : 48px; y: 40px; width: root.width < 1200px ? 80px : 90px; height: 32px; TouchArea { } Image { width: parent.width; height: parent.height; source: @image-url("assets/orbit.svg"); image-fit: contain; } }
     search-bar := Rectangle {
-        x: (root.width - self.width) / 2; y: 34px; width: min(root.ai-active && !root.settings ? 820px : 560px, max(240px, root.width - 440px));
+        x: (root.width - self.width) / 2; y: 34px; width: min(560px, max(240px, root.width - 440px));
         height: max(Theme.search-min-height, min(176px, search-measure.preferred-height + 2 * (Theme.search-padding + Theme.search-cursor-inset)));
         background: Theme.search-background;
         border-width: 0px; border-radius: Theme.radius-sheet - Theme.space-1;
@@ -2678,7 +2632,7 @@ export component Launcher inherits Window {
         OrbitText {
             x: search-scroll.x + search-input.x; y: search-scroll.y + search-input.y;
             width: search-input.width; height: root.search-cursor-height;
-            text: root.search-text == "" ? (root.ai-active ? "Ask AI" : "Search anything") : "";
+            text: root.search-text == "" ? "Search anything" : "";
             color: Theme.secondary; font-size: Theme.search-font-size;
         }
         search-measure := OrbitText {
@@ -2714,12 +2668,12 @@ export component Launcher inherits Window {
                         search-scroll.content-y = max(search-scroll.height - search-scroll.content-height, search-scroll.height - Theme.search-cursor-inset - self.y - point.y - root.search-cursor-height);
                     }
                 }
-                edited => { root.search-history-index = -1; KeyboardNavigation.list-focused = false; root.search-selection = 0; root.search-hover = -1; root.search-offset = 0px; if !root.ai-active { root.search(self.text); } }
+                edited => { root.search-history-index = -1; KeyboardNavigation.list-focused = false; root.search-selection = 0; root.search-hover = -1; root.search-offset = 0px; root.search(self.text); }
                 accepted => { if self.text != "" || root.activated-prefix-id != "" { root.run-activated-prefix(); } }
                 key-pressed(event) => {
                     if event.text == Key.Backspace && self.text == "" && root.activated-prefix-id != "" {
                         root.search-history-index = -1;
-                        root.clear-ai(); root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); accept;
+                         root.activated-prefix-id = ""; root.activated-prefix-name = ""; root.search(""); accept;
                     }
                     else if event.text == "\n" { if self.text != "" || root.activated-prefix-id != "" { root.run-activated-prefix(); } accept; }
                     else if event.text == Key.Tab && root.script-active { root.complete-script(); accept; }
@@ -3044,10 +2998,10 @@ export component Launcher inherits Window {
             wrap: word-wrap; overflow: elide; vertical-alignment: center;
         }
     }
-    if root.engine-menu && !root.ai-active && !root.script-active: TouchArea { clicked => { root.engine-menu = false; } }
+    if root.engine-menu && !root.script-active: TouchArea { clicked => { root.engine-menu = false; } }
     engine-select := Rectangle {
         x: search-bar.x - self.width - Theme.space-3; y: search-bar.y + (Theme.search-min-height - self.height) / 2;
-        width: root.width < 1200px ? 104px : 128px; height: Theme.control-height; visible: !root.settings && !root.ai-active && !root.script-active;
+        width: root.width < 1200px ? 104px : 128px; height: Theme.control-height; visible: !root.settings && !root.script-active;
         accessible-role: combobox; accessible-label: "Default search engine";
         accessible-value: root.search-engine-names[root.default-search-engine-index];
         accessible-enabled: !root.busy;
@@ -3066,7 +3020,7 @@ export component Launcher inherits Window {
         OrbitText { x: parent.width - 28px; height: parent.height; text: "⌄"; color: Theme.secondary; vertical-alignment: center; }
         engine-select-hit := TouchArea { enabled: !root.busy; mouse-cursor: pointer; clicked => { root.engine-menu = !root.engine-menu; } }
     }
-    if root.engine-menu && !root.settings && !root.ai-active && !root.script-active: Rectangle {
+    if root.engine-menu && !root.settings && !root.script-active: Rectangle {
         x: engine-select.x; y: engine-select.y + engine-select.height + 6px;
         width: max(154px, engine-select.width); height: min(root.search-engine-names.length * 36px + 38px, root.height - self.y - 24px);
         background: Theme.sheet; border-width: Theme.border-width; border-color: Theme.border; border-radius: Theme.radius-preview;
@@ -3086,60 +3040,7 @@ export component Launcher inherits Window {
             }
         }
     }
-    if root.ai-active && !root.settings: Panel {
-        x: search-bar.x; y: search-bar.y + search-bar.height + Theme.space-4;
-        width: search-bar.width;
-        height: min(root.height - self.y - 156px, root.ai-answer == "" ? 240px : max(280px, min(640px, ai-answer-measure.preferred-height + 184px)));
-        background: Theme.sheet; border-width: Theme.border-width;
-        border-color: Theme.border; border-radius: Theme.radius-sheet;
-        ai-answer-measure := OrbitText {
-            visible: false; width: parent.width - 4 * Theme.space-4;
-            text: root.ai-answer; font-size: Theme.search-font-size; wrap: word-wrap;
-        }
-        VerticalLayout {
-            padding: Theme.space-4; spacing: Theme.space-4;
-            HorizontalLayout { spacing: Theme.space-2; vertical-stretch: 0;
-                SettingsSelect { label: "AI provider"; width: 128px; model: root.ai-providers; current-index <=> root.ai-provider; selected => { root.save-ai(); } }
-                if root.ai-provider == 0 && root.ai-local-models.length > 0: SettingsSelect { label: "AI model"; width: max(100px, parent.width - 228px); model: root.ai-local-models; current-index <=> root.ai-local-index; selected => { root.ai-local-model = root.ai-local-models[root.ai-local-index]; root.save-ai(); } }
-                if root.ai-provider == 0 && root.ai-local-models.length == 0: OrbitText { text: root.ai-local-model; color: Theme.secondary; font-size: Theme.type-control; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; }
-                if root.ai-provider == 1: AddField { accessible-name: "OpenAI model ID"; placeholder: "Model ID"; text <=> root.ai-openai-model; accepted => { root.save-ai(); } }
-                if root.ai-provider == 2: AddField { accessible-name: "Gemini model ID"; placeholder: "Model ID"; text <=> root.ai-gemini-model; accepted => { root.save-ai(); } }
-                AddOption { label: "Settings"; option-width: 84px; clicked => { root.settings-tab = 6; root.settings = true; } }
-            }
-            Rectangle { height: Theme.border-width; background: Theme.border; }
-            Rectangle {
-                vertical-stretch: 1;
-                background: Theme.field; border-radius: Theme.radius-control;
-                if root.ai-answer == "": OrbitText {
-                    x: Theme.space-4; width: parent.width - 2 * Theme.space-4; height: parent.height;
-                    text: root.ai-loading ? "Preparing answer…" : root.ai-status != "" ? root.ai-status : "Enter a prompt above and press Enter.";
-                    color: Theme.secondary; font-size: Theme.type-body; wrap: word-wrap;
-                    vertical-alignment: center; horizontal-alignment: center;
-                }
-                ai-answer-scroll := ScrollView {
-                    visible: root.ai-answer != "";
-                    x: Theme.space-4; y: Theme.space-4;
-                    width: parent.width - 2 * Theme.space-4; height: parent.height - 2 * Theme.space-4;
-                    horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: always-off;
-                    content-width: self.visible-width;
-                    content-height: max(self.visible-height, ai-answer-field.preferred-height);
-                    ai-answer-field := TextInput {
-                        width: ai-answer-scroll.visible-width; height: ai-answer-scroll.content-height;
-                        horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left;
-                        text: root.ai-answer; read-only: true; wrap: word-wrap;
-                        color: Theme.text; font-size: Theme.search-font-size;
-                        selection-background-color: Theme.selection; selection-foreground-color: Theme.text;
-                        accessible-label: "Answer";
-                    }
-                }
-            }
-            HorizontalLayout { spacing: Theme.space-2; vertical-stretch: 0;
-                AddOption { label: root.ai-loading ? "Cancel" : "Ask"; primary: !root.ai-loading; enabled: root.ai-loading || root.search-text != ""; option-width: 84px; clicked => { if root.ai-loading { root.ai-cancel(); root.ai-status = "Cancelled"; } else { root.save-ai(); root.ai-submit(); } } }
-                Rectangle { horizontal-stretch: 1; }
-                AddOption { label: "Copy"; option-width: 84px; enabled: root.ai-answer != ""; clicked => { ai-answer-field.select-all(); ai-answer-field.copy(); } }
-            }
-        }
-    }
+
     if root.settings: Rectangle {
         x: root.settings-outer-margin; y: root.height < 720px ? 88px : 112px;
         width: root.width - 2 * self.x; height: root.height - (root.settings-tab == 7 ? (root.height < 720px ? 104px : 128px) : root.height < 720px ? 104px : 264px);
@@ -3155,7 +3056,6 @@ export component Launcher inherits Window {
             spacing: 4px;
             OrbitText { text: "Settings"; color: Theme.settings-text; font-size: 22px * Theme.font-scale; font-weight: 600; height: 46px; }
             SettingsNav { label: "General"; icon: @image-url("assets/settings.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 0; clicked => { root.settings-tab = 0; root.shortcuts-tab = false; root.shortcut-recording = false; } }
-            SettingsNav { label: "Robots"; icon: @image-url("assets/robot.svg"); icon-present: true; available-width: parent.width; clicked => { RobotWorkbench.adding = false; RobotWorkbench.section = 0; RobotWorkbench.refresh-skills(); RobotWorkbench.open("", true); } }
             SettingsNav { label: "Appearance"; icon: @image-url("assets/settings.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 8; clicked => { root.settings-tab = 8; root.shortcuts-tab = false; root.shortcut-recording = false; } }
             SettingsNav { label: "Shortcuts"; icon: @image-url("assets/keyboard.svg"); icon-present: true; available-width: parent.width; selected: root.settings-tab == 1; clicked => { root.settings-tab = 1; root.shortcuts-tab = true; } }
             SettingsNav { label: "Search bar"; icon: @image-url("assets/search.svg"); icon-present: true; available-width: parent.width; selected: (root.settings-tab >= 2 && root.settings-tab <= 6) || root.settings-tab == 10; clicked => { root.settings-tab = 4; root.shortcuts-tab = false; root.shortcut-recording = false; } }
@@ -3169,16 +3069,15 @@ export component Launcher inherits Window {
             spacing: 20px;
             if root.settings-tab != 7: VerticalLayout { spacing: 6px; vertical-stretch: 0; alignment: start;
                 OrbitText { text: root.settings-tab == 9 ? "Providers" : root.settings-tab == 0 ? "General" : root.settings-tab == 1 ? "Shortcuts" : root.settings-tab == 7 ? "Data" : root.settings-tab == 8 ? "Appearance" : "Search bar"; color: Theme.settings-text; font-size: Theme.settings-title-size; font-weight: 600; }
-                SettingsDescription { text: root.settings-tab == 9 ? "Your T3 Code provider accounts, shared by Robots. Existing authentication stays in its provider storage." : root.settings-tab == 7 ? "Manage locally saved widget content and see Orbit storage use." : root.settings-tab == 0 ? "Home screen layout, integrations and app data." : root.settings-tab == 1 ? "Choose an action, then record its shortcut. Changes are saved automatically." : root.settings-tab == 2 ? "Prefixes route a token to an action. Type one before your query to use it." : root.settings-tab == 3 ? "Choose an action to edit it, or create a new one." : root.settings-tab == 8 ? "Change the Home Screen background color or image, or restore the supplied background." : "Control how Orbit finds things and where it looks."; }
+                SettingsDescription { text: root.settings-tab == 7 ? "Manage locally saved widget content and see Orbit storage use." : root.settings-tab == 0 ? "Home screen layout, integrations and app data." : root.settings-tab == 1 ? "Choose an action, then record its shortcut. Changes are saved automatically." : root.settings-tab == 2 ? "Prefixes route a token to an action. Type one before your query to use it." : root.settings-tab == 3 ? "Choose an action to edit it, or create a new one." : root.settings-tab == 8 ? "Change the Home Screen background color or image, or restore the supplied background." : "Control how Orbit finds things and where it looks."; }
             }
             if (root.settings-tab >= 2 && root.settings-tab <= 6) || root.settings-tab == 10: GridLayout {
                 spacing: 12px;
-                SettingsTabGroup { row: 0; col: 0; width: min(4 * Theme.control-option-width + 60px + 24px, root.settings-content-width);
+                SettingsTabGroup { row: 0; col: 0; width: min(4 * Theme.control-option-width + 18px, root.settings-content-width);
                     SettingsTab { option-width: root.settings-content-width < 800px ? 70px : Theme.control-option-width; label: "General"; selected: root.settings-tab == 4; clicked => { root.settings-tab = 4; } }
                     SettingsTab { option-width: root.settings-content-width < 800px ? 70px : Theme.control-option-width; label: "Prefixes"; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; } }
                     SettingsTab { option-width: root.settings-content-width < 800px ? 70px : Theme.control-option-width; label: "Actions"; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; } }
                     SettingsTab { option-width: root.settings-content-width < 800px ? 70px : Theme.control-option-width; label: "Scripts"; selected: root.settings-tab == 10; clicked => { root.settings-tab = 10; } }
-                    SettingsTab { label: "AI"; option-width: 60px; selected: root.settings-tab == 6; clicked => { root.settings-tab = 6; } }
                 }
                 Rectangle { row: 0; col: 1; horizontal-stretch: 1; }
                 if root.settings-tab == 3 && !root.action-editor-open: SettingsButton { row: root.settings-content-width < 1000px ? 1 : 0; col: root.settings-content-width < 1000px ? 0 : 2; label: "New action"; option-width: 132px; primary: true; enabled: !root.busy; clicked => { root.action-id-draft = ""; root.action-name-draft = ""; root.action-kind-draft = "Shell"; root.action-source-draft = ""; root.action-description-draft = ""; root.action-tokens-draft = ""; root.action-used = false; root.action-editor-open = true; } }
@@ -3450,40 +3349,7 @@ export component Launcher inherits Window {
                     SettingsButton { label: "Reset background"; option-width: 156px; enabled: !root.busy; clicked => { root.busy = true; root.reset-background(); } }
                 }
             }
-            if root.settings-tab == 6: SettingsCard {
-                height: ai-settings.preferred-height;
-                ai-settings := VerticalLayout {
-                    padding: 20px; spacing: 16px; alignment: start;
-                    SettingsTitle { text: "AI"; }
-                    SettingsDescription { text: "Type ai, then Space or Tab, enter a prompt and press Enter. Each question starts fresh. Cloud requests use separately billed API keys."; }
-                    SettingsSelect { label: "AI provider"; model: root.ai-providers; current-index <=> root.ai-provider; selected => { root.save-ai(); } }
-                    if root.ai-provider == 0: VerticalLayout {
-                        spacing: 16px;
-                        SettingsField { label: "Local Ollama address"; text <=> root.ai-address; }
-                        SettingsDescription { text: "Local model: " + root.ai-local-model; }
-                        SettingsSelect { label: "Local model"; model: root.ai-local-models; current-index <=> root.ai-local-index; selected => { root.ai-local-model = root.ai-local-models[root.ai-local-index]; root.save-ai(); } }
-                        HorizontalLayout { spacing: 10px;
-                            SettingsButton { label: "Refresh models"; option-width: 160px; enabled: !root.ai-models-loading; clicked => { root.ai-refresh-models(); } }
-                            SettingsButton { label: "Save address"; option-width: 140px; clicked => { root.save-ai(); } }
-                            Rectangle { horizontal-stretch: 1; }
-                        }
-                    }
-                    if root.ai-provider == 1: SettingsField { label: "OpenAI model ID"; placeholder: "Enter an OpenAI model ID"; text <=> root.ai-openai-model; }
-                    if root.ai-provider == 2: SettingsField { label: "Gemini model ID"; placeholder: "Enter a Gemini model ID"; text <=> root.ai-gemini-model; }
-                    if root.ai-provider > 0: VerticalLayout {
-                        spacing: 16px;
-                        SettingsButton { label: "Save model"; option-width: 140px; clicked => { root.save-ai(); } }
-                        SettingsField { label: "API key"; placeholder: "Enter or replace API key"; secret: true; text <=> root.ai-key-draft; enabled: !root.ai-key-busy; }
-                        HorizontalLayout { spacing: 10px;
-                            SettingsButton { label: "Save API key"; option-width: 140px; enabled: !root.ai-key-busy && root.ai-key-draft != ""; clicked => { root.ai-store-key(false); } }
-                            SettingsButton { label: "Remove API key"; option-width: 160px; enabled: !root.ai-key-busy; clicked => { root.ai-store-key(true); } }
-                            Rectangle { horizontal-stretch: 1; }
-                        }
-                        SettingsDescription { text: "API keys are stored in your system credential store."; }
-                    }
-                    SettingsDescription { text: root.ai-settings-status; }
-                }
-            }
+
             if root.settings-tab == 4: VerticalLayout {
                 spacing: 20px;
                 SettingsCard {
@@ -3798,7 +3664,6 @@ export component Launcher inherits Window {
                                             SettingsButton { label: "Shell"; selected: root.action-kind-draft == "Shell"; clicked => { if root.action-kind-draft != "Shell" { root.action-kind-draft = "Shell"; root.action-source-draft = ""; } } }
                                             SettingsButton { label: "URL"; selected: root.action-kind-draft == "URL"; clicked => { if root.action-kind-draft != "URL" { root.action-kind-draft = "URL"; root.action-source-draft = ""; } } }
                                             SettingsButton { label: "TickTick"; selected: root.action-kind-draft == "TickTick"; clicked => { if root.action-kind-draft != "TickTick" { root.action-kind-draft = "TickTick"; root.action-source-draft = ""; } } }
-                                            SettingsButton { label: "AI"; selected: root.action-kind-draft == "AI"; clicked => { root.action-kind-draft = "AI"; root.action-source-draft = ""; } }
                                         }
                                         if root.action-kind-draft == "URL": SettingsField { label: "URL template · use %s for Search anything"; placeholder: "https://example.com/?q=%s"; text <=> root.action-source-draft; }
                                         if root.action-kind-draft == "Shell": SettingsField { label: "Shell script · argument: $1 on Arch Linux, $OrbitQuery on Windows"; placeholder: "Write a script that reads the search argument"; text <=> root.action-source-draft; multiline: true; }
@@ -3809,7 +3674,7 @@ export component Launcher inherits Window {
                                     SettingsButton { label: "Cancel"; option-width: root.width < 900px ? 80px : 100px; enabled: !root.busy; clicked => { root.action-editor-open = false; } }
                                     Rectangle { horizontal-stretch: 1; }
                                     if root.action-id-draft != "": SettingsButton { label: "Delete"; option-width: root.width < 900px ? 80px : 100px; destructive: true; enabled: !root.busy && !root.action-used; clicked => { root.busy = true; root.delete-user-action(root.action-id-draft); } }
-                                    SettingsButton { label: "Save Action"; option-width: root.width < 900px ? 116px : 132px; primary: true; enabled: !root.busy && root.action-name-draft != "" && (root.action-kind-draft == "AI" || root.action-kind-draft == "TickTick" || root.action-source-draft != ""); clicked => { root.busy = true; root.save-user-action(root.action-id-draft, root.action-name-draft, root.action-kind-draft, root.action-source-draft, root.action-description-draft, root.action-tokens-draft); } }
+                                    SettingsButton { label: "Save Action"; option-width: root.width < 900px ? 116px : 132px; primary: true; enabled: !root.busy && root.action-name-draft != "" && (root.action-kind-draft == "TickTick" || root.action-source-draft != ""); clicked => { root.busy = true; root.save-user-action(root.action-id-draft, root.action-name-draft, root.action-kind-draft, root.action-source-draft, root.action-description-draft, root.action-tokens-draft); } }
                                 }
                             }
                         }
@@ -3989,10 +3854,7 @@ export component Launcher inherits Window {
                 if (root.canvas-context || root.context-index >= 0) && root.selected-ids.length > 0: MenuOption { width: 184px; label: "Cut"; enabled: !root.layout-locked; clicked => { root.canvas-command(2); } }
                 if (root.canvas-context || root.context-index >= 0) && root.selected-ids.length > 0: MenuOption { width: 184px; label: "Copy"; clicked => { root.canvas-command(3); } }
                 if root.canvas-context: MenuOption { width: 184px; label: "Paste"; enabled: root.can-paste && !root.layout-locked; clicked => { root.canvas-command(4); } }
-                if root.context-index >= 0 && root.items[root.context-index].robot != "": MenuOption { width: 184px; label: "Duplicate"; enabled: !root.layout-locked; clicked => { RobotWorkbench.duplicate-robot(root.items[root.context-index].robot); root.context-index = -1; } }
-                if root.context-index >= 0 && root.items[root.context-index].robot != "": VerticalLayout {
-                    for action in RobotWorkbench.common-actions: MenuOption { width: 184px; label: action.name; clicked => { RobotWorkbench.run-action(root.items[root.context-index].robot, action.id); root.context-index = -1; } }
-                }
+
                 if root.context-index >= 0 && root.items[root.context-index].ticktick && !root.items[root.context-index].ticktick-next: MenuOption { width: 184px; label: "New task"; clicked => { root.open-ticktick-create(root.items[root.context-index].ticktick-project-id); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].widget: MenuOption { width: 184px; label: "Duplicate"; enabled: !root.layout-locked; clicked => { root.busy = true; root.duplicate-widget(root.items[root.context-index].id); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].widget: MenuOption { width: 184px; label: "Resize · wider";
@@ -4152,7 +4014,6 @@ export component Launcher inherits Window {
                     AddOption { add-style: root.editing < 0; type-tile: true; option-width: max(72px, (root.sheet-content-width - 40px) / 6); icon-present: true; icon: @image-url("assets/add-dir.svg"); label: "Directory"; selected: root.item-type == "Directory"; clicked => { root.add-item("Directory"); } }
                     AddOption { add-style: root.editing < 0; type-tile: true; option-width: max(72px, (root.sheet-content-width - 40px) / 6); icon-present: true; icon: @image-url("assets/add-group.svg"); label: "Folder"; selected: root.item-type == "Folder"; clicked => { root.add-item("Folder"); } }
                     AddOption { add-style: root.editing < 0; type-tile: true; option-width: max(72px, (root.sheet-content-width - 40px) / 6); icon-present: true; icon: @image-url("assets/add-widgets.svg"); label: "Widgets"; selected: root.item-type == "Widgets"; clicked => { root.add-item("Widgets"); } }
-                    AddOption { add-style: true; type-tile: true; option-width: 72px; icon-present: true; icon: @image-url("assets/robot.svg"); label: "Robot"; clicked => { root.sheet = false; RobotWorkbench.adding = true; RobotWorkbench.open("", true); } }
                 }
                 if root.item-type == "App" && root.editing < 0: FlexboxLayout {
                     flex-wrap: wrap;
@@ -4690,6 +4551,5 @@ export component Launcher inherits Window {
             background: transparent;
         }
     }
-    if RobotWorkbench.visible: RobotPanel { width: root.width; height: root.height; }
 
 }
