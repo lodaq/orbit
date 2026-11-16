@@ -1011,7 +1011,7 @@ impl Apps {
     fn recent_id(&self, action: &Action) -> Option<String> {
         let id = match action {
             Action::Open(id) | Action::LaunchFolder(_, id) => id,
-            Action::OpenResult(item) | Action::OpenDock(item) if item.source >= 0 => &item.id,
+            Action::OpenResult(item) | Action::OpenDock(item) => &item.id,
             _ => return None,
         };
         let tile = self.dock_tile(id)?;
@@ -3240,7 +3240,21 @@ impl Apps {
                 return Some(tile);
             }
         }
-        None
+        let app = self.inventory.apps().iter().find(|app| app.id == id)?;
+        let mut tile = Tile::new(
+            &App {
+                id: app.id.clone(),
+                name: app.name.clone(),
+                icon: app.icon.clone(),
+                launch: Launch::Installed(app.id.clone()),
+            }
+            .into_item(),
+            &self.icons,
+            self.config.item_size,
+            self.config.grid_gap,
+        );
+        tile.source = -2;
+        Some(tile)
     }
 
     fn update(&self, weak: &slint::Weak<Launcher>) {
@@ -3348,7 +3362,6 @@ impl Apps {
             .recent
             .ids
             .iter()
-            .filter(|id| !self.config.pinned.contains(id))
             .filter_map(|id| self.dock_tile(id))
             .filter(|tile| !tile.folder)
             .take(RECENT_DOCK_LIMIT)
@@ -4668,7 +4681,7 @@ mod tests {
             }],
         });
         config.pinned.push("nested".into());
-        let apps = Apps {
+        let mut apps = Apps {
             edits: Default::default(),
             config,
             add_position: (0, 0),
@@ -4698,6 +4711,23 @@ mod tests {
         let tile = apps.dock_tile("nested").unwrap();
         assert_eq!(tile.folder_id, "folder");
         assert!(tile.pinned);
+        apps.inventory.replace(vec![crate::config::InstalledApp {
+            id: "tor.desktop".into(),
+            name: "Tor".into(),
+            command: "true".into(),
+            icon: Icon::Letter,
+        }]);
+        let reference = ResultRef {
+            id: "tor.desktop".into(),
+            source: -2,
+            ..Default::default()
+        };
+        assert_eq!(
+            apps.recent_id(&Action::OpenResult(reference.clone())),
+            Some(reference.id.clone())
+        );
+        assert_eq!(apps.dock_tile(&reference.id).unwrap().source, -2);
+        assert_eq!(apps.cached_search_result(&reference).unwrap().name, "Tor");
     }
 
     #[test]

@@ -205,7 +205,7 @@ Recent = [item id]                  most recent first
 
 The fixed controls sit above the full-window Canvas. The existing logo and wordmark remain at the left, Search anything is centered with its default engine selector beside it, and Lock layout, Settings and Close remain at the right. The floating Dock and Change background image button retain their positions. Only the controls' own bounds intercept Canvas input.
 
-The Dock remains visible when empty. It shows up to five recent unpinned shortcuts and fifteen pinned items, a separator when both are present, 48 px icons, existing magnification, delayed tooltips and horizontal overflow scrolling. Showing the launcher clears search and closes folders, Settings and sheets while retaining the Canvas view.
+The Dock remains visible when empty. It shows up to five recent shortcuts and fifteen pinned items, a separator when both are present, 48 px icons, existing magnification, delayed tooltips and horizontal overflow scrolling. Showing the launcher clears search and closes folders, Settings and sheets while retaining the Canvas view.
 
 ## 6. Behavior
 
@@ -241,8 +241,8 @@ The Dock remains visible when empty. It shows up to five recent unpinned shortcu
 **Dock.**
 - Pin gives the Dock exclusive ownership of an item. Unpin returns it to a nearby free Canvas position without displacing existing items.
 - Right-click a pinned dock item to Unpin it. Right-click a Recent dock item to remove it from Recent history.
-- Recent tracks successfully opened Apps, Websites, Files and Directories, including Apps inside folders. Folders themselves do not enter Recent. The five newest unpinned items appear on the left; pinned items appear on the right in saved order, up to fifteen. An item appears only once in the dock.
-- Recent keeps up to sixteen item IDs so older unpinned items can fill the left side when a newer item is pinned or deleted. Opening an item again moves it to the front. A successful launch writes `recent.json` only when the order changes.
+- Recent records each successfully opened installed or created App, Website, File or Directory, including installed Apps opened directly from search and Apps inside folders. Folders themselves do not enter Recent. The five newest opened items, including pinned items, appear on the left; pinned items appear on the right in saved order, up to fifteen. A pinned item can also appear in Recent after opening.
+- Recent keeps up to sixteen item IDs so older items can fill the left side when a newer item is deleted. Opening an item again moves it to the front. A successful launch writes `recent.json` only when the order changes.
 - Clicking a dock item opens it, including a folder or a shortcut inside a Folder. Dock drag reordering remains available.
 
 **Drag and drop.** A click launches; a drag freely moves only the dragged item. Coordinates are transformed through the saved Canvas view. Occupied targets reject the drop unless the existing folder hold gesture is ready. Folder children preserve their type, URL/path, ID and icon through extraction, dissolution and restart. Folders and widgets cannot become folder children. A drag changes saved data only on release; Escape cancels without mutation. Pinned items belong exclusively to the Dock; dropping back onto the Canvas or Unpin gives them a free Canvas position.

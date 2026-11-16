@@ -93,7 +93,7 @@ One word for one thing. If a word is not in this file, do not use it in the UI, 
 | Term | Meaning |
 |---|---|
 | **Dock** | The semi-transparent horizontal bar at the bottom. It shows 48 px icons without names, Recent and Pinned sections, and scrolls horizontally when its contents overflow. Hovering magnifies the icon under the pointer and its neighbours and slides them apart. |
-| **Recent** | Successfully opened items, newest first. Up to five newest unpinned Apps, Websites, Files or Directories appear on the left side of the dock; folders are excluded. |
+| **Recent** | Successfully opened items, newest first. Up to five newest Apps, Websites, Files or Directories, including pinned items, appear on the left side of the dock; folders are excluded. |
 | **Pinned** | Up to ten items you chose to show in the dock. Pinning gives the Dock exclusive ownership of the item’s placement. Displayed in saved pin order. |
 | **Separator** | The thin vertical line between Recent and Pinned when both are present. |
 
