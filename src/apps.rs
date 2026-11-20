@@ -2478,6 +2478,21 @@ impl Apps {
                 if let Some(data) = platform::clipboard_image()? {
                     return self.paste_image(&data, x, y, weak);
                 }
+                if let Some(text) = platform::clipboard_text()?
+                    && !(text == "Orbit Canvas items" && self.edits.system_clipboard.is_some())
+                {
+                    return self.save_annotation(
+                        "",
+                        text,
+                        2,
+                        crate::ink::Style {
+                            size: 24.0,
+                            ..Default::default()
+                        },
+                        (x, y),
+                        weak,
+                    );
+                }
                 let Some(clipboard) = &self.edits.clipboard else {
                     return Ok(());
                 };

@@ -742,6 +742,17 @@ pub fn clipboard_image() -> Result<Option<Vec<u8>>, String> {
     Ok(Some(data.into_inner()))
 }
 
+pub fn clipboard_text() -> Result<Option<String>, String> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|error| format!("Couldn't open clipboard: {error}"))?;
+    match clipboard.get_text() {
+        Ok(text) if text.trim().is_empty() => Ok(None),
+        Ok(text) => Ok(Some(text)),
+        Err(arboard::Error::ContentNotAvailable) => Ok(None),
+        Err(error) => Err(format!("Couldn't paste text: {error}")),
+    }
+}
+
 pub fn copy_canvas() -> Result<arboard::Clipboard, String> {
     let mut clipboard =
         arboard::Clipboard::new().map_err(|error| format!("Couldn't open clipboard: {error}"))?;

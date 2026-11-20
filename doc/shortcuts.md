@@ -120,3 +120,5 @@ Note, Text, Image, Arrow, Highlighter and Laser are available from the Canvas to
 Canvas clipboard shortcuts also include Draw, Arrow and Highlighter strokes, alone or in mixed selections with items and Widgets. Select strokes by clicking their footprint or dragging a selection rectangle; selected strokes use the selection color. Cut/Copy/Paste preserve stroke styles and relative positions. Undo/Redo restore the complete edit. Laser remains temporary. Text fields keep native clipboard and history shortcuts.
 
 With Canvas focus, Ctrl+V and Context menu → Paste also import a system clipboard Image. Copy or Cut of a Canvas selection replaces the clipboard so subsequent Paste uses that selection. Text fields keep native paste; Lock layout blocks image paste.
+
+With Canvas focus, Paste also places system clipboard text as editable Text, preserving line breaks. Images take priority; Canvas Copy/Cut retains selection paste. Text uses the existing 10,000-character limit, placement, Undo/Redo and layout lock.

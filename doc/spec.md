@@ -388,3 +388,5 @@ Verification (2026-11-12): formatting, Clippy, release build and three Canvas cl
 ## Failed TickTick tasks (authorized 2026-11-14)
 
 Failed TickTick additions are kept in the Inbox widget in widgets.db, preserving the original query and its metadata. Retry retries the task; a successful TickTick addition removes it. A trash icon opens a Delete confirmation. New Inbox widgets use a compact 3×2 footprint with separated rows and quiet metadata. The widget is available from the Widget Gallery. No script is created.
+
+With Canvas focus, Paste also places system clipboard text as editable Text, preserving line breaks. Images take priority; Canvas Copy/Cut retains selection paste. Text uses the existing 10,000-character limit, placement, Undo/Redo and layout lock.
