@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use winit::event::{ElementState, WindowEvent};
+use winit::event::WindowEvent;
 
 fn directory() -> io::Result<PathBuf> {
     let runtime = std::env::var_os("ORBIT_RUNTIME_DIRECTORY")
@@ -678,6 +678,7 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
     let weak = launcher.as_weak();
     let focus_generation = Rc::new(Cell::new(0_u64));
     let mut fullscreen_monitor = String::new();
+    let mut pointer = winit::dpi::PhysicalPosition::default();
     let mut modifiers = winit::keyboard::ModifiersState::empty();
     launcher
         .window()
@@ -703,58 +704,33 @@ pub fn hide_on_input(launcher: &crate::Launcher) {
                 launcher.set_monitor_name("".into());
                 focus_after_show(&launcher);
             }
-            if crate::canvas::continue_scroll(&launcher, event) {
+            if crate::canvas::continue_scroll(&launcher, event, &mut pointer)
+                || crate::shortcuts::handle_window_event(&launcher, event, &mut modifiers)
+            {
                 return EventResult::PreventDefault;
             }
-            match event {
-                WindowEvent::ModifiersChanged(state) => {
-                    modifiers = state.state();
-                    launcher.set_ctrl_held(modifiers.control_key());
-                    launcher
-                        .global::<crate::KeyboardNavigation>()
-                        .set_control_held(modifiers.control_key());
-                    launcher.set_shift_held(modifiers.shift_key());
+            if let WindowEvent::Focused(active) = event {
+                let generation = focus_generation.get().wrapping_add(1);
+                focus_generation.set(generation);
+                if !active {
+                    let focus_generation = focus_generation.clone();
+                    let weak = weak.clone();
+                    slint::Timer::single_shot(Duration::from_millis(120), move || {
+                        if focus_generation.get() == generation
+                            && let Some(launcher) = weak.upgrade()
+                            && launcher.get_launcher_visible()
+                            && !launcher.get_data_busy()
+                            && !launcher.get_icon_busy()
+                            && !matches!(
+                                launcher.get_sheet_operation().as_str(),
+                                "choosing" | "choosing-background"
+                            )
+                            && let Err(error) = self::hide(&launcher)
+                        {
+                            eprintln!("orbit: {error}");
+                        }
+                    });
                 }
-                WindowEvent::KeyboardInput { event, .. }
-                    if event.state == ElementState::Pressed =>
-                {
-                    if crate::shortcuts::handle_event(&launcher, event, modifiers) {
-                        return EventResult::PreventDefault;
-                    }
-                }
-                WindowEvent::Focused(active) => {
-                    let generation = focus_generation.get().wrapping_add(1);
-                    focus_generation.set(generation);
-                    if !active {
-                        launcher.set_ctrl_held(false);
-                        launcher.set_shift_held(false);
-                        launcher
-                            .global::<crate::KeyboardNavigation>()
-                            .set_control_held(false);
-                        launcher
-                            .global::<crate::KeyboardNavigation>()
-                            .set_list_focused(false);
-                        launcher.invoke_cancel_pointer();
-                        let focus_generation = focus_generation.clone();
-                        let weak = weak.clone();
-                        slint::Timer::single_shot(Duration::from_millis(120), move || {
-                            if focus_generation.get() == generation
-                                && let Some(launcher) = weak.upgrade()
-                                && launcher.get_launcher_visible()
-                                && !launcher.get_data_busy()
-                                && !launcher.get_icon_busy()
-                                && !matches!(
-                                    launcher.get_sheet_operation().as_str(),
-                                    "choosing" | "choosing-background"
-                                )
-                                && let Err(error) = self::hide(&launcher)
-                            {
-                                eprintln!("orbit: {error}");
-                            }
-                        });
-                    }
-                }
-                _ => (),
             }
             EventResult::Propagate
         });

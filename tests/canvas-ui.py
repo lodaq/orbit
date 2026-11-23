@@ -180,7 +180,7 @@ class Desktop:
 
     def key(self, name, pressed=None):
         named = dict(Escape=0xff1b, Return=0xff0d, Tab=0xff09, BackSpace=0xff08,
-                     Control=0xffe3, Shift=0xffe1, Left=0xff51, Right=0xff53,
+                     Control=0xffe3, Alt=0xffe9, Shift=0xffe1, Left=0xff51, Right=0xff53,
                      Up=0xff52, Down=0xff54, PageUp=0xff55, PageDown=0xff56)
         symbol = named[name] if name in named else ord(name)
         code = self.x.XKeysymToKeycode(self.connection, symbol)
@@ -265,6 +265,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--interactive', action='store_true', help='open a private test desktop for scripted inspection')
+    parser.add_argument('--alt-hand', action='store_true', help='check temporary Hand mode')
     args = parser.parse_args()
     (REPO / 'target/ui-check').mkdir(parents=True, exist_ok=True)
     desktop = Desktop()
@@ -274,10 +275,32 @@ def main():
         if args.interactive:
             import code
             code.interact(local=dict(d=desktop, REPO=REPO))
+        elif args.alt_hand:
+            verify_alt_hand(desktop)
         else:
             verify(desktop)
     finally:
         desktop.close()
+
+
+def verify_alt_hand(d):
+    d.click(40, 428)  # Draw
+    d.move(780, 620)
+    before = d.data()['canvas']['view']
+    def toolbar():
+        return ImageGrab.grab(xdisplay=d.display).crop((20, 357, 60, 445)).tobytes()
+
+    selected = toolbar()
+    d.key('Alt', True)
+    d.wait(lambda: toolbar() != selected, 'Hand toolbar highlight did not change')
+    d.drag((780, 620), (850, 680), release=False)
+    d.key('Alt', False)
+    d.button(1, False)
+    d.wait(lambda: toolbar() == selected, 'Draw toolbar highlight did not return')
+    d.wait(lambda: d.data()['canvas']['view'] != before, 'Alt-drag did not pan')
+    assert not d.data()['ink'], 'Alt-drag left ink'
+    d.drag((780, 620), (850, 680))
+    d.wait(lambda: bool(d.data()['ink']), 'Alt release did not restore Draw')
 
 
 def verify(d):

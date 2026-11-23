@@ -712,9 +712,9 @@ export component Launcher inherits Window {
     }
 
     private property <int> dock-source-index: -1;
-    out property <bool> grid-navigation: !root.search-context && canvas-focus.has-focus && !root.canvas-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.frame-editor && !root.annotation-editor;
+    out property <bool> grid-navigation: !root.search-context && (canvas-focus.has-focus || root.canvas-text-ready) && !root.canvas-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.frame-editor && !root.annotation-editor;
     out property <bool> frame-shortcuts: !root.canvas-context && root.context-index < 0 && root.frame-context-id == "" && !root.tool-active && !root.marquee-active && !root.panning && !root.dragging && root.home-visible && !root.busy && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.frame-editor && !root.annotation-editor && !root.search-context;
-    out property <bool> canvas-shortcuts: root.frame-shortcuts && canvas-focus.has-focus;
+    out property <bool> canvas-shortcuts: root.frame-shortcuts && (canvas-focus.has-focus || root.canvas-text-ready);
     in-out property <bool> can-undo;
     in-out property <bool> can-redo;
     in-out property <bool> can-paste;
@@ -735,7 +735,7 @@ export component Launcher inherits Window {
     canvas-command(command) => {
         if root.layout-locked && command != 3 { return; }
         root.flush-canvas();
-        root.set-tool(root.tool-mode);
+        root.set-tool(root.selected-tool);
         root.edit-canvas(command, root.selected-ids,
             root.world-x(root.width / 2) / 1px, root.world-y(root.height / 2) / 1px);
     }
@@ -809,8 +809,18 @@ export component Launcher inherits Window {
     in-out property <[string]> selected-ids;
     in-out property <[CanvasFrameView]> frames;
     in-out property <[CanvasInk]> ink-strokes;
-    in-out property <int> tool-mode: 0;
-    in-out property <bool> ctrl-held;
+    in-out property <int> selected-tool: 0;
+    private property <bool> alt-hand;
+    out property <int> tool-mode: root.alt-hand ? 1 : root.selected-tool;
+    public function hold-hand(held: bool) {
+        if held {
+            if root.launcher-visible && root.frame-shortcuts && AzanSettings.widget-id == "" { root.alt-hand = true; }
+        } else if root.alt-hand {
+            if root.panning && root.selected-tool != 1 { root.finish-pan(); }
+            root.alt-hand = false;
+        }
+    }
+    in-out property <bool> ctrl-held <=> KeyboardNavigation.control-held;
     in-out property <bool> shift-held;
     private property <bool> marquee-active;
     private property <bool> marquee-additive;
@@ -887,14 +897,14 @@ export component Launcher inherits Window {
         interval: 250ms; running: false;
         triggered => { root.canvas-scrolling = false; canvas-scroll-timer.stop(); }
     }
-    callback continue-canvas-scroll(float, float) -> bool;
-    continue-canvas-scroll(dx, dy) => {
-        if !root.canvas-scrolling { return false; }
-        if !root.frame-shortcuts || root.ctrl-held || AzanSettings.widget-id != "" {
+    callback continue-canvas-scroll(float, float, float, float) -> bool;
+    continue-canvas-scroll(x, y, dx, dy) => {
+        if !root.launcher-visible || !root.frame-shortcuts || root.dock-context != "" || root.ticktick-popup-widget-id != "" || AzanSettings.widget-id != "" {
             root.canvas-scrolling = false;
             return false;
         }
-        root.wheel-canvas(0px, 0px, dx * 1px, dy * 1px);
+        if root.ctrl-held { root.canvas-scrolling = false; }
+        root.wheel-canvas(x * 1px, y * 1px, dx * 1px, dy * 1px);
         return true;
     }
     function wheel-canvas(x: length, y: length, dx: length, dy: length) {
@@ -960,13 +970,18 @@ export component Launcher inherits Window {
         return index >= 0 ? root.frames[index].count : 0;
     }
     function set-tool(mode: int) {
-        root.tool-mode = mode;
+        root.selected-tool = mode;
         root.cancel-canvas();
         root.canvas-context = false;
         root.context-index = -1;
         root.frame-context-id = "";
         canvas-focus.focus();
     }
+    out property <bool> canvas-text-focused: canvas-text.has-focus;
+    private property <bool> canvas-text-ready: canvas-text.has-focus && canvas-text.text == "";
+    private property <length> canvas-text-x;
+    private property <length> canvas-text-y;
+    public function finish-canvas-text() { canvas-focus.focus(); }
     function finish-marquee() {
         if root.marquee-active
             && abs(root.marquee-end-x - root.marquee-start-x) < 4px
@@ -975,8 +990,18 @@ export component Launcher inherits Window {
                 root.world-x(root.marquee-start-x) / 1px - 3,root.world-y(root.marquee-start-y) / 1px - 3,
                 root.world-x(root.marquee-start-x) / 1px + 3,root.world-y(root.marquee-start-y) / 1px + 3,
                 root.marquee-selection,root.marquee-additive);
+            if !root.layout-locked && !root.marquee-additive && root.selected-ids.length == 0 {
+                root.canvas-text-x = root.world-x(root.marquee-start-x);
+                root.canvas-text-y = root.world-y(root.marquee-start-y);
+                canvas-text.focus();
+            }
         }
         root.marquee-active = false;
+    }
+    function finish-pan() {
+        root.panning = false;
+        root.view-dirty = CanvasState.pan-x != root.pan-origin-x || CanvasState.pan-y != root.pan-origin-y;
+        root.flush-canvas();
     }
     function tool-pointer(event: PointerEvent, x: length, y: length) {
         if root.busy { return; }
@@ -1025,9 +1050,7 @@ export component Launcher inherits Window {
         }
         if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
             if root.tool-mode == 1 && root.panning {
-                root.panning = false;
-                root.view-dirty = CanvasState.pan-x != root.pan-origin-x || CanvasState.pan-y != root.pan-origin-y;
-                root.flush-canvas();
+                root.finish-pan();
             } else if (root.tool-mode == 2 || root.tool-mode >= 7) && root.tool-active {
                 if root.tool-mode == 9 { laser-timer.restart(); root.tool-active = false; return; }
                 root.busy = true;
@@ -1127,9 +1150,7 @@ export component Launcher inherits Window {
                 root.marquee-end-x = x; root.marquee-end-y = y;
                 root.finish-marquee();
             } else if root.panning {
-                root.panning = false;
-                root.view-dirty = CanvasState.pan-x != root.pan-origin-x || CanvasState.pan-y != root.pan-origin-y;
-                root.flush-canvas();
+                root.finish-pan();
             } else if root.ticktick-scrollbar-dragging {
                 root.set-ticktick-scrollbar(root.ticktick-scrollbar-index,y);
                 root.ticktick-scrollbar-dragging = false; root.ticktick-scrollbar-index = -1;
@@ -1631,7 +1652,7 @@ export component Launcher inherits Window {
     in-out property <bool> picker;
     private property <int> context-index: -1;
     private property <bool> canvas-context;
-    changed launcher-visible => { if root.launcher-visible { root.load-local-widgets(root.items,true); } if !root.launcher-visible { root.cancel-canvas(); root.flush-canvas(); root.canvas-context = false;  root.marquee-active = false; root.ink-draft = []; root.erase-draft = []; root.tool-active = false; } }
+    changed launcher-visible => { if root.launcher-visible { root.load-local-widgets(root.items,true); } if !root.launcher-visible { root.alt-hand = false; root.cancel-canvas(); root.flush-canvas(); root.canvas-context = false;  root.marquee-active = false; root.ink-draft = []; root.erase-draft = []; root.tool-active = false; } }
     private property <string> dock-context;
     private property <string> context-id;
     private property <int> editing: -1;
@@ -2092,7 +2113,7 @@ export component Launcher inherits Window {
         root.canvas-context = false;
         root.frame-context-id = "";
         root.selected-ids = [];
-        root.tool-mode = 0;
+        root.selected-tool = 0;
         root.marquee-active = false;
         root.ink-draft = [];
         root.erase-draft = [];
@@ -2132,7 +2153,7 @@ export component Launcher inherits Window {
     }
     close-top-layer => {
         if root.panning { root.cancel-canvas(); return; }
-        if root.tool-active || root.marquee-active { root.set-tool(root.tool-mode); return; }
+        if root.tool-active || root.marquee-active { root.set-tool(root.selected-tool); return; }
         if AzanSettings.widget-id != "" { AzanSettings.close(); return; }
         if root.search-context { root.search-context = false; return; }
         if root.canvas-context { root.canvas-context = false; return; }
@@ -2463,6 +2484,27 @@ export component Launcher inherits Window {
                 border-width: 3px; border-radius: Theme.radius-preview;
                 border-color: root.widget-placement-valid ? Theme.placement-valid : Theme.placement-invalid;
                 background: self.border-color.with-alpha(0.188);
+            }
+        }
+        canvas-text := TextInput {
+            x: CanvasState.pan-x * 1px + root.canvas-text-x * CanvasState.zoom;
+            y: CanvasState.pan-y * 1px + root.canvas-text-y * CanvasState.zoom;
+            width: self.text == "" ? 1px : (320 - root.grid-gap - 32) * CanvasState.zoom * 1px;
+            height: max(self.preferred-height, root.text-size * CanvasState.zoom * 1.5px);
+            font-size: root.text-size * CanvasState.zoom * 1px;
+            color: root.ink-color-value;
+            opacity: self.has-focus ? root.ink-opacity : 0;
+            enabled: self.has-focus || root.marquee-active;
+            horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left;
+            vertical-alignment: top;
+            wrap: word-wrap;
+            changed has-focus => {
+                if !self.has-focus && self.text != "" {
+                    root.save-annotation("",self.text,2,root.ink-color,root.text-size,root.ink-opacity,
+                        round(root.canvas-text-x / 1px - root.grid-gap / 2 - 16),
+                        round(root.canvas-text-y / 1px - root.grid-gap / 2 - 12));
+                    self.text = "";
+                }
             }
         }
         if root.marquee-active: Rectangle {

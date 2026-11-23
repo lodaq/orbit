@@ -163,7 +163,34 @@ fn shortcut_key(key: &Key, physical: PhysicalKey, modifiers: ModifiersState) -> 
         .unwrap_or_else(|| key.clone())
 }
 
-pub fn handle_event(
+pub fn handle_window_event(
+    launcher: &Launcher,
+    event: &slint::winit_030::winit::event::WindowEvent,
+    modifiers: &mut ModifiersState,
+) -> bool {
+    use slint::winit_030::winit::event::{ElementState, WindowEvent};
+
+    *modifiers = match event {
+        WindowEvent::ModifiersChanged(state) => state.state(),
+        WindowEvent::Focused(false) => ModifiersState::empty(),
+        WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+            return handle_key_event(launcher, event, *modifiers);
+        }
+        _ => return false,
+    };
+    launcher.set_ctrl_held(modifiers.control_key());
+    launcher.set_shift_held(modifiers.shift_key());
+    launcher.invoke_hold_hand(modifiers.alt_key());
+    if matches!(event, WindowEvent::Focused(false)) {
+        launcher
+            .global::<crate::KeyboardNavigation>()
+            .set_list_focused(false);
+        launcher.invoke_cancel_pointer();
+    }
+    false
+}
+
+fn handle_key_event(
     launcher: &Launcher,
     event: &slint::winit_030::winit::event::KeyEvent,
     modifiers: ModifiersState,
@@ -197,6 +224,13 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         && !modifiers.alt_key()
         && !modifiers.shift_key()
         && !modifiers.super_key();
+    if launcher.get_canvas_text_focused() && !launcher.get_canvas_shortcuts() {
+        if plain && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) {
+            launcher.invoke_finish_canvas_text();
+            return true;
+        }
+        return false;
+    }
     if launcher.get_search_editing()
         && plain
         && matches!(key, Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight))

@@ -100,48 +100,24 @@ pub fn restore_after_chooser(launcher: &crate::Launcher) -> Result<(), Box<dyn s
 pub fn float_file_chooser(_: &str) {}
 pub fn hide_on_input(launcher: &crate::Launcher) {
     let weak = launcher.as_weak();
+    let mut pointer = winit::dpi::PhysicalPosition::default();
     let mut modifiers = winit::keyboard::ModifiersState::empty();
     launcher.window().on_winit_window_event(move |_, event| {
         let Some(launcher) = weak.upgrade() else {
             return EventResult::Propagate;
         };
-        if crate::canvas::continue_scroll(&launcher, event) {
+        if crate::canvas::continue_scroll(&launcher, event, &mut pointer)
+            || crate::shortcuts::handle_window_event(&launcher, event, &mut modifiers)
+        {
             return EventResult::PreventDefault;
         }
-        match event {
-            winit::event::WindowEvent::ModifiersChanged(state) => {
-                modifiers = state.state();
-                launcher.set_ctrl_held(modifiers.control_key());
-                launcher
-                    .global::<crate::KeyboardNavigation>()
-                    .set_control_held(modifiers.control_key());
-                launcher.set_shift_held(modifiers.shift_key());
-            }
-            winit::event::WindowEvent::KeyboardInput { event, .. }
-                if event.state == winit::event::ElementState::Pressed =>
+        if let winit::event::WindowEvent::Focused(false) = event {
+            if !launcher.get_data_busy()
+                && !launcher.get_icon_busy()
+                && launcher.get_sheet_operation() != "choosing"
             {
-                if crate::shortcuts::handle_event(&launcher, event, modifiers) {
-                    return EventResult::PreventDefault;
-                }
+                let _ = hide(&launcher);
             }
-            winit::event::WindowEvent::Focused(false) => {
-                launcher.set_ctrl_held(false);
-                launcher.set_shift_held(false);
-                launcher
-                    .global::<crate::KeyboardNavigation>()
-                    .set_control_held(false);
-                launcher
-                    .global::<crate::KeyboardNavigation>()
-                    .set_list_focused(false);
-                launcher.invoke_cancel_pointer();
-                if !launcher.get_data_busy()
-                    && !launcher.get_icon_busy()
-                    && launcher.get_sheet_operation() != "choosing"
-                {
-                    let _ = hide(&launcher);
-                }
-            }
-            _ => {}
         }
         EventResult::Propagate
     });

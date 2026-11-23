@@ -151,10 +151,15 @@ pub fn connect(launcher: &crate::Launcher, send: impl Fn(Mutation) + Clone + 'st
 pub fn continue_scroll(
     launcher: &crate::Launcher,
     event: &slint::winit_030::winit::event::WindowEvent,
+    pointer: &mut slint::winit_030::winit::dpi::PhysicalPosition<f64>,
 ) -> bool {
     use slint::ComponentHandle;
     use slint::winit_030::winit::event::{MouseScrollDelta, TouchPhase, WindowEvent};
     let (delta, phase) = match event {
+        WindowEvent::CursorMoved { position, .. } => {
+            *pointer = *position;
+            return false;
+        }
         WindowEvent::MouseInput { .. } | WindowEvent::Focused(false) => {
             launcher.set_canvas_scrolling(false);
             launcher.set_canvas_scroll_gesture(false);
@@ -167,7 +172,6 @@ pub fn continue_scroll(
         TouchPhase::Started => {
             launcher.set_canvas_scrolling(false);
             launcher.set_canvas_scroll_gesture(true);
-            return false;
         }
         TouchPhase::Ended | TouchPhase::Cancelled => {
             let active = launcher.get_canvas_scrolling();
@@ -177,18 +181,20 @@ pub fn continue_scroll(
         }
         TouchPhase::Moved => {}
     }
-    if !launcher.get_canvas_scrolling() {
+    if !launcher.get_canvas_scrolling() && !launcher.get_ctrl_held() {
         return false;
     }
     // Match Slint's wheel conversion before bypassing widget hit testing.
+    let scale = f64::from(launcher.window().scale_factor());
     let (dx, dy) = match delta {
         MouseScrollDelta::LineDelta(x, y) => (x * 60., y * 60.),
         MouseScrollDelta::PixelDelta(delta) => {
-            let delta = delta.to_logical::<f32>(launcher.window().scale_factor() as f64);
+            let delta = delta.to_logical::<f32>(scale);
             (delta.x, delta.y)
         }
     };
-    launcher.invoke_continue_canvas_scroll(dx, dy)
+    let position = pointer.to_logical::<f32>(scale);
+    launcher.invoke_continue_canvas_scroll(position.x, position.y, dx, dy)
 }
 
 #[cfg(test)]
@@ -232,6 +238,7 @@ mod tests {
                     delta,
                     phase,
                 },
+                &mut Default::default(),
             )
         };
         // The widget is now beneath the pointer; the same gesture keeps panning.
@@ -281,6 +288,7 @@ mod tests {
                     ),
                     phase,
                 },
+                &mut Default::default(),
             )
         };
         let saves = std::rc::Rc::new(std::cell::Cell::new(0));

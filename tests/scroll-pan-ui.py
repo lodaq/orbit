@@ -49,6 +49,15 @@ try:
            'horizontal pan stopped when the Widget reached the pointer')
     d.shot('pan-horizontal.png')
     assert d.data()['positions'] == positions, 'panning moved the saved Widget'
+    x, y = 1200, 300  # Inside the Widget after the horizontal pan.
+    before = d.data()['canvas']['view']
+    d.zoom(x, y, 1)
+    d.wait(lambda: d.data()['canvas']['view']['zoom'] > before['zoom'], 'Ctrl+wheel over Widget did not zoom in')
+    enlarged = d.data()['canvas']['view']
+    for axis, pixel in [('x', x), ('y', y)]:
+        assert abs((pixel - before[axis]) / before['zoom'] - (pixel - enlarged[axis]) / enlarged['zoom']) < .1
+    d.zoom(x, y, -1)
+    d.wait(lambda: d.data()['canvas']['view']['zoom'] < enlarged['zoom'], 'Ctrl+wheel over Widget did not zoom out')
     saved = d.data()['canvas']['view']
     d.stop()
     d.start()

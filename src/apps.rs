@@ -2993,7 +2993,7 @@ impl Apps {
         self.commit(config)?;
         let _ = weak.upgrade_in_event_loop(|ui| {
             ui.set_annotation_editor(false);
-            ui.set_tool_mode(0);
+            ui.set_selected_tool(0);
         });
         Ok(())
     }
