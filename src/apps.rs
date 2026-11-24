@@ -77,7 +77,14 @@ enum Action {
     SaveFrame(String, String, String, Vec<String>),
     DeleteFrame(String),
     FitFrame(String, f32, f32),
-    SaveAnnotation(String, String, i32, crate::ink::Style, i32, i32),
+    SaveAnnotation(String, String, i32, crate::ink::Style, i32, i32, usize),
+    SaveCanvasText(
+        String,
+        crate::canvas_text::Document,
+        crate::ink::Style,
+        i32,
+        i32,
+    ),
     SaveFontSize(i32),
     StyleSelection(Vec<String>, crate::ink::Style),
     AddInk(Vec<crate::config::InkPoint>, crate::ink::Style),
@@ -159,6 +166,7 @@ impl Action {
             | Self::DeleteFrame(..)
             | Self::StyleSelection(..)
             | Self::SaveAnnotation(..)
+            | Self::SaveCanvasText(..)
             | Self::AddInk(..)
             | Self::EraseInk(..)
             | Self::AddPredefined(..)
@@ -192,6 +200,10 @@ pub fn connect(launcher: &Launcher) {
     let requests = Arc::new(RequestSequence::default());
     crate::spatial::connect(launcher);
     crate::ink::connect(launcher);
+    let text_sender = send.clone();
+    crate::canvas_text::connect(launcher, move |id, doc, style, x, y| {
+        let _ = text_sender.send(Action::SaveCanvasText(id, doc, style, x, y));
+    });
     let canvas_sender = send.clone();
     crate::canvas::connect(launcher, move |change| {
         let _ = canvas_sender.send(Action::Canvas(change));
@@ -332,6 +344,7 @@ pub fn connect(launcher: &Launcher) {
                 _ => false,
             };
             let annotation_action = matches!(action, Action::SaveAnnotation(..));
+            let canvas_text_action = matches!(action, Action::SaveCanvasText(..));
             let action_feedback = success_message(&action, &apps.config);
             let before = ((action.changes_layout()
                 || matches!(
@@ -364,6 +377,22 @@ pub fn connect(launcher: &Launcher) {
             if annotation_action && let Err(error) = &result {
                 let error = error.clone();
                 let _ = weak.upgrade_in_event_loop(move |ui| ui.set_annotation_error(error.into()));
+            }
+            if canvas_text_action {
+                let error = result.as_ref().err().cloned();
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    let text = ui.global::<crate::CanvasText>();
+                    text.set_saving(false);
+                    if let Some(error) = error {
+                        text.set_error(error.into());
+                    } else {
+                        text.invoke_saved();
+                        if !text.get_keep_selection() {
+                            text.set_active(false);
+                            text.set_editing(false);
+                        }
+                    }
+                });
             }
             let success = result.is_ok();
             if success
@@ -881,7 +910,7 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             ));
         }
     });
-    launcher.on_save_annotation(move |id, text, kind, color, size, opacity, x, y| {
+    launcher.on_save_annotation(move |id, text, kind, color, size, opacity, x, y, width| {
         let _ = sender.send(Action::SaveAnnotation(
             id.into(),
             text.into(),
@@ -894,6 +923,7 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             },
             x.round() as i32,
             y.round() as i32,
+            width.max(0) as usize,
         ));
     });
     let sender = send.clone();
@@ -1113,8 +1143,11 @@ impl Apps {
                 self.commit(config)
             }
             Action::FitFrame(id, width, height) => self.fit_frame(&id, width, height, weak),
-            Action::SaveAnnotation(id, text, kind, style, x, y) => {
-                self.save_annotation(&id, text, kind, style, (x, y), weak)
+            Action::SaveCanvasText(id, doc, style, x, y) => {
+                self.save_canvas_text(&id, doc, style, (x, y), weak)
+            }
+            Action::SaveAnnotation(id, text, kind, style, x, y, width) => {
+                self.save_annotation(&id, text, kind, style, (x, y, width), weak)
             }
             Action::StyleSelection(ids, style) => {
                 if !style.valid() {
@@ -1131,6 +1164,38 @@ impl Apps {
                     }
                 }
                 if config.items != self.config.items {
+                    for item in &config.items {
+                        if let Item::Annotation {
+                            id,
+                            kind: 2,
+                            name,
+                            style,
+                            rich_text,
+                            ..
+                        } = item
+                            && ids.contains(id)
+                            && let Some(rect) = config.positions.get(id).copied()
+                        {
+                            let mut doc = rich_text
+                                .clone()
+                                .unwrap_or_else(|| crate::canvas_text::Document::plain(name));
+                            if rich_text.is_none() {
+                                doc.width = (rect.width as f32 - config.grid_gap as f32).max(16.0);
+                            }
+                            let view =
+                                crate::canvas_text::cached_render(&doc, style.size, &style.color);
+                            let (width, height) =
+                                crate::canvas_text::bounds(view.width, view.height, &doc);
+                            let rect = crate::spatial::Rect {
+                                width: width + config.grid_gap as usize,
+                                height: height + config.grid_gap as usize,
+                                ..rect
+                            };
+                            crate::spatial::place(&crate::spatial::occupied(&config), id, rect)
+                                .ok_or("Text does not fit here")?;
+                            config.positions.insert(id.clone(), rect);
+                        }
+                    }
                     self.commit(config)?;
                 }
                 Ok(())
@@ -1620,8 +1685,13 @@ impl Apps {
                             )
                         }
                         Some(Item::Annotation { kind: 3, .. }) => {
-                            let max_span = span(crate::spatial::IMAGE_MAX_SPAN);
+                            let max_span = span(crate::spatial::ANNOTATION_MAX_SPAN);
                             (span(crate::spatial::IMAGE_MIN_SPAN), 1, max_span, max_span)
+                        }
+                        Some(Item::Annotation { kind: 2, .. }) => {
+                            let min_span = crate::spatial::text_min_span(config.grid_gap);
+                            let max_span = span(crate::spatial::ANNOTATION_MAX_SPAN);
+                            (min_span, min_span, max_span, max_span)
                         }
                         _ => return Err("Widget is missing".into()),
                     };
@@ -1637,6 +1707,8 @@ impl Apps {
                     {
                         return Err(if image {
                             "This image cannot be resized to that size"
+                        } else if matches!(item, Some(Item::Annotation { kind: 2, .. })) {
+                            "This text cannot be resized to that size"
                         } else {
                             "This widget cannot be resized to that size"
                         }
@@ -1651,6 +1723,8 @@ impl Apps {
                         crate::spatial::place(&crate::spatial::occupied(&config), &id, rect)
                             .ok_or(if image {
                                 "This image does not fit here"
+                            } else if matches!(item, Some(Item::Annotation { kind: 2, .. })) {
+                                "Text does not fit here"
                             } else {
                                 "Widget does not fit here"
                             })?;
@@ -2489,7 +2563,7 @@ impl Apps {
                             size: 24.0,
                             ..Default::default()
                         },
-                        (x, y),
+                        (x, y, 0),
                         weak,
                     );
                 }
@@ -2896,6 +2970,7 @@ impl Apps {
             kind: 3,
             style: crate::ink::Style::default(),
             image: file,
+            rich_text: None,
         });
         self.commit(config)?;
         self.icons.insert(id.clone(), pixels);
@@ -2910,16 +2985,82 @@ impl Apps {
         .map_err(|error| error.to_string())
     }
 
+    fn save_canvas_text(
+        &mut self,
+        id: &str,
+        doc: crate::canvas_text::Document,
+        style: crate::ink::Style,
+        position: (i32, i32),
+        weak: &slint::Weak<Launcher>,
+    ) -> Result<(), String> {
+        if !doc.valid() || !style.valid() {
+            return Err("Text formatting is invalid".into());
+        }
+        let mut config = self.config.clone();
+        let name = doc.text();
+        if name.trim().is_empty() {
+            config.items.retain(|item| item.id() != id);
+            config.positions.remove(id);
+            return self.commit(config);
+        }
+        let view = crate::canvas_text::render(&doc, style.size, &style.color);
+        let (width, height) = crate::canvas_text::bounds(view.width, view.height, &doc);
+        let gap = config.grid_gap as usize;
+        let rect = crate::spatial::Rect {
+            col: position.0,
+            row: position.1,
+            width: width + gap,
+            height: height + gap,
+        };
+        let new = id.is_empty();
+        let id = if new { new_id()? } else { id.to_owned() };
+        let rect = if new {
+            crate::spatial::nearby(&crate::spatial::occupied(&config), rect)?
+        } else {
+            if !config.items.iter().any(
+                |item| matches!(item, Item::Annotation { id: saved, kind:2, .. } if saved==&id),
+            ) {
+                return Err("Text is missing".into());
+            }
+            crate::spatial::place(&crate::spatial::occupied(&config), &id, rect)
+                .ok_or("Text does not fit here")?;
+            rect
+        };
+        let item = Item::Annotation {
+            id: id.clone(),
+            name,
+            kind: 2,
+            style,
+            image: String::new(),
+            rich_text: Some(doc),
+        };
+        if new {
+            config.items.push(item);
+        } else if let Some(saved) = config.items.iter_mut().find(|item| item.id() == id) {
+            *saved = item;
+        }
+        config.positions.insert(id.clone(), rect);
+        self.commit(config)?;
+        if new {
+            self.reveal(&id, weak);
+        }
+        Ok(())
+    }
+
     fn save_annotation(
         &mut self,
         id: &str,
         text: String,
         kind: i32,
         style: crate::ink::Style,
-        position: (i32, i32),
+        position: (i32, i32, usize),
         weak: &slint::Weak<Launcher>,
     ) -> Result<(), String> {
-        let (x, y) = position;
+        let (x, y, width) = position;
+        if kind == 2 {
+            let doc = crate::canvas_text::Document::plain(&text);
+            return self.save_canvas_text(id, doc, style, (x, y), weak);
+        }
         if !(1..=3).contains(&kind)
             || !style.valid()
             || (kind != 3 && text.trim().is_empty())
@@ -2966,7 +3107,18 @@ impl Apps {
                 (240, 240)
             } else {
                 (
-                    320,
+                    if width == 0 {
+                        320
+                    } else {
+                        width.clamp(
+                            crate::spatial::text_min_span(config.grid_gap),
+                            crate::spatial::widget_span(
+                                crate::spatial::ANNOTATION_MAX_SPAN,
+                                config.item_size,
+                                config.grid_gap,
+                            ),
+                        )
+                    },
                     (name.lines().count().max(1) as f32 * style.size * 1.5 + 32.0).max(80.0)
                         as usize,
                 )
@@ -2987,6 +3139,7 @@ impl Apps {
                 kind,
                 style,
                 image,
+                rich_text: None,
             });
             self.reveal(&id, weak);
         }
@@ -3128,6 +3281,28 @@ impl Apps {
                 ..Default::default()
             });
         tile.pinned = self.config.pinned.iter().any(|id| id == item.id());
+        if let Item::Annotation {
+            name,
+            kind: 2,
+            style,
+            rich_text,
+            ..
+        } = item
+        {
+            let mut doc = rich_text
+                .clone()
+                .unwrap_or_else(|| crate::canvas_text::Document::plain(name));
+            if rich_text.is_none() {
+                doc.width = (tile.rect.width as f32 - self.config.grid_gap as f32).max(16.0);
+            }
+            let view = crate::canvas_text::cached_render(&doc, style.size, &style.color);
+            tile.text_width = view.width;
+            tile.text_height = view.height;
+            tile.text_scale = doc.scale;
+            tile.text_rotation = doc.rotation;
+            tile.text_data = serde_json::to_string(&doc).unwrap_or_default();
+            tile.icon = Some(view.pixels);
+        }
         tile
     }
 
@@ -3737,13 +3912,13 @@ fn success_message(action: &Action, config: &Config) -> Option<&'static str> {
         Action::Delete(_) => Some("Item removed"),
         Action::Drop(..) => Some("Item moved"),
         Action::Widget(..) => Some("Widget added"),
-        Action::ResizeItem(id, ..) => Some(
-            if is_image(config.items.iter().find(|item| item.id() == id)) {
-                "Image resized"
-            } else {
-                "Widget resized"
-            },
-        ),
+        Action::ResizeItem(id, ..) => {
+            Some(match config.items.iter().find(|item| item.id() == id) {
+                Some(Item::Annotation { kind: 2, .. }) => "Text resized",
+                Some(Item::Annotation { kind: 3, .. }) => "Image resized",
+                _ => "Widget resized",
+            })
+        }
         Action::DuplicateWidget(..) => Some("Widget duplicated"),
         Action::SelectTickTickList(..) => Some("Task list changed"),
         Action::AddPredefined(..) | Action::AddInstalledApp(..) => Some("App added"),
@@ -4139,6 +4314,11 @@ struct Tile {
     annotation: i32,
     annotation_ratio: f32,
     annotation_style: crate::ink::Style,
+    text_data: String,
+    text_width: f32,
+    text_height: f32,
+    text_scale: f32,
+    text_rotation: f32,
 }
 
 #[derive(Default)]
@@ -4169,12 +4349,13 @@ impl Tile {
                 tile.annotation_style = style.clone();
                 tile.icon = icons.get(item.id()).cloned();
                 tile.path = image.clone();
+                if matches!(kind, 2 | 3) {
+                    tile.max_span_x = crate::spatial::ANNOTATION_MAX_SPAN as i32;
+                    tile.max_span_y = crate::spatial::ANNOTATION_MAX_SPAN as i32;
+                }
                 if *kind == 3 {
-                    // An Image resizes like a Widget, but keeps its own proportions.
                     tile.min_span_x = crate::spatial::IMAGE_MIN_SPAN as i32;
                     tile.min_span_y = crate::spatial::IMAGE_MIN_SPAN as i32;
-                    tile.max_span_x = crate::spatial::IMAGE_MAX_SPAN as i32;
-                    tile.max_span_y = crate::spatial::IMAGE_MAX_SPAN as i32;
                     tile.annotation_ratio = image_ratio(tile.icon.as_ref());
                 }
             }
@@ -4288,7 +4469,18 @@ impl Tile {
             self.item_size,
             self.grid_gap,
         );
+        let (min_span_x, min_span_y) = if self.annotation == 2 {
+            let span = crate::spatial::text_min_span(self.grid_gap);
+            (span, span)
+        } else {
+            (min_span_x, min_span_y)
+        };
         AppTile {
+            text_data: self.text_data.into(),
+            text_width: self.text_width,
+            text_height: self.text_height,
+            text_scale: self.text_scale,
+            text_rotation: self.text_rotation,
             annotation: self.annotation,
             annotation_ratio: self.annotation_ratio,
             annotation_color: parse_color(&self.annotation_style.color),
@@ -4760,6 +4952,7 @@ mod tests {
             kind: 3,
             style: crate::ink::Style::default(),
             image: "chosen-image.png".into(),
+            rich_text: None,
         });
         config.positions.insert(
             "image".into(),

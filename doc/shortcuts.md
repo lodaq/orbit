@@ -122,3 +122,5 @@ Canvas clipboard shortcuts also include Draw, Arrow and Highlighter strokes, alo
 With Canvas focus, Ctrl+V and Context menu → Paste also import a system clipboard Image. Copy or Cut of a Canvas selection replaces the clipboard so subsequent Paste uses that selection. Text fields keep native paste; Lock layout blocks image paste.
 
 With Canvas focus, Paste also places system clipboard text as editable Text, preserving line breaks. Images take priority; Canvas Copy/Cut retains selection paste. Text uses the existing 10,000-character limit, placement, Undo/Redo and layout lock.
+
+Canvas Text: click to select, then Enter or double-click to edit. Ctrl+Enter or Escape saves and ends editing. Ctrl+B/I/U toggle bold/italic/underline; Ctrl+K opens Link. Ctrl+Shift+8/7 applies a bulleted/numbered list; Tab and Shift+Tab indent/outdent. Enter continues a list and exits an empty item. Ctrl+Z and Ctrl+Shift+Z undo/redo within the active text editor. Ctrl+C/X/V copy/cut/paste text; copies inside Orbit retain formatting during the session. Ctrl-click a link opens it. Hold Shift while rotating to snap to 15° increments.

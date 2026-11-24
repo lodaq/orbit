@@ -1,3 +1,5 @@
+export { CanvasText } from "canvas-text.slint";
+import { CanvasText, CanvasTextEditor } from "canvas-text.slint";
 export { CanvasState } from "canvas.slint";
 import { CanvasState } from "canvas.slint";
 export { TextDirection } from "controls.slint";
@@ -27,6 +29,7 @@ export struct FolderPreview {
 }
 
 export struct AppTile {
+    text-data: string, text-width: float, text-height: float, text-scale: float, text-rotation: float,
     annotation: int, annotation-ratio: float, annotation-color: color, annotation-color-name: string, annotation-size: float, annotation-opacity: float,
     row: int, col: int, span-x: int, span-y: int, widget: bool, widget-kind: int, widget-text: string, widget-min: int, widget-max: int, ticktick: bool, ticktick-next: bool,
     ticktick-project-id: string,
@@ -342,10 +345,20 @@ component ItemTile inherits Rectangle {
         background: items[index].annotation == 1 ? (items[index].annotation-color-name == "#e8e5ef" ? #ffe39a : items[index].annotation-color) : transparent;
         border-radius: 2px;
         if items[index].annotation == 3: Image { width: parent.width; height: parent.height; source: items[index].icon; image-fit: contain; }
-        if items[index].annotation != 3: OrbitText {
+        if items[index].annotation == 2: Image {
+            x: (parent.width - self.width)/2; y: (parent.height - self.height)/2;
+            width: items[index].text-width * items[index].text-scale * 1px;
+            height: items[index].text-height * items[index].text-scale * 1px;
+            source: items[index].icon; image-fit: fill;
+            transform-origin: {x:self.width/2,y:self.height/2};
+            transform-rotation: items[index].text-rotation * 1deg;
+        }
+        if items[index].annotation == 1: OrbitText {
             x: 16px; y: 12px; width: parent.width - 32px; height: parent.height - 24px;
             text: items[index].name; color: items[index].annotation == 1 ? #1d1d1d : items[index].annotation-color; font-size: items[index].annotation-size * 1px;
-            wrap: word-wrap; vertical-alignment: items[index].annotation == 1 ? center : top;
+            wrap: items[index].annotation == 1 ? word-wrap : no-wrap;
+            overflow: items[index].annotation == 1 ? clip : elide;
+            vertical-alignment: items[index].annotation == 1 ? center : top;
             horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left;
         }
     }
@@ -800,7 +813,7 @@ export component Launcher inherits Window {
     private property <int> annotation-kind: 1;
     private property <int> annotation-x;
     private property <int> annotation-y;
-    callback save-annotation(string,string,int,string,float,float,float,float);
+    callback save-annotation(string,string,int,string,float,float,float,float,int);
     callback style-selection([string],string,float,float);
     laser-timer := Timer { interval: 70ms; triggered => {
         if root.ink-draft.length > 1 { root.ink-draft.remove(0); }
@@ -977,11 +990,20 @@ export component Launcher inherits Window {
         root.frame-context-id = "";
         canvas-focus.focus();
     }
-    out property <bool> canvas-text-focused: canvas-text.has-focus;
-    private property <bool> canvas-text-ready: canvas-text.has-focus && canvas-text.text == "";
-    private property <length> canvas-text-x;
-    private property <length> canvas-text-y;
-    public function finish-canvas-text() { canvas-focus.focus(); }
+    out property <bool> canvas-text-focused: CanvasText.active && CanvasText.editing && canvas-text-editor.text-focused;
+    private property <bool> canvas-text-ready: false;
+    public function sync-canvas-text() { canvas-text-editor.sync(); }
+    public function finish-canvas-text() { CanvasText.finish(false); }
+    function new-canvas-text(x:length,y:length) {
+        CanvasText.open("","","",root.text-size,root.ink-color,root.ink-opacity,
+            root.world-x(x)/1px-root.grid-gap/2,root.world-y(y)/1px-root.grid-gap/2,true);
+    }
+    function select-canvas-text(index:int,editing:bool) {
+        if root.layout-locked || index < 0 || index >= root.items.length { return; }
+        let item=root.items[index];
+        root.selected-ids=[item.id];root.selected-tool=0;canvas-focus.focus();
+        CanvasText.open(item.id,item.text-data,item.name,item.annotation-size,item.annotation-color-name,item.annotation-opacity,item.col,item.row,editing);
+    }
     function finish-marquee() {
         if root.marquee-active
             && abs(root.marquee-end-x - root.marquee-start-x) < 4px
@@ -991,9 +1013,7 @@ export component Launcher inherits Window {
                 root.world-x(root.marquee-start-x) / 1px + 3,root.world-y(root.marquee-start-y) / 1px + 3,
                 root.marquee-selection,root.marquee-additive);
             if !root.layout-locked && !root.marquee-additive && root.selected-ids.length == 0 {
-                root.canvas-text-x = root.world-x(root.marquee-start-x);
-                root.canvas-text-y = root.world-y(root.marquee-start-y);
-                canvas-text.focus();
+                root.new-canvas-text(root.marquee-start-x,root.marquee-start-y);
             }
         }
         root.marquee-active = false;
@@ -1015,11 +1035,13 @@ export component Launcher inherits Window {
             if root.tool-mode == 1 {
                 root.pan-origin-x = CanvasState.pan-x; root.pan-origin-y = CanvasState.pan-y;
                 root.pan-start-x = x; root.pan-start-y = y; root.panning = true;
+            } else if root.tool-mode == 5 {
+                root.new-canvas-text(x,y); root.selected-tool=0; return;
             } else if root.tool-mode >= 4 && root.tool-mode <= 6 {
                 root.annotation-id = ""; root.annotation-kind = root.tool-mode == 4 ? 1 : root.tool-mode == 5 ? 2 : 3;
                 root.annotation-text = ""; root.annotation-error = "";
                 root.annotation-x = round(root.world-x(x) / 1px); root.annotation-y = round(root.world-y(y) / 1px);
-                if root.tool-mode == 6 { root.busy = true; root.save-annotation("","Image",3,root.ink-color,root.text-size,root.ink-opacity,root.annotation-x,root.annotation-y); }
+                if root.tool-mode == 6 { root.busy = true; root.save-annotation("","Image",3,root.ink-color,root.text-size,root.ink-opacity,root.annotation-x,root.annotation-y,0); }
                 else { root.annotation-editor = true; }
             } else if (root.tool-mode == 2 || root.tool-mode >= 7) {
                 laser-timer.stop();
@@ -1068,6 +1090,10 @@ export component Launcher inherits Window {
         }
     }
     function canvas-pointer(event: PointerEvent, x: length, y: length) {
+        if CanvasText.active {
+            if event.kind == PointerEventKind.down { CanvasText.finish(false); }
+            return;
+        }
         if event.kind == PointerEventKind.down {
             let index = root.canvas-item-at(x,y);
             if event.button == PointerEventButton.right {
@@ -1084,6 +1110,9 @@ export component Launcher inherits Window {
                 return;
             }
             if event.button != PointerEventButton.left { return; }
+            if index >= 0 && root.items[index].annotation == 2 && root.tool-mode == 0 && !root.ctrl-held && !root.shift-held {
+                root.select-canvas-text(index,false);return;
+            }
             if root.placing-widget >= 0 { root.update-widget-placement(x,y); return; }
             root.keyboard-grid = false; root.focused-item = index;
             if index < 0 {
@@ -1108,7 +1137,7 @@ export component Launcher inherits Window {
             } else {
                 root.selected-ids = [];
                 root.begin-drag(index,false,x,y);
-                if root.items[index].widget || root.items[index].annotation == 3 {
+                if root.items[index].widget || root.items[index].annotation == 2 || root.items[index].annotation == 3 {
                     let local-x = root.world-x(x) - (root.items[index].col + root.grid-gap / 2) * 1px;
                     let local-y = root.world-y(y) - (root.items[index].row + root.grid-gap / 2) * 1px;
                     let tile-width = (root.items[index].span-x - root.grid-gap) * 1px;
@@ -1364,6 +1393,7 @@ export component Launcher inherits Window {
     in-out property <int> default-search-engine-index;
     private property <int> saved-default-search-engine-index;
     changed settings => {
+        if root.settings && CanvasText.active { CanvasText.finish(false); }
         root.engine-menu = false;
 
         if root.settings {
@@ -1652,7 +1682,7 @@ export component Launcher inherits Window {
     in-out property <bool> picker;
     private property <int> context-index: -1;
     private property <bool> canvas-context;
-    changed launcher-visible => { if root.launcher-visible { root.load-local-widgets(root.items,true); } if !root.launcher-visible { root.alt-hand = false; root.cancel-canvas(); root.flush-canvas(); root.canvas-context = false;  root.marquee-active = false; root.ink-draft = []; root.erase-draft = []; root.tool-active = false; } }
+    changed launcher-visible => { if root.launcher-visible { root.load-local-widgets(root.items,true); } if !root.launcher-visible { if CanvasText.active { CanvasText.finish(false); } root.alt-hand = false; root.cancel-canvas(); root.flush-canvas(); root.canvas-context = false;  root.marquee-active = false; root.ink-draft = []; root.erase-draft = []; root.tool-active = false; } }
     private property <string> dock-context;
     private property <string> context-id;
     private property <int> editing: -1;
@@ -2098,6 +2128,7 @@ export component Launcher inherits Window {
     canvas-focus := FocusScope { width: 0px; height: 0px; changed has-focus => { if self.has-focus { KeyboardNavigation.list-focused = false; } } }
     finish-drag => { if root.drop-pending { root.cancel-drag(); } }
     reset-launcher(preserve-search) => {
+        if CanvasText.active { CanvasText.finish(false); }
         root.cancel-canvas(); root.flush-canvas();
         AzanSettings.close();
         if !preserve-search {
@@ -2385,7 +2416,7 @@ export component Launcher inherits Window {
             property <[AppTile]> display-items: root.items;
             for index in canvas-world.display-items.length: ItemTile {
                 property <bool> source-here: root.dragging && index < canvas-world.display-items.length && canvas-world.display-items[index].id == root.drag-item.id;
-                visible: !canvas-world.display-items[index].pinned;
+                visible: !canvas-world.display-items[index].pinned && !(CanvasText.active && CanvasText.id == canvas-world.display-items[index].id);
                 x: canvas-world.display-items[index].col * 1px + root.grid-gap * 0.5px;
                 y: canvas-world.display-items[index].row * 1px + root.grid-gap * 0.5px;
                 width: index < canvas-world.display-items.length ? canvas-world.display-items[index].span-x * 1px - root.grid-gap * 1px : root.item-size * 1px;
@@ -2486,26 +2517,9 @@ export component Launcher inherits Window {
                 background: self.border-color.with-alpha(0.188);
             }
         }
-        canvas-text := TextInput {
-            x: CanvasState.pan-x * 1px + root.canvas-text-x * CanvasState.zoom;
-            y: CanvasState.pan-y * 1px + root.canvas-text-y * CanvasState.zoom;
-            width: self.text == "" ? 1px : (320 - root.grid-gap - 32) * CanvasState.zoom * 1px;
-            height: max(self.preferred-height, root.text-size * CanvasState.zoom * 1.5px);
-            font-size: root.text-size * CanvasState.zoom * 1px;
-            color: root.ink-color-value;
-            opacity: self.has-focus ? root.ink-opacity : 0;
-            enabled: self.has-focus || root.marquee-active;
-            horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left;
-            vertical-alignment: top;
-            wrap: word-wrap;
-            changed has-focus => {
-                if !self.has-focus && self.text != "" {
-                    root.save-annotation("",self.text,2,root.ink-color,root.text-size,root.ink-opacity,
-                        round(root.canvas-text-x / 1px - root.grid-gap / 2 - 16),
-                        round(root.canvas-text-y / 1px - root.grid-gap / 2 - 12));
-                    self.text = "";
-                }
-            }
+        canvas-text-editor := CanvasTextEditor {
+            width: parent.width; height: parent.height;
+            gap: root.grid-gap; locked: root.layout-locked; control: root.ctrl-held; shift: root.shift-held;
         }
         if root.marquee-active: Rectangle {
             x: min(root.marquee-start-x,root.marquee-end-x);
@@ -2630,7 +2644,11 @@ export component Launcher inherits Window {
         }
         if root.selected-ids.length > 0: SettingsButton {
             x: 12px; y: 216px; option-width: 156px; height: 32px; label: "Apply to selection"; enabled: !root.layout-locked;
-            clicked => { root.style-selection(root.selected-ids,root.ink-color,root.text-size,root.ink-opacity); canvas-focus.focus(); }
+            clicked => {
+                if CanvasText.active {
+                    CanvasText.size=root.text-size;CanvasText.color=root.ink-color;CanvasText.opacity=root.ink-opacity;CanvasText.moved=true;CanvasText.command("refresh","");
+                } else { root.style-selection(root.selected-ids,root.ink-color,root.text-size,root.ink-opacity); canvas-focus.focus(); }
+            }
         }
     }
     if root.annotation-editor: Rectangle {
@@ -2639,14 +2657,20 @@ export component Launcher inherits Window {
         Panel {
             x: (parent.width - self.width)/2; y: (parent.height - self.height)/2;
             width: min(520px,parent.width - 48px); height: min(400px,parent.height - 48px);
+            annotation-text-size := Text {
+                visible: false;
+                text: root.annotation-kind == 2 ? root.annotation-text : "";
+                font-size: root.text-size * 1px;
+            }
             VerticalLayout { padding: 24px; spacing: 16px;
                 SettingsTitle { text: root.annotation-kind == 1 ? "Note" : "Text"; }
-                SettingsField { text <=> root.annotation-text; multiline: true; accept-newlines: true; autofocus: true; multiline-height: 190px; label: "Content"; placeholder: "Write here"; error: root.annotation-error; }
+                SettingsField { text <=> root.annotation-text; multiline: true; wrap-text: root.annotation-kind == 1; accept-newlines: true; autofocus: true; multiline-height: 190px; label: "Content"; placeholder: "Write here"; error: root.annotation-error; }
                 HorizontalLayout {
                     SettingsButton { label: "Cancel"; clicked => { root.annotation-editor = false; } }
                     Rectangle { horizontal-stretch: 1; }
                     SettingsButton { label: "Save"; primary: true; enabled: root.annotation-text != "" && !root.busy; clicked => {
-                        root.busy = true; root.save-annotation(root.annotation-id,root.annotation-text,root.annotation-kind,root.ink-color,root.text-size,root.ink-opacity,root.annotation-x,root.annotation-y);
+                        root.busy = true; root.save-annotation(root.annotation-id,root.annotation-text,root.annotation-kind,root.ink-color,root.text-size,root.ink-opacity,root.annotation-x,root.annotation-y,
+                            ceil(annotation-text-size.preferred-width / 1px) + root.grid-gap + 36);
                     } }
                 }
             }
@@ -2777,6 +2801,7 @@ export component Launcher inherits Window {
         top-button := TouchArea {
             enabled: !root.busy; mouse-cursor: pointer;
             clicked => {
+                if CanvasText.active { CanvasText.finish(false); }
                 if index == 0 { root.cancel-drag(); root.busy = true; root.save-layout-locked(!root.layout-locked); }
                 else if index == 1 { root.settings = !root.settings; } else { root.hide-launcher(); }
             }
@@ -3910,7 +3935,9 @@ export component Launcher inherits Window {
                         && root.preview-valid(root.items,root.items[root.context-index].id,root.items[root.context-index].col,root.items[root.context-index].row,max(root.items[root.context-index].min-span-x,root.items[root.context-index].span-x - 1),max(root.items[root.context-index].min-span-y,root.items[root.context-index].span-y - 1));
                     clicked => { root.busy = true; root.resize-item(root.items[root.context-index].id,max(root.items[root.context-index].min-span-x,root.items[root.context-index].span-x - 1),max(root.items[root.context-index].min-span-y,root.items[root.context-index].span-y - 1)); root.context-index = -1; } }
                 if root.context-index >= 0 && root.items[root.context-index].annotation > 0 && root.items[root.context-index].annotation != 3: MenuOption { width: 184px; label: "Edit"; enabled: !root.layout-locked; clicked => {
-                    let item = root.items[root.context-index]; root.annotation-id = item.id; root.annotation-text = item.name; root.annotation-kind = item.annotation;
+                    let item = root.items[root.context-index];
+                    if item.annotation == 2 { root.select-canvas-text(root.context-index,true);root.context-index=-1;return; }
+                    root.annotation-id = item.id; root.annotation-text = item.name; root.annotation-kind = item.annotation;
                     root.text-size = item.annotation-size; root.ink-opacity = item.annotation-opacity; root.ink-color-value = item.annotation-color; root.ink-color = item.annotation-color-name;
                     root.annotation-editor = true; root.context-index = -1;
                 } }

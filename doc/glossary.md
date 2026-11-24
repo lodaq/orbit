@@ -255,3 +255,15 @@ Canvas replaces the retired page layout. Boxes and their Add box command are rem
 | **Font size** | General setting controlling all Orbit interface text; 12 px by default. |
 
 - **Inbox**: Widget holding failed TickTick additions until a successful retry.
+
+## Text formatting
+
+**Rich text**: Canvas Text whose words can use different fonts and formatting.
+
+**Draw font**: The handwritten face used by new Canvas Text. Distinct from the Draw tool, which creates ink strokes.
+
+**Auto width**: Text width determined by its content. Side resizing switches to a fixed wrapping width.
+
+**Bulleted list**, **Numbered list**: Text paragraphs marked with bullets or numbers; indentation represents nested items.
+
+**Link**: A formatted text range pointing to a website or email address.

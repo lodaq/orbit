@@ -105,3 +105,8 @@ Canvas Images resize like Widgets from the handle at their corner and keep their
 - `src/inbox.rs`: stores failed TickTick additions and removes successful retries.
 
 - System clipboard Image transfers use the existing arboard backend through `src/storage.rs`; `src/apps.rs` imports them on the worker. `tests/image-paste-ui.py` checks real clipboard paste, Undo/Redo, Canvas Copy/Paste and restart on a private display/profile.
+
+- `src/canvas-text.rs`: native rich-text document, formatting, shaping, selection, glyph rendering and editing gestures.
+- `ui/canvas-text.slint`: inline Canvas Text input, selection handles and formatting toolbar.
+- `ui/fonts/shantell-*.ttf` and `SHANTELL-OFL.txt`: bundled Shantell Sans Informal regular, bold and italic faces under SIL OFL, from tldraw's font assets; WOFF2 containers converted to TTF without changing outlines.
+- `tests/canvas-text-ui.py`: isolated-display creation, selection, word formatting, re-editing, wrapping, scaling, rotation, lists, Arabic, history, lock and persistence checks.

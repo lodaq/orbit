@@ -6,6 +6,8 @@ mod azan;
 mod canvas;
 #[path = "canvas-edit.rs"]
 mod canvas_edit;
+#[path = "canvas-text.rs"]
+mod canvas_text;
 mod config;
 mod daemon;
 mod icons;

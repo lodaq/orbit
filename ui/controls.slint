@@ -149,6 +149,7 @@ export component AddField inherits VerticalLayout {
     in-out property <string> text;
     in property <bool> enabled: true;
     in property <bool> multiline;
+    in property <bool> wrap-text: multiline;
     in property <bool> accept-newlines;
     in property <length> multiline-height: Theme.field-multiline-height;
     in property <bool> secret;
@@ -182,12 +183,12 @@ export component AddField inherits VerticalLayout {
             height: parent.height - 2 * Theme.space-2;
             horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
             vertical-scrollbar-policy: ScrollBarPolicy.always-off;
-            content-width: root.multiline ? self.visible-width : max(self.visible-width, input-field.preferred-width + Theme.border-width);
-            content-height: root.multiline ? max(self.visible-height, input-field.preferred-height) : self.visible-height;
+            content-width: root.wrap-text ? self.visible-width : max(self.visible-width, input-field.preferred-width + Theme.border-width);
+            content-height: root.multiline ? max(self.visible-height, root.wrap-text ? input-field.preferred-height : TextDirection.lines(root.text).length * Theme.type-body * 1.5) : self.visible-height;
             input-field := TextInput {
                 width: field-scroll.content-width;
                 height: field-scroll.content-height;
-                wrap: root.multiline ? TextWrap.word-wrap : TextWrap.no-wrap;
+                wrap: root.wrap-text ? TextWrap.word-wrap : TextWrap.no-wrap;
                 page-height: field-scroll.visible-height;
                 cursor-position-changed(point) => {
                     if root.multiline {
@@ -197,10 +198,13 @@ export component AddField inherits VerticalLayout {
                         } else if point.y + line-height + field-scroll.content-y > field-scroll.visible-height {
                             field-scroll.content-y = min(0px, max(field-scroll.visible-height - self.height, field-scroll.visible-height - point.y - line-height));
                         }
-                    } else if point.x + field-scroll.content-x < 0px {
-                        field-scroll.content-x = min(0px, -point.x);
-                    } else if point.x + Theme.border-width + field-scroll.content-x > field-scroll.visible-width {
-                        field-scroll.content-x = min(0px, max(field-scroll.visible-width - self.width, field-scroll.visible-width - point.x - Theme.border-width));
+                    }
+                    if !root.wrap-text {
+                        if point.x + field-scroll.content-x < 0px {
+                            field-scroll.content-x = min(0px, -point.x);
+                        } else if point.x + Theme.border-width + field-scroll.content-x > field-scroll.visible-width {
+                            field-scroll.content-x = min(0px, max(field-scroll.visible-width - self.width, field-scroll.visible-width - point.x - Theme.border-width));
+                        }
                     }
                 }
                 horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left;

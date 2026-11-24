@@ -224,12 +224,24 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
         && !modifiers.alt_key()
         && !modifiers.shift_key()
         && !modifiers.super_key();
-    if launcher.get_canvas_text_focused() && !launcher.get_canvas_shortcuts() {
-        if plain && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) {
-            launcher.invoke_finish_canvas_text();
+    let text = launcher.global::<crate::CanvasText>();
+    if text.get_active() && !launcher.get_settings() {
+        if plain && matches!(key, Key::Named(NamedKey::Escape)) {
+            text.invoke_finish(false);
             return true;
         }
-        return false;
+        if text.get_editing() {
+            return false;
+        }
+        if modifiers.control_key()
+            && matches!(key, Key::Character(value) if value.eq_ignore_ascii_case("z"))
+        {
+            text.invoke_finish(true);
+        }
+        if plain && matches!(key, Key::Named(NamedKey::Enter)) {
+            text.invoke_edit();
+            return true;
+        }
     }
     if launcher.get_search_editing()
         && plain

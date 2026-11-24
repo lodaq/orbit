@@ -229,6 +229,8 @@ pub enum Item {
         kind: i32,
         style: crate::ink::Style,
         image: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rich_text: Option<crate::canvas_text::Document>,
     },
 
     Widget {
@@ -980,10 +982,14 @@ impl Config {
                 kind,
                 style,
                 image,
+                rich_text,
                 ..
             } = item
                 && (!(1..=3).contains(kind)
                     || !style.valid()
+                    || rich_text
+                        .as_ref()
+                        .is_some_and(|doc| *kind != 2 || !doc.valid() || doc.text() != *name)
                     || name.trim().is_empty()
                     || name.chars().count() > 10_000
                     || (*kind == 3
@@ -2054,6 +2060,7 @@ mod canvas_tool_tests {
                 ..Default::default()
             },
             image: String::new(),
+            rich_text: None,
         });
         crate::spatial::reconcile(&mut config).unwrap();
         let mut restored: Config =
@@ -2079,6 +2086,7 @@ mod canvas_tool_tests {
             kind: 3,
             style: Default::default(),
             image: "../outside.png".into(),
+            rich_text: None,
         });
         crate::spatial::reconcile(&mut config).unwrap();
         assert!(!config.valid());

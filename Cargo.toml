@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# Native rich-text shaping, selection geometry and glyph rendering, including Arabic.
+cosmic-text = "=0.19.0"
 # Reuse Slint’s clipboard backend for native image paste on X11, Wayland and Windows.
 arboard = { version = "=3.7.0", features = ["wayland-data-control"] }
 # Resolve named prayer time zones and seasonal clock changes locally.

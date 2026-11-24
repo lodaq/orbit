@@ -241,7 +241,11 @@ pub const WIDGETS: [&str; 22] = [
 ];
 // A Canvas Image resizes between one grid cell and a large upper bound.
 pub const IMAGE_MIN_SPAN: usize = 1;
-pub const IMAGE_MAX_SPAN: usize = 128;
+pub const ANNOTATION_MAX_SPAN: usize = 128;
+
+pub fn text_min_span(grid_gap: i32) -> usize {
+    48 + grid_gap.clamp(0, 64) as usize
+}
 pub const WIDGET_SPANS: [(usize, usize); 22] = [
     (2, 2),
     (2, 2),
@@ -361,7 +365,17 @@ pub fn connect(launcher: &crate::Launcher) {
         items
             .iter()
             .position(|item| {
-                !item.pinned
+                let text_hit = if item.annotation == 2 && !item.text_data.is_empty() {
+                    let (sin, cos) = item.text_rotation.to_radians().sin_cos();
+                    let x = col as f32 - item.col as f32 - item.span_x as f32 / 2.0;
+                    let y = row as f32 - item.row as f32 - item.span_y as f32 / 2.0;
+                    (x * cos + y * sin).abs() <= item.text_width * item.text_scale / 2.0
+                        && (-x * sin + y * cos).abs() <= item.text_height * item.text_scale / 2.0
+                } else {
+                    true
+                };
+                text_hit
+                    && !item.pinned
                     && col >= item.col
                     && col < item.col + item.span_x
                     && row >= item.row

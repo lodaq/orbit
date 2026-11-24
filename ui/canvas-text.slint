@@ -1,0 +1,222 @@
+import { Theme } from "theme.slint";
+import { SettingsButton, SettingsField, Panel, OrbitText } from "controls.slint";
+import { CanvasState } from "canvas.slint";
+
+export global CanvasText {
+    in-out property <bool> active;
+    in-out property <bool> editing;
+    in-out property <bool> saving;
+    in-out property <bool> moved;
+    in-out property <bool> placement-valid: true;
+    in-out property <string> id;
+    in-out property <string> text;
+    in-out property <string> document;
+    in-out property <string> link;
+    in-out property <string> error;
+    in-out property <string> color: "#e8e5ef";
+    in-out property <float> opacity: 1;
+    in-out property <float> size: 24;
+    in-out property <float> x;
+    in-out property <float> y;
+    in-out property <float> text-width: 16;
+    in-out property <float> text-height: 34;
+    in-out property <float> fixed-width;
+    in-out property <float> scale: 1;
+    in-out property <float> rotation;
+    in-out property <int> cursor;
+    in-out property <int> anchor;
+    in-out property <image> picture;
+    in-out property <bool> bold;
+    in-out property <bool> italic;
+    in-out property <bool> underline;
+    in-out property <bool> strike;
+    in-out property <bool> highlight;
+    in-out property <int> font;
+    callback open(string,string,string,float,string,float,float,float,bool);
+    callback edit();
+    callback changed(string,int,int);
+    callback selection(int,int);
+    callback pointer(int,float,float);
+    callback command(string,string);
+    callback saved();
+    in-out property <bool> keep-selection;
+    callback drag(int,int,float,float,bool);
+    callback finish(bool);
+    callback navigate(string,bool,bool);
+    callback open-link();
+}
+component FormatButton inherits SettingsButton {
+    in property <string> command;
+    in property <string> value;
+    option-width: 38px;
+    height: 34px;
+    clicked => { CanvasText.command(root.command,root.value); }
+}
+
+export component CanvasTextEditor inherits Rectangle {
+    in property <int> gap;
+    in property <bool> locked;
+    in property <bool> control;
+    in property <bool> shift;
+    out property <bool> text-focused: input.has-focus;
+    private property <bool> syncing;
+    private property <bool> link-open;
+    private property <string> link-url;
+    private property <bool> dragging;
+    private property <int> handle;
+    private property <float> shape-width: CanvasText.text-width * CanvasText.scale;
+    private property <float> shape-height: CanvasText.text-height * CanvasText.scale;
+    private property <float> sine: sin(CanvasText.rotation * 1deg);
+    private property <float> cosine: cos(CanvasText.rotation * 1deg);
+    private property <float> bounds-width: abs(root.cosine) * root.shape-width + abs(root.sine) * root.shape-height;
+    private property <float> bounds-height: abs(root.sine) * root.shape-width + abs(root.cosine) * root.shape-height;
+    private property <float> center-x: CanvasText.x + root.gap / 2 + root.bounds-width / 2;
+    private property <float> center-y: CanvasText.y + root.gap / 2 + root.bounds-height / 2;
+    private property <float> zoom: CanvasState.zoom;
+    visible: CanvasText.active;
+    public function sync() {
+        root.syncing = true;
+        input.text = CanvasText.text;
+        input.set-selection-offsets(CanvasText.anchor,CanvasText.cursor);
+        if CanvasText.editing && !root.link-open { input.focus(); }
+        root.syncing = false;
+    }
+    function pointer-world-x(x: float, y: float) -> float {
+        return root.center-x + (x - root.shape-width/2)*root.cosine - (y - root.shape-height/2)*root.sine;
+    }
+    function pointer-world-y(x: float, y: float) -> float {
+        return root.center-y + (x - root.shape-width/2)*root.sine + (y - root.shape-height/2)*root.cosine;
+    }
+    function gesture(event: PointerEvent, handle: int, x: float, y: float) {
+        if root.locked { return; }
+        let wx = root.pointer-world-x(x,y); let wy = root.pointer-world-y(x,y);
+        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+            root.dragging = true; root.handle = handle;
+            CanvasText.drag(handle,0,wx,wy,root.shift);
+        }
+        if root.dragging && event.kind == PointerEventKind.move { CanvasText.drag(root.handle,1,wx,wy,root.shift); }
+        if root.dragging && event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+            CanvasText.drag(root.handle,2,wx,wy,root.shift); root.dragging = false;
+        }
+        if event.kind == PointerEventKind.cancel { CanvasText.drag(root.handle,3,wx,wy,false);root.dragging = false; }
+    }
+    shape := Rectangle {
+        x: (CanvasState.pan-x + (root.center-x - root.shape-width / 2)*root.zoom) * 1px;
+        y: (CanvasState.pan-y + (root.center-y - root.shape-height / 2)*root.zoom) * 1px;
+        width: root.shape-width * root.zoom * 1px;
+        height: root.shape-height * root.zoom * 1px;
+        transform-origin: { x: self.width/2, y: self.height/2 };
+        transform-rotation: CanvasText.rotation * 1deg;
+        border-width: 1px; border-color: CanvasText.placement-valid ? Theme.text-selection-border : Theme.placement-invalid;
+        Image { width: parent.width; height: parent.height; source: CanvasText.picture; image-fit: fill; opacity: CanvasText.opacity; visible: input.preedit-text == ""; }
+        input := TextInput {
+            width: parent.width; height: parent.height;
+            single-line: false;
+            wrap: CanvasText.fixed-width > 0 ? word-wrap : no-wrap;
+            font-size: CanvasText.size * CanvasText.scale * root.zoom * 1px;
+            color: self.preedit-text == "" ? transparent : Theme.text;
+            selection-background-color: transparent; selection-foreground-color: transparent;
+            text-cursor-width: 0px;
+            enabled: CanvasText.editing && !root.locked;
+            edited => { if !root.syncing { CanvasText.changed(self.text,self.cursor-position-byte-offset,self.anchor-position-byte-offset); } }
+            cursor-position-changed(_) => { if !root.syncing && self.text == CanvasText.text { CanvasText.selection(self.cursor-position-byte-offset,self.anchor-position-byte-offset); } }
+            key-pressed(event) => {
+                if event.text == "\n" { if event.modifiers.control { CanvasText.finish(false); } else { CanvasText.command("enter",""); } return accept; }
+                if event.text == Key.Escape { CanvasText.finish(false);return accept; }
+                if event.text == Key.Tab { CanvasText.command(event.modifiers.shift ? "outdent" : "indent","");return accept; }
+                if event.modifiers.control {
+                    if event.text == "c" { CanvasText.command("copy","");self.copy();return accept; }
+                    if event.text == "x" { CanvasText.command("copy","");self.cut();return accept; }
+                    if event.text == "v" { CanvasText.command("paste","");self.paste();return accept; }
+                    if event.modifiers.shift && (event.text == "8" || event.text == "*") { CanvasText.command("bullet","");return accept; }
+                    if event.modifiers.shift && (event.text == "7" || event.text == "&") { CanvasText.command("number","");return accept; }
+                    if event.text == "b" { CanvasText.command("bold","");return accept; }
+                    if event.text == "i" { CanvasText.command("italic","");return accept; }
+                    if event.text == "u" { CanvasText.command("underline","");return accept; }
+                    if event.text == "z" { CanvasText.command(event.modifiers.shift ? "redo" : "undo","");return accept; }
+                    if event.text == "y" { CanvasText.command("redo","");return accept; }
+                    if event.text == "k" { root.link-url=CanvasText.link;root.link-open=true;return accept; }
+                }
+                if event.text == Key.LeftArrow || event.text == Key.RightArrow || event.text == Key.UpArrow || event.text == Key.DownArrow || event.text == Key.Home || event.text == Key.End {
+                    CanvasText.navigate(event.text,event.modifiers.shift,event.modifiers.control);return accept;
+                }
+                reject
+            }
+        }
+        touch := TouchArea {
+            enabled: !CanvasText.saving;
+            mouse-cursor: CanvasText.editing ? text : move;
+            pointer-event(event) => {
+                if CanvasText.editing {
+                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                        CanvasText.pointer(root.control ? 3 : 0,self.mouse-x / 1px / root.zoom / CanvasText.scale,self.mouse-y / 1px / root.zoom / CanvasText.scale); input.focus();
+                    }
+                    if event.kind == PointerEventKind.move && self.pressed { CanvasText.pointer(1,self.mouse-x / 1px / root.zoom / CanvasText.scale,self.mouse-y / 1px / root.zoom / CanvasText.scale); }
+                } else if root.control && event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                    CanvasText.pointer(3,self.mouse-x/1px/root.zoom/CanvasText.scale,self.mouse-y/1px/root.zoom/CanvasText.scale);
+                } else { root.gesture(event,0,self.mouse-x/1px/root.zoom,self.mouse-y/1px/root.zoom); }
+            }
+            double-clicked => {
+                CanvasText.edit();
+                CanvasText.pointer(2,self.mouse-x/1px/root.zoom/CanvasText.scale,self.mouse-y/1px/root.zoom/CanvasText.scale);
+            }
+        }
+        for h in [1,2,3,4,5,6,7,8,9]: Rectangle {
+            visible: !CanvasText.editing && !root.locked;
+            property <float> hx: h == 1 || h == 3 || h == 5 ? 0 : h == 7 || h == 8 ? 0.5 : 1;
+            property <float> hy: h == 1 || h == 2 || h == 7 ? 0 : h == 5 || h == 6 ? 0.5 : 1;
+            x: parent.width * self.hx - 5px + (h == 9 ? 16px : 0px);
+            y: parent.height * self.hy - 5px + (h == 9 ? 16px : 0px);
+            width: 10px; height: 10px;
+            background: Theme.sheet; border-color: Theme.text-selection-border; border-width: 1px;
+            border-radius: h == 9 ? 5px : 0px;
+            grip := TouchArea {
+                x: -6px; y: -6px; width: 22px; height: 22px;
+                mouse-cursor: h == 9 ? move : h == 5 || h == 6 ? ew-resize : h == 7 || h == 8 ? ns-resize : h == 1 || h == 4 ? nwse-resize : nesw-resize;
+                pointer-event(event) => { root.gesture(event,h,(parent.x + self.x + self.mouse-x)/1px/root.zoom,(parent.y + self.y + self.mouse-y)/1px/root.zoom); }
+            }
+        }
+    }
+    toolbar := Panel {
+        x: min(max(12px,shape.x), root.width - self.width - 12px);
+        y: max(100px,(CanvasState.pan-y + (CanvasText.y + root.gap / 2)*root.zoom)*1px - self.height - 20px);
+        width: min(760px,root.width - 24px); height: root.link-open ? 170px : 88px;
+        visible: !root.dragging && !root.locked;
+        VerticalLayout { padding: 8px; spacing: 4px;
+            HorizontalLayout { spacing: 2px;
+                FormatButton { label: "B"; accessible-label: "Bold"; command: "bold"; primary: CanvasText.bold; }
+                FormatButton { label: "I"; accessible-label: "Italic"; command: "italic"; primary: CanvasText.italic; }
+                FormatButton { label: "U"; accessible-label: "Underline"; command: "underline"; primary: CanvasText.underline; }
+                FormatButton { label: "S̶"; accessible-label: "Strikethrough"; command: "strike"; primary: CanvasText.strike; }
+                FormatButton { label: "H"; accessible-label: "Highlight"; command: "highlight"; primary: CanvasText.highlight; }
+                FormatButton { label: "<>"; accessible-label: "Code"; command: "code"; }
+                FormatButton { label: "•"; accessible-label: "Bulleted list"; command: "bullet"; }
+                FormatButton { label: "1."; accessible-label: "Numbered list"; command: "number"; }
+                FormatButton { label: "→"; accessible-label: "Indent list"; command: "indent"; }
+                FormatButton { label: "←"; accessible-label: "Outdent list"; command: "outdent"; }
+                SettingsButton { label: "Link"; option-width: 56px; height: 34px; clicked => { root.link-url=CanvasText.link;root.link-open = !root.link-open; } }
+                SettingsButton { label: CanvasText.editing ? "Done" : "Edit"; option-width: 60px; height: 34px; primary: true; clicked => { if CanvasText.editing { CanvasText.finish(false); } else { CanvasText.edit(); } } }
+            }
+            HorizontalLayout { spacing: 2px;
+                FormatButton { label: "Sans"; option-width: 52px; command: "font"; value: "0"; }
+                FormatButton { label: "Serif"; option-width: 52px; command: "font"; value: "1"; }
+                FormatButton { label: "Mono"; option-width: 64px; command: "font"; value: "2"; }
+                FormatButton { label: "Draw"; option-width: 64px; command: "font"; value: "3"; }
+                FormatButton { label: "H1"; command: "heading"; value: "1"; }
+                FormatButton { label: "H2"; command: "heading"; value: "2"; }
+                FormatButton { label: "¶"; accessible-label: "Paragraph"; command: "heading"; value: "0"; }
+                FormatButton { label: "Left"; option-width: 56px; accessible-label: "Align left"; command: "align"; value: "1"; }
+                FormatButton { label: "Center"; option-width: 70px; accessible-label: "Align center"; command: "align"; value: "2"; }
+                FormatButton { label: "Right"; option-width: 62px; accessible-label: "Align right"; command: "align"; value: "3"; }
+                FormatButton { label: "Auto"; option-width: 54px; accessible-label: "Fit text width"; command: "auto"; }
+                FormatButton { label: "Clear"; option-width: 56px; accessible-label: "Clear formatting"; command: "clear"; }
+            }
+            if root.link-open: HorizontalLayout { spacing: 8px;
+                SettingsField { label: "Link URL"; text <=> root.link-url; placeholder: "https://"; }
+                SettingsButton { label: "Apply"; option-width: 64px; clicked => { CanvasText.command("link",root.link-url);root.link-open=false;root.sync(); } }
+                SettingsButton { label: "Open"; option-width: 64px; clicked => { CanvasText.open-link(); } }
+            }
+        }
+    }
+    if CanvasText.error != "": OrbitText { x: toolbar.x; y: toolbar.y + toolbar.height + 8px; width: toolbar.width; text: CanvasText.error; color: Theme.error; wrap: word-wrap; }
+}
