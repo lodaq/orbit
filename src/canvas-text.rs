@@ -437,6 +437,7 @@ struct Gesture {
     pointer_y: f32,
     width: f32,
     height: f32,
+    moved: bool,
 }
 struct Session {
     doc: Document,
@@ -448,6 +449,7 @@ struct Session {
     redo: Vec<Snapshot>,
     original: Document,
     gesture: Option<Gesture>,
+    opened_at: Option<std::time::Instant>,
     clipboard: Vec<(char, Format)>,
     pasting: bool,
 }
@@ -571,6 +573,7 @@ pub fn connect(
                 undo: Vec::new(),
                 redo: Vec::new(),
                 gesture: None,
+                opened_at: (!editing).then(std::time::Instant::now),
                 clipboard,
                 pasting: false,
             });
@@ -697,37 +700,7 @@ pub fn connect(
         let Some(s) = session.as_mut() else {
             return;
         };
-        let action = match kind {
-            1 => cosmic_text::Action::Drag {
-                x: x as i32,
-                y: y as i32,
-            },
-            2 => cosmic_text::Action::DoubleClick {
-                x: x as i32,
-                y: y as i32,
-            },
-            _ => cosmic_text::Action::Click {
-                x: x as i32,
-                y: y as i32,
-            },
-        };
-        RENDERER.with_borrow_mut(|r| s.editor.action(&mut r.fonts, action));
-        let text = s.doc.text();
-        s.cursor = from_cursor(&text, s.editor.cursor());
-        s.anchor = s.editor.selection_bounds().map_or(s.cursor, |(a, b)| {
-            let a = from_cursor(&text, a);
-            let b = from_cursor(&text, b);
-            if a == s.cursor { b } else { a }
-        });
-        s.sync_format();
-        if kind == 3
-            && valid_link(&s.format.link)
-            && let Err(error) = crate::platform::open(&s.format.link)
-        {
-            ui.global::<CanvasText>()
-                .set_error(error.to_string().into());
-        }
-        s.refresh(&ui);
+        pointer_session(s, &ui, kind, x, y);
     });
     let weak = ui.as_weak();
     let current = session.clone();
@@ -754,8 +727,8 @@ pub fn connect(
                 return;
             };
             drag_session(s, &ui, handle, phase, x, y, snap);
-            if phase == 2 && ui.global::<CanvasText>().get_moved() {
-                let state = ui.global::<CanvasText>();
+            let state = ui.global::<CanvasText>();
+            if phase == 2 && !state.get_editing() && state.get_moved() {
                 state.set_keep_selection(true);
                 state.set_saving(true);
                 save_drag(
@@ -1037,6 +1010,39 @@ fn next_prefix(prefix: &str) -> String {
     }
 }
 
+fn pointer_session(s: &mut Session, ui: &Launcher, kind: i32, x: f32, y: f32) {
+    let action = match kind {
+        1 => cosmic_text::Action::Drag {
+            x: x as i32,
+            y: y as i32,
+        },
+        2 => cosmic_text::Action::DoubleClick {
+            x: x as i32,
+            y: y as i32,
+        },
+        _ => cosmic_text::Action::Click {
+            x: x as i32,
+            y: y as i32,
+        },
+    };
+    RENDERER.with_borrow_mut(|r| s.editor.action(&mut r.fonts, action));
+    let text = s.doc.text();
+    s.cursor = from_cursor(&text, s.editor.cursor());
+    s.anchor = s.editor.selection_bounds().map_or(s.cursor, |(a, b)| {
+        let a = from_cursor(&text, a);
+        let b = from_cursor(&text, b);
+        if a == s.cursor { b } else { a }
+    });
+    s.sync_format();
+    if kind == 3
+        && valid_link(&s.format.link)
+        && let Err(error) = crate::platform::open(&s.format.link)
+    {
+        ui.global::<CanvasText>()
+            .set_error(error.to_string().into());
+    }
+    s.refresh(ui);
+}
 fn drag_session(
     s: &mut Session,
     ui: &Launcher,
@@ -1056,10 +1062,11 @@ fn drag_session(
             pointer_y: y,
             width: state.get_text_width(),
             height: state.get_text_height(),
+            moved: false,
         });
         return;
     }
-    let Some(g) = s.gesture.as_ref() else {
+    let Some(g) = s.gesture.as_mut() else {
         return;
     };
     if phase == 3 {
@@ -1072,6 +1079,36 @@ fn drag_session(
     }
     let dx = x - g.pointer_x;
     let dy = y - g.pointer_y;
+    if handle != 0 || dx.hypot(dy) > 3.0 {
+        g.moved = true;
+        s.opened_at = None;
+    }
+    if !g.moved {
+        if phase == 2 {
+            s.gesture = None;
+            if !state.get_editing()
+                && s.opened_at
+                    .take()
+                    .is_some_and(|t| t.elapsed() <= std::time::Duration::from_millis(450))
+            {
+                let (bw, bh) = bounds(state.get_text_width(), state.get_text_height(), &s.doc);
+                let gap = ui.get_grid_gap() as f32 / 2.0;
+                let cx = state.get_x() + gap + bw as f32 / 2.0;
+                let cy = state.get_y() + gap + bh as f32 / 2.0;
+                let (sin, cos) = s.doc.rotation.to_radians().sin_cos();
+                let lx =
+                    ((x - cx) * cos + (y - cy) * sin + state.get_text_width() * s.doc.scale / 2.0)
+                        / s.doc.scale;
+                let ly = (-(x - cx) * sin
+                    + (y - cy) * cos
+                    + state.get_text_height() * s.doc.scale / 2.0)
+                    / s.doc.scale;
+                state.set_editing(true);
+                pointer_session(s, ui, 2, lx, ly);
+            }
+        }
+        return;
+    }
     let (sin, cos) = g.doc.rotation.to_radians().sin_cos();
     let local_x = dx * cos + dy * sin;
     let local_y = -dx * sin + dy * cos;
