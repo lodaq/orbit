@@ -322,11 +322,6 @@ fn scheduled_tasks(
     Ok(tasks)
 }
 
-#[allow(dead_code)]
-pub fn completed_tasks(token: &str, projects: &[Project]) -> Result<Vec<Task>, String> {
-    completed_tasks_with(&agent(), token, projects)
-}
-
 fn completed_tasks_with(
     client: &ureq::Agent,
     token: &str,

@@ -808,6 +808,10 @@ impl Config {
         SEARCH_ENGINES.get(index).map(|(id, _)| *id)
     }
 
+    pub fn search_engine_index_by_id(id: &str) -> Option<usize> {
+        SEARCH_ENGINES.iter().position(|(item, _)| *item == id)
+    }
+
     pub fn default_search_engine_index(&self) -> usize {
         SEARCH_ENGINES
             .iter()

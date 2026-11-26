@@ -11,6 +11,8 @@ mod canvas_text;
 mod config;
 mod daemon;
 mod icons;
+#[path = "image-search.rs"]
+mod image_search;
 #[path = "inbox.rs"]
 mod inbox;
 #[path = "ink.rs"]
@@ -28,6 +30,8 @@ mod scripts;
 mod search_cursor;
 #[path = "search-edit.rs"]
 mod search_edit;
+#[path = "search-paths.rs"]
+mod search_paths;
 mod shortcuts;
 mod spatial;
 mod storage;

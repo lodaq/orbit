@@ -8,12 +8,15 @@
 - `src/main.rs`: the `daemon`, `toggle` and `ticktick` commands.
 - `src/config.rs`: versioned flat Canvas config and saved Canvas speed, legacy layout migration, background color, image and image-folder settings, app, file and directory search paths, file-search exclusion defaults, named Actions and Prefixes, first-run data, and damaged config recovery.
 - `src/add-item.rs`: Add item state for the cached Installed apps inventory, cancellation of stale requests, and local field validation.
-- `src/apps.rs`: app and folder actions, Canvas placement, search across items, folder contents and configured paths with file exclusion matching and worker cache invalidation, generic Prefix recognition/dispatch, dock pinning and Recent display, background image selection, website favicon retrieval, and cached icons capped at the displayed size; file writes and decoding run on a worker thread.
+- `src/apps.rs`: app and folder actions, Canvas placement, search across items, folder contents and cached paths, worker coordination, dock pinning and Recent display, background image selection, website favicon retrieval, and cached icons capped at the displayed size; file writes and decoding run on a worker thread.
+- `src/image-search.rs`: localhost POST handoff for pasted images searched with Google Lens.
+- `src/search-paths.rs`: URL encoding, action/browser URL formatting, Prefix matching, file-search exclusion matching and file/directory search indexing.
 - `src/recent.rs`: saved Recent order, duplicate removal, and the history limit.
 - `src/daemon.rs`: the resident Slint event loop and toggle delivery.
 - `src/platform.rs`: config and Recent file access and atomic writes, installed app discovery including configured executables and executable symlinks, detached commands, the Unix socket, single-daemon lock, Hyprland monitors, native file chooser rules applied before mapping, fullscreen, native Wayland touchpad pinch input, and window hiding.
 - `ui/assets/`: vector artwork extracted from `doc/orbit-ui/orbit.svg`, including the Home Screen image-change icon. `search-engines/` contains bundled search engine brand icons and their source list.
 - `ui/fonts/`: embedded Inter font and its OFL license.
+- `ui/launcher-items.slint`: exported Slint data structs and reusable Canvas, Dock and Toast components (`FocusTaskBody`, `ToastCard`, `ItemIcon`, `ItemTile`, `DockTile`).
 - `ui/launcher.slint`: the top bar, banner, Prefix badge and search results, full-window Canvas, fixed controls, Home Screen Settings with Canvas speed, Appearance Settings, Search bar Settings with General, Prefixes, Actions and Scripts, TickTick Widget Gallery and task editor, app and folder sheets, open folder panel, Icon picker, item and empty-space context menus, and delete alert; `build.rs` compiles it.
 - `Cargo.toml` and `Cargo.lock`: dependencies and their locked versions. Speed results are in `doc/spec.md`, section 3.
 
@@ -66,7 +69,8 @@ The approved v2 UX specification is `Orbit_Desktop_Launcher_UX_Spec_v2.md`; it s
 - `src/website-icons.rs`: debounced Website icon preview worker, stale-result checks, in-memory fetched drafts and custom/automatic icon selection for Save.
 
 
-- `src/search-edit.rs`: native selection replacements and grouped undo/redo for Script name completion.
+- `src/search-edit.rs`: native selection replacements, clipboard text paste fallback and grouped undo/redo for Script name completion.
+- `tests/search-image-ui.py`: isolated-display Search anything image paste, chip UI, Google engine switch and reset, and text fallback checks.
 
 - `src/widget-starters.rs`: original bilingual starter text, vocabulary examples, unfinished starter habits, Quran passage attribution and a dated Cairo prayer-time example.
 - `src/widget-views.rs`: local selections, persistent shuffled rotations, completion references, habit state, today's achievements and saved prayer countdowns.

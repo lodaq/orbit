@@ -345,6 +345,18 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
     if action == Some(0) && keys == "Ctrl+K" && list_focused {
         return false;
     }
+    if launcher.get_search_editing()
+        && modifiers.control_key()
+        && !modifiers.alt_key()
+        && !modifiers.super_key()
+        && !modifiers.shift_key()
+        && matches!(key, Key::Character(text) if text.eq_ignore_ascii_case("v"))
+    {
+        if !launcher.get_busy() {
+            launcher.invoke_paste_search();
+        }
+        return true;
+    }
     if (action.is_none() || matches!(action, Some(14 | 15)))
         && launcher.get_search_editing()
         && modifiers.control_key()
@@ -384,7 +396,9 @@ pub fn handle(launcher: &Launcher, key: &Key, modifiers: ModifiersState) -> bool
             }
         }
 
-        6 if launcher.get_search_navigation() => launcher.invoke_run_activated_prefix(),
+        6 if launcher.get_search_navigation() || launcher.get_search_image_present() => {
+            launcher.invoke_run_activated_prefix()
+        }
         6 if launcher.get_grid_navigation() => launcher.invoke_activate_grid(),
         6..=8 => {
             let text = match action {

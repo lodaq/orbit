@@ -1,0 +1,597 @@
+import { Theme } from "theme.slint";
+import { OrbitText, TextDirection } from "controls.slint";
+
+export struct CompletedReference { id: string, date: string, title: string, done: bool }
+export struct CanvasFrameView { id: string, name: string, keys: string, x: float, y: float, width: float, height: float, count: int }
+export struct InkSample { x: float, y: float }
+export struct CanvasInk { id: string, x: float, y: float, width: float, height: float, path: string, samples: [InkSample], color: color, size: float, opacity: float, dimmed: bool }
+
+export struct ShortcutEntry { action: int, keys: string }
+export struct ShortcutGroup { action: int, entries: [ShortcutEntry] }
+
+export struct FolderPreview {
+    icon: image,
+    icon-present: bool,
+    letter: string,
+}
+
+export struct AppTile {
+    text-data: string, text-width: float, text-height: float, text-scale: float, text-rotation: float,
+    annotation: int, annotation-ratio: float, annotation-color: color, annotation-color-name: string, annotation-size: float, annotation-opacity: float,
+    row: int, col: int, span-x: int, span-y: int, widget: bool, widget-kind: int, widget-text: string, widget-min: int, widget-max: int, ticktick: bool, ticktick-next: bool,
+    ticktick-project-id: string,
+    min-span-x: int, min-span-y: int, max-span-x: int, max-span-y: int,
+    text-icon: bool,
+    id: string,
+    name: string,
+    source: int,
+    folder-id: string,
+    pinned: bool,
+    artwork: string,
+    letter: string,
+    icon: image,
+    command: string,
+    url: string,
+    path: string,
+    parent-path: string,
+    icon-value: string,
+    custom: bool,
+    icon-present: bool,
+    app: bool,
+    website: bool,
+    file: bool,
+    directory: bool,
+    folder: bool,
+    preview-icons: [FolderPreview],
+}
+
+export struct InstalledAppTile {
+    command: string,
+    id: string,
+    name: string,
+    letter: string,
+    icon: image,
+    icon-present: bool,
+}
+
+export struct ActionChoice {
+    id: string,
+    name: string,
+}
+export struct UserActionChoice { id: string, name: string, kind: string, source: string, tokens: string, description: string, referenced: bool }
+export struct ScriptChoice { id: string, name: string, path: string }
+export struct PrefixChoice { id: string, name: string, token: string, action-id: string, action-name: string, action-index: int }
+export struct PrefixMatch { action-id: string, name: string, query: string, query-length: int, badge-width: int }
+export struct SearchHistoryEntry { text: string, prefix-id: string, prefix-name: string, prefix-width: length }
+
+export struct TickTickProject { id: string, name: string, inbox: bool }
+export struct TickTickView { id: string, name: string, heading: bool, rtl: bool }
+export struct TickTickTask { rtl: bool, tag-names: string, id: string, project-id: string, list: string, title: string, content: string, desc: string, created-time: string, due: string, due-date: string, day: int, done: bool, priority: int, tags: string, details: string, focus-notes: string, focus-notes-rtl: bool }
+export struct ToastItem { id: int, level: int, message: string, pulse: int }
+
+export component FocusTaskBody inherits Rectangle {
+    in property <TickTickTask> task;
+    in property <bool> compact;
+    in property <bool> expanded;
+    out property <length> content-height: content.preferred-height;
+    height: self.content-height;
+    content := VerticalLayout {
+        padding: 0px; spacing: 16px;
+        OrbitText {
+            text: root.task.title; color: Theme.text;
+            font-family: root.task.rtl ? "Amiri" : "Inter";
+            font-size: root.compact ? (root.task.rtl ? 24px : 18px) : (root.task.rtl ? 30px : Theme.focus-title-size);
+            font-weight: 600; wrap: word-wrap;
+            horizontal-alignment: root.task.rtl ? right : left;
+        }
+        if root.task.priority > 0 || root.task.due != "": HorizontalLayout {
+            spacing: 10px; alignment: root.task.rtl ? end : start;
+            if root.task.priority > 0: Rectangle {
+                height: 26px; width: priority-label.preferred-width + 20px; border-radius: 13px;
+                property <color> accent: root.task.priority == 5 ? Theme.priority-high : root.task.priority == 3 ? Theme.priority-medium : Theme.priority-low;
+                background: self.accent.with-alpha(0.12);
+                priority-label := OrbitText {
+                    x: 10px; height: parent.height;
+                    text: root.task.priority == 5 ? "High priority" : root.task.priority == 3 ? "Medium priority" : "Low priority";
+                    color: parent.accent; font-size: Theme.type-hint; font-weight: 600; vertical-alignment: center;
+                }
+            }
+            if root.task.due != "": OrbitText { text: root.task.due; color: Theme.secondary; font-size: Theme.type-control; vertical-alignment: center; }
+        }
+        if root.task.tags != "": OrbitText {
+            text: root.task.tags; color: Theme.focus; font-size: Theme.type-control; wrap: word-wrap;
+            horizontal-alignment: root.task.rtl ? right : left;
+        }
+        if root.expanded || root.task.focus-notes != "": OrbitText {
+            text: root.expanded ? root.task.details : root.task.focus-notes; color: Theme.secondary;
+            font-family: (!root.expanded && root.task.focus-notes-rtl) ? "Amiri" : "Inter";
+            font-size: (!root.expanded && root.task.focus-notes-rtl) ? 18px : Theme.type-body; wrap: word-wrap;
+            horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left;
+        }
+    }
+}
+
+export component ToastCard inherits Rectangle {
+    in property <ToastItem> item;
+    in property <length> available-width;
+    in property <int> depth: 0;
+    in property <bool> expanded: false;
+    callback dismissed(int);
+    callback hover-changed(bool);
+
+    property <bool> is-front: depth == 0;
+    property <bool> interactive: expanded || is-front;
+    property <color> status-color: item.level == 3 ? Theme.error : item.level == 2 ? Theme.warning : item.level == 1 ? Theme.success : Theme.focus;
+
+    width: min(340px, available-width);
+    height: 44px;
+    background: Theme.widget-surface.with-alpha(0.94);
+    border-width: Theme.border-width;
+    border-color: interactive ? Theme.border : Theme.separator;
+    border-radius: 14px;
+    drop-shadow-color: Theme.surface-shadow;
+    drop-shadow-blur: interactive ? 16px : 4px;
+    drop-shadow-offset-y: interactive ? 4px : 2px;
+    opacity: expanded ? 1.0 : is-front ? 1.0 : depth == 1 ? 0.82 : 0.60;
+    transform-scale-x: expanded ? 1.0 : is-front ? 1.0 : depth == 1 ? 0.94 : 0.88;
+    transform-scale-y: self.transform-scale-x;
+    transform-origin: { x: self.width / 2, y: self.height };
+
+    animate y { duration: 200ms; easing: ease-out; }
+    animate transform-scale-x { duration: 200ms; easing: ease-out; }
+    animate opacity { duration: 180ms; easing: ease-out; }
+
+    Rectangle {
+        x: 12px;
+        y: (parent.height - self.height) / 2;
+        width: 22px;
+        height: 22px;
+        border-radius: 11px;
+        background: root.status-color.with-alpha(0.16);
+        border-width: 1px;
+        border-color: root.status-color.with-alpha(0.3);
+        OrbitText {
+            text: root.item.level == 1 ? "✓" : root.item.level == 0 ? "i" : "!";
+            color: root.status-color;
+            font-size: 11px * Theme.font-scale;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    OrbitText {
+        x: 42px;
+        y: 0px;
+        width: parent.width - 42px - (root.interactive ? 34px : 12px);
+        height: parent.height;
+        text: root.item.message;
+        color: Theme.text;
+        font-size: Theme.type-control;
+        font-weight: 500;
+        horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+
+    card-touch := TouchArea {
+        y: root.expanded ? -8px : 0px;
+        height: root.expanded ? parent.height + 8px : parent.height;
+        mouse-cursor: pointer;
+        changed has-hover => { root.hover-changed(self.has-hover); }
+        clicked => { root.dismissed(root.item.id); }
+    }
+
+    if root.interactive: Rectangle {
+        x: parent.width - self.width - 8px;
+        y: (parent.height - self.height) / 2;
+        width: 22px;
+        height: 22px;
+        border-radius: 11px;
+        background: close-touch.has-hover ? #FFFFFF18 : transparent;
+        animate background { duration: 100ms; easing: ease-out; }
+
+        OrbitText {
+            text: "×";
+            color: close-touch.has-hover ? Theme.text : Theme.secondary;
+            font-size: 14px * Theme.font-scale;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        close-touch := TouchArea {
+            mouse-cursor: pointer;
+            changed has-hover => { root.hover-changed(self.has-hover); }
+            clicked => { root.dismissed(root.item.id); }
+        }
+    }
+}
+
+export component ItemIcon inherits Rectangle {
+    in property <AppTile> item;
+    in property <bool> dock;
+    background: transparent;
+    border-radius: self.width * 0.25;
+    Image {
+        width: parent.width; height: parent.height;
+        source: item.text-icon ? @image-url("assets/letter.svg") : dock && item.artwork == "website" ? @image-url("assets/dock-website.svg")
+            : dock && item.artwork == "file" ? @image-url("assets/dock-file.svg")
+            : dock && item.artwork == "command" ? @image-url("assets/dock-command.svg")
+            : dock && item.artwork == "directory" ? @image-url("assets/dock-directory.svg")
+            : dock && item.artwork == "browser" ? @image-url("assets/dock-browser.svg")
+            : item.artwork == "action" ? @image-url("assets/action.svg")
+            : item.icon-present ? item.icon
+            : item.website ? @image-url("assets/website.svg")
+            : item.file ? @image-url("assets/file.svg")
+            : item.directory ? @image-url("assets/directory.svg")
+            : item.folder ? @image-url("assets/folder-empty.svg")
+            : @image-url("assets/letter.svg");
+        image-fit: contain;
+    }
+    if (item.app || item.text-icon) && !item.icon-present && item.artwork != "action": OrbitText { text: item.letter; color: Theme.text; font-size: parent.width * (item.text-icon ? 0.32 : 0.4); horizontal-alignment: center; vertical-alignment: center; }
+    if item.folder && item.preview-icons.length == 0: OrbitText {
+        text: "Empty"; color: Theme.text; font-size: parent.width * 0.16;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+    for index in item.preview-icons.length: Rectangle {
+        x: parent.width * (mod(index, 2) == 0 ? 0.16 : 0.55);
+        y: parent.height * (index < 2 ? 0.16 : 0.55);
+        width: parent.width * 0.29; height: self.width;
+        border-radius: self.width * 0.22; background: Theme.folder-preview;
+        if item.preview-icons[index].icon-present: Image {
+            width: parent.width; height: parent.height;
+            source: item.preview-icons[index].icon; image-fit: contain;
+        }
+        if !item.preview-icons[index].icon-present: Image {
+            width: parent.width; height: parent.height;
+            source: @image-url("assets/letter.svg"); image-fit: contain;
+        }
+        if !item.preview-icons[index].icon-present: OrbitText {
+            text: item.preview-icons[index].letter; color: Theme.text;
+            font-size: parent.width * 0.56;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+    }
+}
+
+export component ItemTile inherits Rectangle {
+    in property <[AppTile]> items;
+    in property <int> index;
+    in property <[TickTickTask]> ticktick-tasks;
+    in property <int> ticktick-total-count;
+    in property <length> ticktick-scroll-offset;
+    in property <length> ticktick-scroll-shift;
+    in property <string> ticktick-list-name;
+    in property <int> ticktick-header-hover;
+    in property <bool> focus-complete-hover;
+    in property <bool> focus-open-hover;
+    in property <bool> focus-details-hover;
+    in property <bool> focus-expanded;
+    in property <length> ticktick-focus-scroll;
+    in property <string> ticktick-status;
+    in property <bool> ticktick-connected;
+    in property <bool> ticktick-refreshing;
+    in property <bool> ticktick-error;
+    in property <bool> ticktick-pulse;
+    in property <int> ticktick-next-completion-sequence;
+    private property <bool> ticktick-next-completion-flash;
+    private property <int> ticktick-visible-count: max(1,floor((self.height - 68px) / 36px));
+    private property <length> ticktick-max-scroll: max(0px,(ticktick-total-count - ticktick-visible-count) * 36px);
+    in property <bool> pressed;
+    in property <bool> hovered;
+    in property <bool> selected: false;
+    in property <bool> folder-preview: false;
+    in property <bool> layout-locked;
+    in property <bool> resize-active;
+    in property <AppTile> drag-preview-item;
+    width: 128px;
+    height: 128px;
+    background: index < items.length && items[index].widget && !items[index].ticktick ? Theme.widget-background : transparent;
+    border-radius: index < items.length && items[index].widget ? Theme.radius-widget : Theme.radius-control;
+    border-width: index < items.length && items[index].widget ? Theme.border-width : 0px;
+    border-color: Theme.separator;
+    changed ticktick-next-completion-sequence => { if ticktick-next-completion-sequence > 0 { ticktick-next-completion-flash = true; completion-flash-timer.restart(); } }
+    completion-flash-timer := Timer { running: root.ticktick-next-completion-flash; interval: 420ms; triggered => { root.ticktick-next-completion-flash = false; } }
+    private property <length> item-icon-size: min(self.width * 0.75, self.height - 36px);
+    private property <length> item-content-top: (self.height - item-icon-size - Theme.space-1 - 16px) / 2;
+    if index < items.length && !items[index].widget && items[index].annotation == 0: Rectangle {
+        x: (parent.width - self.width) / 2;
+        width: root.item-icon-size + 2 * root.item-content-top;
+        // The label line box includes space below the visible letters.
+        height: parent.height - Theme.space-1;
+        background: root.pressed ? Theme.press-overlay : root.hovered ? Theme.hover-overlay : transparent;
+        border-radius: Theme.radius-control;
+    }
+    if index < items.length && !items[index].widget && items[index].annotation == 0: Rectangle {
+        x: (parent.width - self.width) / 2; y: root.item-content-top;
+        width: root.item-icon-size; height: self.width;
+        border-radius: Theme.radius-sheet;
+        transform-origin: { x: self.width / 2, y: self.height / 2 };
+        transform-scale-x: root.pressed ? 96% : 100%;
+        transform-scale-y: self.transform-scale-x;
+        animate transform-scale-x { duration: root.pressed ? 0ms : Theme.control-release; easing: ease-out; }
+        animate transform-scale-y { duration: root.pressed ? 0ms : Theme.control-release; easing: ease-out; }
+        if index < items.length && !folder-preview: ItemIcon { width: parent.width; height: parent.height; item: items[index]; }
+        if index < items.length && folder-preview && !items[index].folder: ItemIcon {
+            x: 4px; y: 8px; width: parent.width * 0.42; height: self.width; item: items[index];
+        }
+        if index < items.length && folder-preview && !items[index].folder: ItemIcon {
+            x: parent.width * 0.52; y: 8px; width: parent.width * 0.42; height: self.width; item: drag-preview-item;
+        }
+        if index < items.length && folder-preview && items[index].folder: ItemIcon { width: parent.width; height: parent.height; item: items[index]; }
+        if index < items.length && folder-preview && items[index].folder: ItemIcon {
+            x: parent.width - 30px; y: parent.height - 30px; width: 28px; height: 28px; item: drag-preview-item;
+        }
+    }
+    if index < items.length && items[index].annotation > 0: Rectangle {
+        width: parent.width; height: parent.height;
+        opacity: items[index].annotation-opacity;
+        background: items[index].annotation == 1 ? (items[index].annotation-color-name == "#e8e5ef" ? #ffe39a : items[index].annotation-color) : transparent;
+        border-radius: 2px;
+        if items[index].annotation == 3: Image { width: parent.width; height: parent.height; source: items[index].icon; image-fit: contain; }
+        if items[index].annotation == 2: Image {
+            x: (parent.width - self.width)/2; y: (parent.height - self.height)/2;
+            width: items[index].text-width * items[index].text-scale * 1px;
+            height: items[index].text-height * items[index].text-scale * 1px;
+            source: items[index].icon; image-fit: fill;
+            transform-origin: {x:self.width/2,y:self.height/2};
+            transform-rotation: items[index].text-rotation * 1deg;
+        }
+        if items[index].annotation == 1: OrbitText {
+            x: 16px; y: 12px; width: parent.width - 32px; height: parent.height - 24px;
+            text: items[index].name; color: items[index].annotation == 1 ? #1d1d1d : items[index].annotation-color; font-size: items[index].annotation-size * 1px;
+            wrap: items[index].annotation == 1 ? word-wrap : no-wrap;
+            overflow: items[index].annotation == 1 ? clip : elide;
+            vertical-alignment: items[index].annotation == 1 ? center : top;
+            horizontal-alignment: TextDirection.is-rtl(self.text) ? right : left;
+        }
+    }
+    if index < items.length && items[index].widget && !items[index].ticktick: OrbitText { x: 16px; y: 12px; width: parent.width - (items[index].widget-kind == 16 ? 80px : 32px); height: 24px; text: items[index].name; color: Theme.text; font-size: Theme.type-body; font-weight: 600; overflow: elide; }
+    if index < items.length && items[index].ticktick && !items[index].ticktick-next: Rectangle {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        background: Theme.widget-background;
+        border-width: Theme.border-width; border-color: Theme.widget-border; border-radius: Theme.radius-widget;
+        clip: true;
+        Rectangle {
+            x: 8px; y: 8px; width: parent.width - 100px; height: 32px;
+            border-radius: Theme.radius-control;
+            background: root.ticktick-header-hover == 1 ? (root.pressed ? Theme.press-overlay : Theme.hover-overlay) : transparent;
+            OrbitText { x: 8px; width: parent.width - 30px; height: parent.height; text: ticktick-list-name; color: Theme.text; font-size: Theme.type-body; font-weight: 600; vertical-alignment: center; overflow: elide; }
+            Path { x: parent.width - 18px; y: 14px; width: 8px; height: 4px; commands: "M 0 0 L 4 4 L 8 0"; fill: transparent; stroke: Theme.secondary; stroke-width: 1.5px; }
+        }
+        for button in 2: Rectangle {
+            x: parent.width - 82px + button * 38px; y: 8px; width: 32px; height: 32px;
+            border-radius: Theme.radius-control;
+            background: root.ticktick-header-hover == button + 2 ? (root.pressed ? Theme.press-overlay : Theme.selection) : Theme.hover-overlay;
+            border-width: Theme.border-width; border-color: Theme.widget-border;
+            if button == 0: Path {
+                x: 10px; y: 10px; width: 12px; height: 12px;
+                commands: "M 6 0 L 6 12 M 0 6 L 12 6";
+                fill: transparent; stroke: Theme.text; stroke-width: 1.7px;
+            }
+            if button == 1: Rectangle {
+                x: 9px; y: 14.5px; width: 14px; height: 3px;
+                for dot in 3: Rectangle { x: dot * 5.5px; width: 3px; height: 3px; border-radius: 1.5px; background: Theme.secondary; }
+            }
+        }
+        Rectangle { x: 12px; y: 44px; width: parent.width - 24px; height: 1px; background: Theme.separator; }
+        if !ticktick-refreshing && ticktick-tasks.length == 0: OrbitText {
+            x: 14px; y: 56px; width: parent.width - 28px; height: parent.height - 68px;
+            text: ticktick-error ? ticktick-status : !ticktick-connected ? "Connect TickTick in Settings" : "No tasks in this list";
+            color: Theme.secondary; font-size: Theme.type-control; wrap: word-wrap; vertical-alignment: top;
+        }
+        for row in 3: Rectangle {
+            visible: ticktick-refreshing && 96px + row * 36px < parent.height;
+            x: 14px; y: 60px + row * 36px; width: (parent.width - 28px) * (row == 1 ? 0.62 : 0.84); height: 16px;
+            border-radius: 4px; background: Theme.focus; opacity: ticktick-pulse ? 0.18 : 0.08;
+            animate opacity { duration: 350ms; }
+        }
+        Rectangle {
+            x: 0px; y: 52px; width: parent.width; height: max(0px,parent.height - 52px);
+            background: transparent; clip: true;
+            for task[row] in ticktick-tasks: Rectangle {
+                visible: !ticktick-refreshing;
+                x: 12px; y: row * 36px - ticktick-scroll-shift; width: parent.width - 24px; height: 36px;
+                Rectangle { y: 35px; width: parent.width; height: 1px; background: Theme.separator; }
+                property <color> priority-color: task.priority == 5 ? Theme.priority-high : task.priority == 3 ? Theme.priority-medium : task.priority == 1 ? Theme.priority-low : Theme.secondary;
+                Rectangle {
+                    x: task.rtl ? parent.width - 19px : 2px; y: 10px; width: 15px; height: 15px;
+                    border-radius: 5px; border-width: 1.5px; border-color: priority-color;
+                    background: task.done ? priority-color : priority-color.with-alpha(0.1);
+                    if task.done: Path { x: 3px; y: 4px; width: 9px; height: 7px; commands: "M 0 3 L 3 6 L 9 0"; fill: transparent; stroke: Theme.sheet; stroke-width: 1.5px; }
+                }
+                Rectangle {
+                    x: task.rtl ? (task.due == "" ? 2px : 76px) : 27px; y: 1px;
+                    width: parent.width - (task.due == "" ? 31px : 105px); height: 33px; clip: true;
+                    OrbitText {
+                        width: parent.width; height: parent.height; text: task.title;
+                        color: task.done ? Theme.secondary : Theme.text;
+                        font-family: task.rtl ? "Amiri" : "Inter";
+                        font-size: task.rtl ? 16px : Theme.type-control;
+                        horizontal-alignment: task.rtl ? right : left;
+                        overflow: elide; vertical-alignment: center;
+                    }
+                }
+                if task.due != "": OrbitText { x: task.rtl ? 0px : parent.width - 72px; y: 1px; width: 70px; height: 33px; text: task.due; color: Theme.secondary; font-size: 11px * Theme.font-scale; horizontal-alignment: task.rtl ? left : right; vertical-alignment: center; }
+
+            }
+        }
+        if !ticktick-refreshing && ticktick-max-scroll > 0px: scroll-track := Rectangle {
+            x: parent.width - 9px; y: 52px; width: 4px; height: max(0px,parent.height - 64px);
+            border-radius: 2px; background: Theme.focus.with-alpha(0.188);
+            Rectangle {
+                width: parent.width;
+                height: min(parent.height,max(24px,parent.height * root.ticktick-visible-count / root.ticktick-total-count));
+                y: (parent.height - self.height) * root.ticktick-scroll-offset / root.ticktick-max-scroll;
+                border-radius: 2px; background: Theme.focus.with-alpha(0.72);
+            }
+        }
+    }
+    if index < items.length && items[index].ticktick-next: focus-card := Rectangle {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        background: Theme.widget-background; border-radius: Theme.radius-widget; border-width: Theme.border-width; border-color: Theme.widget-border;
+        clip: true;
+        property <bool> compact: self.height <= 220px;
+        property <length> body-top: self.compact ? 52px : 88px;
+        property <length> body-height: max(0px,self.height - self.body-top - (self.compact ? 16px : 76px));
+        property <color> accent: ticktick-tasks.length == 0 ? Theme.focus : ticktick-tasks[0].priority == 5 ? Theme.priority-high : ticktick-tasks[0].priority == 3 ? Theme.priority-medium : ticktick-tasks[0].priority == 1 ? Theme.priority-low : Theme.focus;
+        OrbitText { x: 24px; y: 16px; width: parent.width - 104px; height: 22px; text: "Focus task"; color: Theme.secondary; font-size: Theme.type-control; font-weight: 600; vertical-alignment: center; }
+        if !compact && ticktick-tasks.length > 0: OrbitText {
+            x: 24px; y: 42px; width: parent.width - 104px; height: 20px;
+            text: ticktick-list-name; color: Theme.focus; font-size: Theme.type-control; overflow: elide; vertical-alignment: center;
+        }
+        if ticktick-refreshing: Rectangle {
+            x: 24px; y: parent.body-top; width: parent.width - 112px; height: 24px;
+            border-radius: 6px; background: Theme.focus; opacity: ticktick-pulse ? 0.16 : 0.08;
+            animate opacity { duration: 350ms; }
+        }
+        if !ticktick-refreshing && ticktick-tasks.length == 0: OrbitText {
+            x: 24px; y: parent.body-top; width: parent.width - 48px; height: parent.body-height;
+            text: ticktick-error ? ticktick-status : !ticktick-connected ? "Connect TickTick in Settings" : "No tasks for today";
+            color: Theme.text; font-size: Theme.type-body; wrap: word-wrap; vertical-alignment: top;
+        }
+        if !ticktick-refreshing && ticktick-tasks.length > 0: Rectangle {
+            x: parent.width - (parent.compact ? 56px : 68px); y: parent.compact ? 12px : 16px; width: parent.compact ? 32px : 44px; height: self.width;
+            border-radius: self.width / 2; border-width: 1.5px; border-color: parent.accent;
+            background: root.focus-complete-hover ? (root.pressed ? parent.accent.with-alpha(0.3) : parent.accent.with-alpha(0.18)) : parent.accent.with-alpha(0.08);
+            Path { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; width: 16px; height: 12px; commands: "M 0 6 L 5 11 L 16 0"; fill: transparent; stroke: parent.border-color; stroke-width: 2px; }
+        }
+        if !ticktick-refreshing && ticktick-tasks.length > 0: Rectangle {
+            x: 24px; y: parent.body-top; width: parent.width - 48px; height: parent.body-height;
+            Flickable {
+                x: 0px; y: 0px; width: parent.width; height: parent.height;
+                interactive: false; content-width: self.width;
+                content-height: focus-body.content-height; content-y: -min(ticktick-focus-scroll,max(0px,self.content-height - self.height));
+                focus-body := FocusTaskBody { width: parent.width; task: ticktick-tasks[0]; compact: focus-card.compact; expanded: root.focus-expanded; }
+            }
+            if focus-body.content-height > focus-card.body-height: Rectangle {
+                x: parent.width + 14px; y: 0px; width: 3px; height: parent.height; border-radius: 2px; background: Theme.separator;
+                Rectangle {
+                    width: parent.width; height: min(parent.height,max(20px,parent.height * parent.height / focus-body.content-height));
+                    y: (parent.height - self.height) * ticktick-focus-scroll / max(1px,focus-body.content-height - parent.height);
+                    border-radius: 2px; background: Theme.focus.with-alpha(0.6);
+                }
+            }
+        }
+        if !compact && !ticktick-refreshing && ticktick-tasks.length > 0: Rectangle {
+            x: 24px; y: parent.height - 56px; width: parent.width - 184px; height: 36px;
+            border-radius: Theme.radius-control;
+            background: root.focus-open-hover ? (root.pressed ? Theme.press-overlay : Theme.selection) : Theme.hover-overlay;
+            OrbitText { x: 12px; width: parent.width - 42px; height: parent.height; text: "Open task"; color: Theme.text; font-size: Theme.type-control; font-weight: 500; vertical-alignment: center; }
+            Path { x: parent.width - 24px; y: 13px; width: 10px; height: 10px; commands: "M 0 5 L 10 5 M 5 0 L 10 5 L 5 10"; fill: transparent; stroke: Theme.secondary; stroke-width: 1.5px; }
+        }
+        if !compact && !ticktick-refreshing && ticktick-tasks.length > 0: OrbitText {
+            x: parent.width - 144px; y: parent.height - 56px; width: 88px; height: 36px;
+            text: root.focus-expanded ? "Hide details" : "Details"; color: root.focus-details-hover ? Theme.text : Theme.secondary;
+            opacity: root.focus-details-hover && root.pressed ? 0.65 : 1;
+            font-size: Theme.type-control; horizontal-alignment: center; vertical-alignment: center;
+        }
+        Rectangle {
+            width: parent.width; height: parent.height; border-radius: Theme.radius-widget; background: Theme.success;
+            opacity: ticktick-next-completion-flash ? 0.1 : 0;
+            animate opacity { duration: Theme.control-release; easing: ease-out; }
+        }
+    }
+    if index < items.length && (items[index].widget || items[index].annotation == 3) && !root.layout-locked: Rectangle {
+        x: parent.width - 32px; y: parent.height - 32px; width: 28px; height: 28px;
+        border-radius: 14px;
+        background: root.resize-active ? Theme.selection : root.hovered ? Theme.hover-overlay : transparent;
+        Path {
+            x: 6px; y: 6px; width: 16px; height: 16px;
+            commands: "M 3 13 L 7 13 Q 13 13 13 7 L 13 3";
+            fill: transparent; stroke: root.resize-active || root.hovered ? Theme.focus : Theme.secondary.with-alpha(0.4);
+            stroke-width: 2px;
+        }
+    }
+    if index < items.length && !items[index].widget && items[index].annotation == 0: OrbitText {
+        y: items[index].widget ? parent.height - 28px : root.item-content-top + root.item-icon-size + Theme.space-1;
+        x: 6px;
+        width: parent.width - 12px;
+        height: items[index].widget ? 24px : 16px;
+        vertical-alignment: center;
+        text: folder-preview ? (items[index].folder ? "Add to folder" : "Create folder") : items[index].name;
+        color: Theme.text;
+        font-size: folder-preview ? 14px : min(14px, max(10px, min(parent.width - 12px, parent.height) * 0.105));
+        horizontal-alignment: center;
+        overflow: elide;
+    }
+    if root.selected: Rectangle {
+        width: parent.width; height: parent.height;
+        border-width: 2px; border-radius: Theme.radius-control;
+        border-color: Theme.selection-border;
+        background: Theme.selection.with-alpha(0.08);
+    }
+}
+
+export component DockTile inherits Rectangle {
+    in property <AppTile> item;
+    in property <bool> enabled;
+    in property <bool> recent;
+    // Pointer x in the window; far away while the pointer is outside the dock.
+    in property <length> pointer-x: -10000px;
+    // False when the pointer is not over a dock icon, so a tile can tell that it was left for good.
+    in property <bool> pointer-on-tiles: false;
+    callback gesture(int,length,length);
+    callback open();
+    callback context-menu(bool, string, length, length);
+    callback pointer-left();
+    callback hover-entered(string, string, length);
+    callback hover-moved(length);
+    callback hover-left(string);
+    background: transparent;
+    accessible-role: button; accessible-label: item.name; accessible-enabled: enabled;
+    accessible-action-default => { if root.enabled { root.open(); } }
+
+    // The macOS dock magnifies the icon under the pointer and its neighbours, with a smooth falloff.
+    private property <length> center-x: self.absolute-position.x + self.width / 2;
+    private property <float> pointer-distance: min(1.0, abs(self.center-x - root.pointer-x) / 170px);
+    private property <float> pointer-falloff: (1.0 - self.pointer-distance) * (1.0 - self.pointer-distance) * (1.0 + 2.0 * self.pointer-distance);
+    private property <float> hover-scale: 1.0 + 0.6 * self.pointer-falloff;
+    // Magnified icons spread apart, as in the macOS dock: each icon moves by the room the icons before it take.
+    private property <float> spread-distance: root.pointer-on-tiles ? clamp((self.center-x - root.pointer-x) / 170px, -1.0, 1.0) : 0.0;
+    private property <float> spread-reach: abs(self.spread-distance);
+    private property <float> spread-amount: (self.spread-distance < 0 ? -1.0 : 1.0)
+        * (self.spread-reach - self.spread-reach * self.spread-reach * self.spread-reach + self.spread-reach * self.spread-reach * self.spread-reach * self.spread-reach / 2);
+    private property <length> icon-center-x: self.center-x + root.spread-amount * 72px;
+    private property <bool> hovered: dock-touch.has-hover;
+
+    changed hovered => {
+        // Keep a pointer that moved into a neighbour; clear one that left this slot or the dock.
+        if !self.hovered && (!root.pointer-on-tiles || abs(self.center-x - root.pointer-x) < self.width / 2) {
+            root.pointer-left();
+        }
+        if self.hovered {
+            root.hover-entered(root.item.id, root.item.name, self.icon-center-x);
+        } else {
+            root.hover-left(root.item.id);
+        }
+    }
+    ItemIcon {
+        x: (parent.width - 48px) / 2 + root.spread-amount * 72px; y: parent.height - 56px; width: 48px; height: 48px; item: item; dock: true;
+        animate x { duration: 80ms; easing: ease-out; }
+        // Grow upward from the dock's bottom edge, as the macOS dock does.
+        transform-origin: { x: self.width / 2, y: self.height };
+        transform-scale-x: root.hover-scale * (dock-touch.pressed ? 0.94 : 1.0); transform-scale-y: self.transform-scale-x;
+        animate transform-scale-x { duration: dock-touch.pressed ? 0ms : 80ms; easing: ease-out; }
+        animate transform-scale-y { duration: dock-touch.pressed ? 0ms : 80ms; easing: ease-out; }
+    }
+    dock-touch := TouchArea {
+        mouse-cursor: pointer; enabled: root.enabled;
+
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.move {
+                root.gesture(1,self.absolute-position.x + self.mouse-x,self.absolute-position.y + self.mouse-y);
+                root.hover-entered(root.item.id, root.item.name, root.icon-center-x);
+            }
+            if event.kind == PointerEventKind.cancel { root.gesture(3,0px,0px); }
+            if event.button == PointerEventButton.left {
+                if event.kind == PointerEventKind.down { root.gesture(0,self.absolute-position.x + self.mouse-x,self.absolute-position.y + self.mouse-y); }
+                if event.kind == PointerEventKind.up { root.gesture(2,self.absolute-position.x + self.mouse-x,self.absolute-position.y + self.mouse-y); }
+            }
+            if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                root.context-menu(root.recent, root.item.id, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+}

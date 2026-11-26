@@ -394,3 +394,11 @@ Verification (2026-11-12): formatting, Clippy, release build and three Canvas cl
 Failed TickTick additions are kept in the Inbox widget in widgets.db, preserving the original query and its metadata. Retry retries the task; a successful TickTick addition removes it. A trash icon opens a Delete confirmation. New Inbox widgets use a compact 3×2 footprint with separated rows and quiet metadata. The widget is available from the Widget Gallery. No script is created.
 
 With Canvas focus, Paste also places system clipboard text as editable Text, preserving line breaks. Images take priority; Canvas Copy/Cut retains selection paste. Text uses the existing 10,000-character limit, placement, Undo/Redo and layout lock.
+
+### Image search in Search anything (authorized 2026-11-26)
+
+With Search anything focused, `Ctrl+V` checks the system clipboard for an image (20 MB decoded limit, in memory only) before falling back to native text paste. When an image is present, Orbit shows a removable `28×28 px` thumbnail chip at the left of Search anything, clears any active Prefix, hides local search results, disables Prefix and Script activation, and temporarily switches the top-bar Search engine selector to Google without changing the saved Default search engine in `config.json`.
+
+Pressing `Enter` (with optional additional text, or empty text for reverse-image search) serves a short-lived local handoff page in the default browser that submits a multipart form POST from an opaque-origin sandboxed frame to Google Lens (`lens.google.com/v3/upload`, with `q=` when text is non-empty), keeping the browser's own session cookies and User-Agent. Only Google supports anonymous image-and-text upload among Orbit's search engines; no upload runs until `Enter` is pressed.
+
+On a successful search, Orbit clears the thumbnail chip and query text, restores the top-bar selector to the saved Default search engine, and hides the Launcher. On an upload or launch failure, Orbit stays open with the chip, text, and Google selector intact and shows an error Toast. Clicking `×`, pressing `Backspace` on empty text, pressing `Esc`, or explicitly toggling Orbit closed removes the chip and restores the saved Default search engine; accidental focus loss preserves the state. Session Search history remains text-only.

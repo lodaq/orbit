@@ -497,25 +497,37 @@ pub fn show_or_hide(
     Ok(())
 }
 
+fn restore_workspace(
+    monitor: &serde_json::Value,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
+    // Hyprland 0.57+ omits `id` on special workspaces, so an open scratchpad is detected by `name`.
+    if let Some(name) = monitor["specialWorkspace"]["name"]
+        .as_str()
+        .filter(|name| !name.is_empty())
+    {
+        return Ok((serde_json::to_string(name)?, name.to_owned()));
+    }
+    if let Some(id) = monitor["activeWorkspace"]["id"].as_i64() {
+        let name = id.to_string();
+        return Ok((name.clone(), name));
+    }
+    if let Some(name) = monitor["activeWorkspace"]["address"]
+        .as_str()
+        .or_else(|| monitor["activeWorkspace"]["name"].as_str())
+        .filter(|name| !name.is_empty())
+    {
+        return Ok((serde_json::to_string(name)?, name.to_owned()));
+    }
+    Err("missing workspace".into())
+}
+
 fn restore(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let monitors: Vec<serde_json::Value> = serde_json::from_str(&hyprland("j/monitors")?)?;
     let monitor = monitors
         .iter()
         .find(|monitor| monitor["name"].as_str() == Some(name))
         .ok_or("monitor disappeared")?;
-    let (workspace, legacy_workspace) =
-        if monitor["specialWorkspace"]["id"].as_i64().unwrap_or(0) != 0 {
-            let name = monitor["specialWorkspace"]["name"]
-                .as_str()
-                .ok_or("missing workspace")?;
-            (serde_json::to_string(name)?, name.to_owned())
-        } else {
-            let name = monitor["activeWorkspace"]["id"]
-                .as_i64()
-                .ok_or("missing workspace")?
-                .to_string();
-            (name.clone(), name)
-        };
+    let (workspace, legacy_workspace) = restore_workspace(monitor)?;
     dispatch(
         &format!(
             "hl.dsp.window.move({{workspace = {workspace}, follow = false, window = \"pid:{}\"}})",
@@ -987,5 +999,47 @@ mod app_search_path_tests {
             assert_eq!(shlex::split(&app.command).unwrap(), vec![app.id]);
         }
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod restore_workspace_tests {
+    use super::restore_workspace;
+    use serde_json::json;
+
+    #[test]
+    fn prefers_open_special_workspace_without_numeric_id() {
+        let monitor = json!({
+            "activeWorkspace": { "address": "1", "id": 1, "type": "normal", "name": "1" },
+            "specialWorkspace": { "address": "special:magic", "type": "special", "name": "special:magic" }
+        });
+        assert_eq!(
+            restore_workspace(&monitor).unwrap(),
+            ("\"special:magic\"".to_owned(), "special:magic".to_owned())
+        );
+    }
+
+    #[test]
+    fn falls_back_to_active_workspace_when_special_workspace_name_is_empty() {
+        let monitor = json!({
+            "activeWorkspace": { "address": "2", "id": 2, "type": "normal", "name": "2" },
+            "specialWorkspace": { "address": "", "type": "", "name": "" }
+        });
+        assert_eq!(
+            restore_workspace(&monitor).unwrap(),
+            ("2".to_owned(), "2".to_owned())
+        );
+    }
+
+    #[test]
+    fn falls_back_to_named_active_workspace_without_numeric_id() {
+        let monitor = json!({
+            "activeWorkspace": { "address": "name:work", "type": "named", "name": "work" },
+            "specialWorkspace": { "id": 0 }
+        });
+        assert_eq!(
+            restore_workspace(&monitor).unwrap(),
+            ("\"name:work\"".to_owned(), "name:work".to_owned())
+        );
     }
 }

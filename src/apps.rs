@@ -96,6 +96,9 @@ enum Action {
     RunScript(String, String),
     Search(String),
     SearchWeb(String, String),
+    PasteSearch,
+    ClearSearchImage,
+    SearchImage(String),
     RunPrefix(String, String),
     SaveNamedCommand(String, String, String, String, String, String),
     DeleteNamedCommand(String),
@@ -139,14 +142,9 @@ struct Apps {
     inventory: Inventory,
     installed_filter: String,
     query: String,
-    search_paths: Option<Vec<SearchPathResult>>,
+    search_paths: Option<Vec<crate::search_paths::SearchPathResult>>,
+    search_image: Option<Vec<u8>>,
     recent: recent::Recent,
-}
-
-struct SearchPathResult {
-    name: String,
-    path: String,
-    directory: bool,
 }
 
 impl Action {
@@ -227,6 +225,7 @@ pub fn connect(launcher: &Launcher) {
             installed_filter: String::new(),
             query: String::new(),
             search_paths: None,
+            search_image: None,
             recent,
         };
         let banner = apps.load_icons().err().unwrap_or(banner);
@@ -267,7 +266,7 @@ pub fn connect(launcher: &Launcher) {
             };
             let launching = recent_id.is_some()
                 || matches!(action, Action::OpenResult(ref item) if item.source < 0)
-                || matches!(action, Action::SearchWeb(..))
+                || matches!(action, Action::SearchWeb(..) | Action::SearchImage(..))
                 || matches!(action, Action::RunPrefix(..) | Action::RunScript(..));
             let saving = matches!(
                 action,
@@ -302,6 +301,8 @@ pub fn connect(launcher: &Launcher) {
             let ink_action = matches!(action, Action::AddInk(..) | Action::EraseInk(..));
             let script_edit = matches!(action, Action::SaveScript(..) | Action::DeleteScript(..));
             let script_run = matches!(action, Action::RunScript(..));
+            let search_image_run = matches!(action, Action::SearchImage(..));
+            let paste_search = matches!(action, Action::PasteSearch);
             let save_action = matches!(
                 action,
                 Action::SaveNamedCommand(..) | Action::DeleteNamedCommand(..)
@@ -327,6 +328,7 @@ pub fn connect(launcher: &Launcher) {
                 );
             let choosing = matches!(action, Action::ChoosePath(..) | Action::ChooseScript);
             let update = !choosing
+                && !matches!(action, Action::PasteSearch | Action::ClearSearchImage)
                 && (!launching || matches!(action, Action::OpenResult(..) | Action::OpenDock(..)));
             let refreshing = matches!(action, Action::RefreshInstalledApps(_));
             let filtering = matches!(action, Action::FilterInstalled(_));
@@ -477,14 +479,20 @@ pub fn connect(launcher: &Launcher) {
                     ui.set_script_error(error.into());
                 });
             }
-            if script_run && let Err(error) = &result {
+            if (script_run || search_image_run || paste_search)
+                && let Err(error) = &result
+            {
                 let error = error.clone();
                 let _ =
                     weak.upgrade_in_event_loop(move |ui| crate::toast::error(&ui.as_weak(), error));
             }
+            if search_image_run && success {
+                apps.search_image = None;
+                let _ = weak.upgrade_in_event_loop(|ui| ui.invoke_search_image_finished());
+            }
             finish(
                 &weak,
-                if script_edit || script_run {
+                if script_edit || script_run || search_image_run || paste_search {
                     String::new()
                 } else {
                     result.err().unwrap_or_default()
@@ -535,7 +543,7 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        match_prefix(&prefixes, &text).unwrap_or(PrefixMatch {
+        crate::search_paths::match_prefix(&prefixes, &text).unwrap_or(PrefixMatch {
             action_id: "".into(),
             name: "".into(),
             query: "".into(),
@@ -690,6 +698,18 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     let sender = send.clone();
     launcher.on_search_web(move |query, engine| {
         let _ = sender.send(Action::SearchWeb(query.into(), engine.into()));
+    });
+    let sender = send.clone();
+    launcher.on_paste_search(move || {
+        let _ = sender.send(Action::PasteSearch);
+    });
+    let sender = send.clone();
+    launcher.on_clear_search_image(move || {
+        let _ = sender.send(Action::ClearSearchImage);
+    });
+    let sender = send.clone();
+    launcher.on_search_image_query(move |query| {
+        let _ = sender.send(Action::SearchImage(query.into()));
     });
     let sender = send.clone();
     launcher.on_save_user_action(move |id, name, kind, source, description, tokens| {
@@ -1119,17 +1139,11 @@ impl Apps {
                 self.edit_canvas(command, &selection, x, y, weak)
             }
             Action::Canvas(change) => crate::canvas::apply(&mut self.config, change),
-            Action::SaveLayoutLocked(locked) => {
-                if self.config.layout_locked != locked {
-                    let mut config = self.config.clone();
-                    config.layout_locked = locked;
-                    config
-                        .save()
-                        .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-                    self.config = config;
-                }
-                Ok(())
-            }
+            Action::SaveLayoutLocked(locked) => self.save_config(|config| {
+                let changed = config.layout_locked != locked;
+                config.layout_locked = locked;
+                Ok(changed)
+            }),
             Action::SaveFrame(id, name, keys, selected) => {
                 self.save_frame(&id, name, keys, &selected)
             }
@@ -1149,68 +1163,16 @@ impl Apps {
             Action::SaveAnnotation(id, text, kind, style, x, y, width) => {
                 self.save_annotation(&id, text, kind, style, (x, y, width), weak)
             }
-            Action::StyleSelection(ids, style) => {
-                if !style.valid() {
-                    return Err("Invalid style".into());
-                }
-                let mut config = self.config.clone();
-                for item in &mut config.items {
-                    if let Item::Annotation {
-                        id, style: saved, ..
-                    } = item
-                        && ids.contains(id)
-                    {
-                        *saved = style.clone();
-                    }
-                }
-                if config.items != self.config.items {
-                    for item in &config.items {
-                        if let Item::Annotation {
-                            id,
-                            kind: 2,
-                            name,
-                            style,
-                            rich_text,
-                            ..
-                        } = item
-                            && ids.contains(id)
-                            && let Some(rect) = config.positions.get(id).copied()
-                        {
-                            let mut doc = rich_text
-                                .clone()
-                                .unwrap_or_else(|| crate::canvas_text::Document::plain(name));
-                            if rich_text.is_none() {
-                                doc.width = (rect.width as f32 - config.grid_gap as f32).max(16.0);
-                            }
-                            let view =
-                                crate::canvas_text::cached_render(&doc, style.size, &style.color);
-                            let (width, height) =
-                                crate::canvas_text::bounds(view.width, view.height, &doc);
-                            let rect = crate::spatial::Rect {
-                                width: width + config.grid_gap as usize,
-                                height: height + config.grid_gap as usize,
-                                ..rect
-                            };
-                            crate::spatial::place(&crate::spatial::occupied(&config), id, rect)
-                                .ok_or("Text does not fit here")?;
-                            config.positions.insert(id.clone(), rect);
-                        }
-                    }
-                    self.commit(config)?;
-                }
-                Ok(())
-            }
+            Action::StyleSelection(ids, style) => self.style_selection(&ids, style),
             Action::SaveFontSize(size) => {
                 if !(10..=24).contains(&size) {
                     return Err("Font size must be 10–24 px".into());
                 }
-                if self.config.font_size != size {
-                    let mut config = self.config.clone();
+                self.save_config(|config| {
+                    let changed = config.font_size != size;
                     config.font_size = size;
-                    config.save().map_err(|e| e.to_string())?;
-                    self.config = config;
-                }
-                Ok(())
+                    Ok(changed)
+                })
             }
             Action::AddInk(points, style) => self.add_ink(points, style),
             Action::EraseInk(points) => self.erase_ink(&points),
@@ -1261,21 +1223,7 @@ impl Apps {
                 });
                 Ok(())
             }
-            Action::RunScript(id, text) => {
-                let script = self
-                    .config
-                    .scripts
-                    .iter()
-                    .find(|script| script.id == id)
-                    .ok_or("Script is missing")?;
-                let (filter, argument) =
-                    crate::scripts::query(&text).ok_or("Script query is missing")?;
-                if !script.name.to_lowercase().contains(&filter.to_lowercase()) {
-                    return Err("Script no longer matches".into());
-                }
-                platform::launch_script(std::path::Path::new(&script.path), argument)
-                    .map_err(|error| format!("Couldn't run '{}': {error}", script.name))
-            }
+            Action::RunScript(id, text) => self.run_script(&id, &text),
             Action::Search(query) => {
                 self.query = query.to_lowercase();
                 if !self.query.is_empty() && !self.query.starts_with('/') {
@@ -1285,195 +1233,74 @@ impl Apps {
                 Ok(())
             }
             Action::SearchWeb(query, engine) => {
-                let url = url_action_url(self.config.search_engine_template(&engine), &query)?;
+                let url = crate::search_paths::url_action_url(
+                    self.config.search_engine_template(&engine),
+                    &query,
+                )?;
                 open_url(&url).map_err(|error| format!("Couldn't open web search: {error}"))
             }
-            Action::SaveSmoothCursor(enabled) => {
-                if self.config.smooth_cursor != enabled {
-                    let mut config = self.config.clone();
-                    config.smooth_cursor = enabled;
-                    config
-                        .save()
-                        .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-                    self.config = config;
+            Action::PasteSearch => match platform::clipboard_image()? {
+                Some(data) => {
+                    let thumb = decode_bounded_image(&data, "clipboard.png", 80)?;
+                    self.search_image = Some(data);
+                    weak.upgrade_in_event_loop(move |ui| {
+                        ui.invoke_set_search_image(slint::Image::from_rgba8(thumb));
+                    })
+                    .map_err(|error| error.to_string())
                 }
+                None => weak
+                    .upgrade_in_event_loop(move |ui| crate::search_edit::paste(&ui))
+                    .map_err(|error| error.to_string()),
+            },
+            Action::ClearSearchImage => {
+                self.search_image = None;
                 Ok(())
             }
+            Action::SearchImage(query) => {
+                let Some(image) = self.search_image.clone() else {
+                    return Err("Paste an image before searching".into());
+                };
+                let url = crate::image_search::start_lens_handoff(image, &query)?;
+                open_url(&url).map_err(|error| format!("Couldn't search image: {error}"))
+            }
+            Action::SaveSmoothCursor(enabled) => self.save_config(|config| {
+                let changed = config.smooth_cursor != enabled;
+                config.smooth_cursor = enabled;
+                Ok(changed)
+            }),
             Action::SaveDefaultSearchEngine(index) => {
                 let index =
                     usize::try_from(index).map_err(|_| "Choose a supported search engine")?;
                 let id =
                     Config::search_engine_id(index).ok_or("Choose a supported search engine")?;
-                let mut config = self.config.clone();
-                config.default_search_engine = id.into();
-                config
-                    .save()
-                    .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-                self.config = config;
-                Ok(())
+                self.save_config(|config| {
+                    config.default_search_engine = id.into();
+                    Ok(true)
+                })
             }
             Action::SaveNamedCommand(id, name, kind, source, description, tokens) => {
-                let kind = match kind.as_str() {
-                    "URL" => ActionKind::Url,
-                    "TickTick" => ActionKind::TickTick,
-                    _ => ActionKind::Shell,
-                };
-                if name.trim().is_empty()
-                    || (kind == ActionKind::Url && !source.contains("%s"))
-                    || (kind == ActionKind::Shell && source.trim().is_empty())
-                {
-                    return Err("Enter a valid Action name and command".into());
-                }
-                let mut config = self.config.clone();
-                let id = if id.is_empty() { new_id()? } else { id };
-                let tokens = tokens
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|token| !token.is_empty())
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>();
-                let mut seen = std::collections::HashSet::new();
-                if tokens.iter().any(|token| {
-                    token.starts_with('/')
-                        || token.chars().any(char::is_whitespace)
-                        || !seen.insert(token.to_lowercase())
-                        || config.prefixes.iter().any(|prefix| {
-                            prefix.action_id != id && prefix.token.eq_ignore_ascii_case(token)
-                        })
-                }) {
-                    return Err(
-                        "Tokens must be unique, contain no spaces and cannot start with /".into(),
-                    );
-                }
-                let action = UserAction {
-                    id: id.clone(),
-                    name: name.trim().into(),
-                    kind,
-                    source,
-                    description: description.trim().into(),
-                };
-                if let Some(existing) = config.user_actions.iter_mut().find(|item| item.id == id) {
-                    *existing = action;
-                } else {
-                    config.user_actions.push(action);
-                }
-                let insert_at = config
-                    .prefixes
-                    .iter()
-                    .position(|prefix| prefix.action_id == id)
-                    .unwrap_or(config.prefixes.len());
-                let new_prefixes = tokens
-                    .into_iter()
-                    .map(|token| {
-                        let previous = config
-                            .prefixes
-                            .iter()
-                            .find(|prefix| prefix.action_id == id && prefix.token == token);
-                        let prefix_id =
-                            previous.map_or_else(new_id, |prefix| Ok(prefix.id.clone()));
-                        prefix_id.map(|prefix_id| Prefix {
-                            id: prefix_id,
-                            name: name.trim().into(),
-                            token,
-                            action_id: id.clone(),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, String>>()?;
-                config.prefixes.retain(|prefix| prefix.action_id != id);
-                config.prefixes.splice(
-                    insert_at.min(config.prefixes.len())..insert_at.min(config.prefixes.len()),
-                    new_prefixes,
-                );
-                config
-                    .save()
-                    .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-                self.config = config;
-                Ok(())
+                self.save_user_action(id, &name, &kind, source, &description, &tokens)
             }
-            Action::DeleteNamedCommand(id) => {
-                let mut config = self.config.clone();
+            Action::DeleteNamedCommand(id) => self.save_config(|config| {
                 if config.prefixes.iter().any(|prefix| prefix.action_id == id) {
                     return Err("Edit or remove the Prefixes that use this Action first".into());
                 }
+                let before = config.user_actions.len();
                 config.user_actions.retain(|action| action.id != id);
-                if config.user_actions.len() == self.config.user_actions.len() {
+                if config.user_actions.len() == before {
                     return Err("Action is missing".into());
                 }
-                config
-                    .save()
-                    .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-                self.config = config;
-                Ok(())
-            }
+                Ok(true)
+            }),
             Action::SavePrefix(id, name, token, action_id) => {
-                let token = token.trim();
-                if token.starts_with('/')
-                    || token.is_empty()
-                    || token.chars().any(char::is_whitespace)
-                    || name.trim().is_empty()
-                {
-                    return Err(
-                        "Enter a Prefix name and a Token without spaces or a leading /".into(),
-                    );
-                }
-                let mut config = self.config.clone();
-                let id = if id.is_empty() { new_id()? } else { id };
-                let prefix = Prefix {
-                    id: id.clone(),
-                    name: name.trim().into(),
-                    token: token.into(),
-                    action_id,
-                };
-                if let Some(existing) = config.prefixes.iter_mut().find(|item| item.id == id) {
-                    *existing = prefix;
-                } else {
-                    config.prefixes.push(prefix);
-                }
-                if !config.valid() {
-                    return Err("That Token is already in use or its Action is missing".into());
-                }
-                config
-                    .save()
-                    .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-                self.config = config;
-                Ok(())
+                self.save_prefix(id, &name, &token, action_id)
             }
-            Action::DeletePrefix(id) => {
-                let mut config = self.config.clone();
+            Action::DeletePrefix(id) => self.save_config(|config| {
                 config.prefixes.retain(|prefix| prefix.id != id);
-                config
-                    .save()
-                    .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-                self.config = config;
-                Ok(())
-            }
-
+                Ok(true)
+            }),
             Action::RunPrefix(action_id, argument) => {
-                let action = self
-                    .config
-                    .user_actions
-                    .iter()
-                    .find(|action| action.id == action_id)
-                    .ok_or("Action is missing")?;
-                match &action.kind {
-                    ActionKind::Url => {
-                        let query = argument.trim();
-                        let url = if action.id == "browser-search" {
-                            browser_search_url(&action.source, query)?
-                        } else {
-                            url_action_url(&action.source, query)?
-                        };
-                        open_url(&url)
-                            .map_err(|error| format!("Couldn't open {}: {error}", action.name))
-                    }
-                    ActionKind::Shell => {
-                        platform::launch_shell_action(&action.source, argument.trim())
-                            .map_err(|error| format!("Couldn't start {}: {error}", action.name))
-                    }
-                    ActionKind::TickTick => create_ticktick_task(argument.trim())
-                        .map(|_| ())
-                        .map_err(|error| format!("Couldn't create TickTick task: {error}")),
-                }
+                self.run_prefix(&action_id, &argument, open_url)
             }
             Action::FilterInstalled(filter) => {
                 self.installed_filter = filter;
@@ -1499,25 +1326,7 @@ impl Apps {
                 }
                 self.load_icons()
             }
-            Action::Pin(id) => {
-                if self.config.pinned.contains(&id) {
-                    return self.unpin(&id, weak);
-                }
-                let Some(item) = self
-                    .config
-                    .items
-                    .iter()
-                    .find(|item| item.id() == id)
-                    .cloned()
-                else {
-                    return Ok(());
-                };
-                let mut config = self.config.clone();
-                if !crate::item_drop::place_search_result(&mut config, item, None, true) {
-                    return Err("Item cannot be pinned; the Dock may be full".into());
-                }
-                self.commit(config)
-            }
+            Action::Pin(id) => self.pin_item(&id, weak),
             Action::Unpin(id) => self.unpin(&id, weak),
             Action::RemoveRecent(id) => {
                 self.recent.remove(&id);
@@ -1543,8 +1352,7 @@ impl Apps {
             }
             Action::Delete(index) => self.delete(&index, weak),
             Action::Open(index) => self.open_item(&index, weak),
-            Action::SelectTickTickList(widget_id, project_id) => {
-                let mut config = self.config.clone();
+            Action::SelectTickTickList(widget_id, project_id) => self.save_config(|config| {
                 let widget = config
                     .items
                     .iter_mut()
@@ -1557,13 +1365,11 @@ impl Apps {
                 } = widget
                 {
                     *ticktick_project_id = project_id;
+                    Ok(true)
                 } else {
-                    return Err("Widget is missing".into());
+                    Err("Widget is missing".into())
                 }
-                config.save().map_err(|error| error.to_string())?;
-                self.config = config;
-                Ok(())
-            }
+            }),
             Action::OpenFolder(index) => {
                 self.open_folder = Some(index);
                 Ok(())
@@ -1588,306 +1394,41 @@ impl Apps {
                 Ok(())
             }
             Action::Widget(variant, col, row, auto) => {
-                let (col, row) = if auto { self.add_position } else { (col, row) };
-                if !matches!(variant, 7..=18 | 21) {
-                    return Err("Unknown widget type".into());
-                }
-                let id = new_id()?;
-                let mut config = self.config.clone();
-                let (width, height) = crate::spatial::WIDGET_SPANS[variant];
-                let rect = crate::spatial::Rect {
-                    col,
-                    row,
-                    width: crate::spatial::widget_span(width, config.item_size, config.grid_gap),
-                    height: crate::spatial::widget_span(height, config.item_size, config.grid_gap),
-                };
-                let occupied = crate::spatial::occupied(&config);
-                let rect = if auto {
-                    crate::spatial::nearby(&occupied, rect)?
-                } else {
-                    crate::spatial::place(&occupied, &id, rect)
-                        .ok_or("Widget does not fit here")?;
-                    rect
-                };
-                config.positions.insert(id.clone(), rect);
-                config.items.push(Item::Widget {
-                    id: id.clone(),
-                    name: crate::spatial::WIDGETS[variant].into(),
-                    text: crate::spatial::WIDGETS[variant].into(),
-                    variant,
-                    ticktick_project_id: String::new(),
-                    min_number: 1,
-                    max_number: 100,
-                });
-                self.commit(config)?;
-                self.reveal(&id, weak);
-                Ok(())
+                self.add_widget(variant, col, row, auto, weak)
             }
-            Action::DuplicateWidget(id) => {
-                let Some(Item::Widget {
-                    name,
-                    text,
-                    variant,
-                    ticktick_project_id,
-                    min_number,
-                    max_number,
-                    ..
-                }) = self
-                    .config
-                    .items
-                    .iter()
-                    .find(|item| item.id() == id)
-                    .cloned()
-                else {
-                    return Ok(());
-                };
-                let mut config = self.config.clone();
-                let rect = config
-                    .positions
-                    .get(&id)
-                    .copied()
-                    .ok_or("Widget is missing")?;
-                let rect = crate::spatial::nearby(&crate::spatial::occupied(&config), rect)?;
-                let id = new_id()?;
-                config.positions.insert(id.clone(), rect);
-                config.items.push(Item::Widget {
-                    id: id.clone(),
-                    name,
-                    text,
-                    variant,
-                    ticktick_project_id,
-                    min_number,
-                    max_number,
-                });
-                self.commit(config)?;
-                self.reveal(&id, weak);
-                Ok(())
-            }
-            Action::ResizeItem(id, width, height) => {
-                let mut config = self.config.clone();
-                if let Some(rect) = config.positions.get(&id).copied() {
-                    let item = config.items.iter().find(|item| item.id() == id);
-                    let image = is_image(item);
-                    let span = |cells| {
-                        crate::spatial::widget_span(cells, config.item_size, config.grid_gap)
-                    };
-                    let (min_width, min_height, max_width, max_height) = match item {
-                        Some(Item::Widget { variant, .. }) => {
-                            let (min_width, min_height) =
-                                crate::spatial::WIDGET_MIN_SPANS[*variant];
-                            let (max_width, max_height) =
-                                crate::spatial::WIDGET_MAX_SPANS[*variant];
-                            (
-                                span(min_width),
-                                span(min_height),
-                                span(max_width),
-                                span(max_height),
-                            )
-                        }
-                        Some(Item::Annotation { kind: 3, .. }) => {
-                            let max_span = span(crate::spatial::ANNOTATION_MAX_SPAN);
-                            (span(crate::spatial::IMAGE_MIN_SPAN), 1, max_span, max_span)
-                        }
-                        Some(Item::Annotation { kind: 2, .. }) => {
-                            let min_span = crate::spatial::text_min_span(config.grid_gap);
-                            let max_span = span(crate::spatial::ANNOTATION_MAX_SPAN);
-                            (min_span, min_span, max_span, max_span)
-                        }
-                        _ => return Err("Widget is missing".into()),
-                    };
-                    let height = if image {
-                        image_size(self.icons.get(&id), width)
-                    } else {
-                        height
-                    };
-                    if width < min_width
-                        || height < min_height
-                        || width > max_width
-                        || height > max_height
-                    {
-                        return Err(if image {
-                            "This image cannot be resized to that size"
-                        } else if matches!(item, Some(Item::Annotation { kind: 2, .. })) {
-                            "This text cannot be resized to that size"
-                        } else {
-                            "This widget cannot be resized to that size"
-                        }
-                        .into());
-                    }
-                    let rect = crate::spatial::Rect {
-                        width,
-                        height,
-                        ..rect
-                    };
-                    let positions =
-                        crate::spatial::place(&crate::spatial::occupied(&config), &id, rect)
-                            .ok_or(if image {
-                                "This image does not fit here"
-                            } else if matches!(item, Some(Item::Annotation { kind: 2, .. })) {
-                                "Text does not fit here"
-                            } else {
-                                "Widget does not fit here"
-                            })?;
-                    config.positions.extend(positions);
-                }
-                config.save().map_err(|e| e.to_string())?;
-                self.config = config;
-                Ok(())
-            }
-            Action::SaveAppearance(size, gap, speed) => {
-                let mut config = self.config.clone();
-                let old_gap = config.grid_gap.clamp(0, 64) as u64;
-                let new_gap = gap.clamp(0, 64) as u64;
-                let old_pitch =
-                    crate::spatial::cell_pitch(config.item_size, config.grid_gap) as u64;
-                let old_size = config.item_size.max(1) as u64;
-                let new_size = size.clamp(80, 176) as u64;
-                let new_pitch = crate::spatial::cell_pitch(size.clamp(80, 176), gap) as u64;
-                if old_pitch != new_pitch {
-                    let widgets: HashSet<_> = config
-                        .items
-                        .iter()
-                        .filter_map(|item| match item {
-                            Item::Widget { id, .. } => Some(id.as_str()),
-                            _ => None,
-                        })
-                        .collect();
-                    for (id, rect) in &mut config.positions {
-                        rect.col = i32::try_from(
-                            i64::from(rect.col) * new_pitch as i64 / old_pitch as i64,
-                        )
-                        .map_err(|_| "Canvas position is too far away for that item size")?;
-                        rect.row = i32::try_from(
-                            i64::from(rect.row) * new_pitch as i64 / old_pitch as i64,
-                        )
-                        .map_err(|_| "Canvas position is too far away for that item size")?;
-                        if widgets.contains(id.as_str()) {
-                            rect.width = (rect.width.saturating_sub(old_gap as usize) as u64
-                                * new_size
-                                / old_size
-                                + new_gap) as usize;
-                            rect.height = (rect.height.saturating_sub(old_gap as usize) as u64
-                                * new_size
-                                / old_size
-                                + new_gap) as usize;
-                        } else {
-                            rect.width = (rect.width as u64 * new_pitch / old_pitch) as usize;
-                            rect.height = (rect.height as u64 * new_pitch / old_pitch) as usize;
-                        }
-                    }
-                }
-                config.item_size = size.clamp(80, 176);
-                config.grid_gap = gap.clamp(0, 64);
-                config.canvas_speed = speed.clamp(1, 10);
-                crate::spatial::reconcile(&mut config)?;
-                config.save().map_err(|error| error.to_string())?;
-                self.config = config;
-                Ok(())
-            }
+            Action::DuplicateWidget(id) => self.duplicate_widget(&id, weak),
+            Action::ResizeItem(id, width, height) => self.resize_item(&id, width, height),
+            Action::SaveAppearance(size, gap, speed) => self.save_appearance(size, gap, speed),
             Action::SaveBackgroundFolder(path) => {
                 let path = PathBuf::from(path.trim());
                 if !path.is_dir() {
                     return Err("Choose an existing image folder".into());
                 }
-                let mut config = self.config.clone();
-                config.background_folder = path.to_string_lossy().into_owned();
-                config.save().map_err(|error| error.to_string())?;
-                self.config = config;
-                Ok(())
+                self.save_config(|config| {
+                    config.background_folder = path.to_string_lossy().into_owned();
+                    Ok(true)
+                })
             }
-            Action::ChangeBackground => {
-                let mut images: Vec<_> = std::fs::read_dir(&self.config.background_folder)
-                    .map_err(|error| format!("Couldn't read image folder: {error}"))?
-                    .flatten()
-                    .map(|entry| entry.path())
-                    .filter(|path| {
-                        path.is_file()
-                            && path.extension().is_some_and(|ext| {
-                                matches!(
-                                    ext.to_string_lossy().to_ascii_lowercase().as_str(),
-                                    "png" | "jpg" | "jpeg" | "svg"
-                                )
-                            })
-                    })
-                    .collect();
-                images.sort();
-                if images.is_empty() {
-                    return Err("No supported images in the image folder".into());
-                }
-                let mut pick = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .subsec_nanos() as usize
-                    % images.len();
-                if images.len() > 1
-                    && images[pick].to_string_lossy() == self.config.background_image
-                {
-                    pick = (pick + 1) % images.len();
-                }
-                if read_background_image(&images[pick]).is_none() {
-                    return Err("Couldn't read background image".into());
-                }
-                let mut config = self.config.clone();
-                config.background_image = images[pick].to_string_lossy().into_owned();
-                config.background_color.clear();
-                config.save().map_err(|error| error.to_string())?;
-                self.config = config;
-                Ok(())
-            }
-            Action::ChooseBackgroundImage => {
-                if let Some(path) = platform::choose_background_image() {
-                    let (name, data) = platform::read_chosen_icon(&path.to_string_lossy())?;
-                    if read_background_image(&path).is_none() {
-                        return Err("Couldn't read background image".into());
-                    }
-                    let saved_path =
-                        platform::icon_path(&name).map_err(|error| error.to_string())?;
-                    platform::write_icon(&name, &data).map_err(|error| error.to_string())?;
-                    let mut config = self.config.clone();
-                    config.background_image = saved_path.to_string_lossy().into_owned();
-                    config.background_color.clear();
-                    config.save().map_err(|error| error.to_string())?;
-                    self.config = config;
-                }
-                Ok(())
-            }
+            Action::ChangeBackground => self.change_background(),
+            Action::ChooseBackgroundImage => self.choose_background_image(),
             Action::SaveShortcut(index, action, keys) => self.save_shortcut(index, action, keys),
-            Action::DeleteShortcut(action, keys) => {
-                let mut config = self.config.clone();
-                if let Some(index) = config
+            Action::DeleteShortcut(action, keys) => self.save_config(|config| {
+                let Some(index) = config
                     .shortcuts
                     .iter()
                     .position(|binding| binding.action == action && binding.keys == keys)
-                {
-                    config.shortcuts.remove(index);
-                    config.save().map_err(|error| error.to_string())?;
-                    self.config = config;
-                }
-                Ok(())
-            }
+                else {
+                    return Ok(false);
+                };
+                config.shortcuts.remove(index);
+                Ok(true)
+            }),
             Action::Drop(id, col, row, into) => self.drop_item(&id, col, row, &into, weak),
             Action::AddPredefined(action, request) => {
                 self.add_system_action(&action, requests, request)
             }
             Action::AddInstalledApp(id, request) => self.add_installed_app(&id, requests, request),
-            Action::SaveAppSearchPath(path, remove) => {
-                let path = PathBuf::from(path.trim());
-                if !remove && !platform::validate_app_search_path(&path) {
-                    return Err("Enter an existing absolute directory or executable path".into());
-                }
-                let path = path.to_string_lossy().into_owned();
-                let mut config = self.config.clone();
-                if remove {
-                    config.app_search_paths.retain(|saved| saved != &path);
-                } else if !config.app_search_paths.contains(&path) {
-                    config.app_search_paths.push(path);
-                }
-                if config.app_search_paths != self.config.app_search_paths {
-                    config.save().map_err(|error| error.to_string())?;
-                    self.config = config;
-                }
-                Ok(())
-            }
+            Action::SaveAppSearchPath(path, remove) => self.save_app_search_path(&path, remove),
             Action::RefreshInstalledApps(request) => self.refresh_installed_apps(requests, request),
             Action::SaveSearchPath(directory, index, path) => {
                 self.save_search_path(directory, index, path)
@@ -1898,67 +1439,7 @@ impl Apps {
             Action::SaveWebsite(index, name, url, draft, request) => {
                 self.save_website(&index, name, url, draft, requests, request)
             }
-            Action::TransferData(import) => {
-                let mut result = platform::transfer_data(import);
-                if import && matches!(&result, Ok(Some(_))) {
-                    self.config = config::load().0;
-                    self.edits = Default::default();
-                    let canvas = self.config.canvas.clone();
-                    let _ = weak
-                        .upgrade_in_event_loop(move |ui| crate::canvas::sync(&ui, &canvas, true));
-                    self.recent = recent::Recent::load().0;
-                    self.inventory = Inventory::load().0;
-                    self.open_folder = None;
-                    self.query.clear();
-                    self.installed_filter.clear();
-                    self.search_paths = None;
-                    self.icons.clear();
-                    if let Err(error) = self.load_icons() {
-                        result = Err(error);
-                    }
-                }
-                let (status, feedback) = match result {
-                    Ok(Some(status)) => (
-                        status,
-                        Some((
-                            if import {
-                                "Data imported"
-                            } else {
-                                "Data exported"
-                            },
-                            true,
-                        )),
-                    ),
-                    Ok(None) => (String::new(), None),
-                    Err(error) => {
-                        eprintln!("orbit backup transfer: {error}");
-                        (
-                            error,
-                            Some((
-                                if import {
-                                    "Couldn't import data"
-                                } else {
-                                    "Couldn't export data"
-                                },
-                                false,
-                            )),
-                        )
-                    }
-                };
-                let _ = weak.upgrade_in_event_loop(move |launcher| {
-                    if let Err(error) = platform::restore_after_chooser(&launcher) {
-                        eprintln!("orbit: {error}");
-                        crate::toast::error(&launcher.as_weak(), "Couldn't return to the Launcher");
-                    } else if let Some((message, true)) = feedback {
-                        crate::toast::success(&launcher.as_weak(), message);
-                    } else if let Some((message, false)) = feedback {
-                        crate::toast::error(&launcher.as_weak(), message);
-                    }
-                    launcher.set_data_status(status.into());
-                    launcher.set_data_busy(false);
-                });
-                Ok(())
-            }
+            Action::TransferData(import) => self.transfer_data(import, weak),
             Action::ChoosePath(directory, request) => {
                 let Some(path) = platform::choose_path(directory) else {
                     return Ok(());
@@ -1976,6 +1457,564 @@ impl Apps {
                 self.save_path(&index, path, directory, svg)
             }
         }
+    }
+
+    fn style_selection(&mut self, ids: &[String], style: crate::ink::Style) -> Result<(), String> {
+        if !style.valid() {
+            return Err("Invalid style".into());
+        }
+        let mut config = self.config.clone();
+        for item in &mut config.items {
+            if let Item::Annotation {
+                id, style: saved, ..
+            } = item
+                && ids.contains(id)
+            {
+                *saved = style.clone();
+            }
+        }
+        if config.items == self.config.items {
+            return Ok(());
+        }
+        for item in &config.items {
+            if let Item::Annotation {
+                id,
+                kind: 2,
+                name,
+                style,
+                rich_text,
+                ..
+            } = item
+                && ids.contains(id)
+                && let Some(rect) = config.positions.get(id).copied()
+            {
+                let mut doc = rich_text
+                    .clone()
+                    .unwrap_or_else(|| crate::canvas_text::Document::plain(name));
+                if rich_text.is_none() {
+                    doc.width = (rect.width as f32 - config.grid_gap as f32).max(16.0);
+                }
+                let view = crate::canvas_text::cached_render(&doc, style.size, &style.color);
+                let (width, height) = crate::canvas_text::bounds(view.width, view.height, &doc);
+                let rect = crate::spatial::Rect {
+                    width: width + config.grid_gap as usize,
+                    height: height + config.grid_gap as usize,
+                    ..rect
+                };
+                crate::spatial::place(&crate::spatial::occupied(&config), id, rect)
+                    .ok_or("Text does not fit here")?;
+                config.positions.insert(id.clone(), rect);
+            }
+        }
+        self.commit(config)
+    }
+
+    fn run_script(&self, id: &str, text: &str) -> Result<(), String> {
+        let script = self
+            .config
+            .scripts
+            .iter()
+            .find(|script| script.id == id)
+            .ok_or("Script is missing")?;
+        let (filter, argument) = crate::scripts::query(text).ok_or("Script query is missing")?;
+        if !script.name.to_lowercase().contains(&filter.to_lowercase()) {
+            return Err("Script no longer matches".into());
+        }
+        platform::launch_script(std::path::Path::new(&script.path), argument)
+            .map_err(|error| format!("Couldn't run '{}': {error}", script.name))
+    }
+
+    fn save_user_action(
+        &mut self,
+        id: String,
+        name: &str,
+        kind: &str,
+        source: String,
+        description: &str,
+        tokens: &str,
+    ) -> Result<(), String> {
+        let kind = match kind {
+            "URL" => ActionKind::Url,
+            "TickTick" => ActionKind::TickTick,
+            _ => ActionKind::Shell,
+        };
+        if name.trim().is_empty()
+            || (kind == ActionKind::Url && !source.contains("%s"))
+            || (kind == ActionKind::Shell && source.trim().is_empty())
+        {
+            return Err("Enter a valid Action name and command".into());
+        }
+        let id = if id.is_empty() { new_id()? } else { id };
+        let tokens = tokens
+            .split(',')
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        self.save_config(|config| {
+            let mut seen = std::collections::HashSet::new();
+            if tokens.iter().any(|token| {
+                token.starts_with('/')
+                    || token.chars().any(char::is_whitespace)
+                    || !seen.insert(token.to_lowercase())
+                    || config.prefixes.iter().any(|prefix| {
+                        prefix.action_id != id && prefix.token.eq_ignore_ascii_case(token)
+                    })
+            }) {
+                return Err(
+                    "Tokens must be unique, contain no spaces and cannot start with /".into(),
+                );
+            }
+            let action = UserAction {
+                id: id.clone(),
+                name: name.trim().into(),
+                kind,
+                source,
+                description: description.trim().into(),
+            };
+            if let Some(existing) = config.user_actions.iter_mut().find(|item| item.id == id) {
+                *existing = action;
+            } else {
+                config.user_actions.push(action);
+            }
+            let insert_at = config
+                .prefixes
+                .iter()
+                .position(|prefix| prefix.action_id == id)
+                .unwrap_or(config.prefixes.len());
+            let new_prefixes = tokens
+                .into_iter()
+                .map(|token| {
+                    let previous = config
+                        .prefixes
+                        .iter()
+                        .find(|prefix| prefix.action_id == id && prefix.token == token);
+                    let prefix_id = previous.map_or_else(new_id, |prefix| Ok(prefix.id.clone()));
+                    prefix_id.map(|prefix_id| Prefix {
+                        id: prefix_id,
+                        name: name.trim().into(),
+                        token,
+                        action_id: id.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            config.prefixes.retain(|prefix| prefix.action_id != id);
+            config.prefixes.splice(
+                insert_at.min(config.prefixes.len())..insert_at.min(config.prefixes.len()),
+                new_prefixes,
+            );
+            Ok(true)
+        })
+    }
+
+    fn save_prefix(
+        &mut self,
+        id: String,
+        name: &str,
+        token: &str,
+        action_id: String,
+    ) -> Result<(), String> {
+        let token = token.trim();
+        if token.starts_with('/')
+            || token.is_empty()
+            || token.chars().any(char::is_whitespace)
+            || name.trim().is_empty()
+        {
+            return Err("Enter a Prefix name and a Token without spaces or a leading /".into());
+        }
+        let id = if id.is_empty() { new_id()? } else { id };
+        let prefix = Prefix {
+            id: id.clone(),
+            name: name.trim().into(),
+            token: token.into(),
+            action_id,
+        };
+        self.save_config(|config| {
+            if let Some(existing) = config.prefixes.iter_mut().find(|item| item.id == id) {
+                *existing = prefix;
+            } else {
+                config.prefixes.push(prefix);
+            }
+            if !config.valid() {
+                return Err("That Token is already in use or its Action is missing".into());
+            }
+            Ok(true)
+        })
+    }
+
+    fn run_prefix(
+        &self,
+        action_id: &str,
+        argument: &str,
+        open_url: &UrlOpener<'_>,
+    ) -> Result<(), String> {
+        let action = self
+            .config
+            .user_actions
+            .iter()
+            .find(|action| action.id == action_id)
+            .ok_or("Action is missing")?;
+        match &action.kind {
+            ActionKind::Url => {
+                let query = argument.trim();
+                let url = if action.id == "browser-search" {
+                    crate::search_paths::browser_search_url(&action.source, query)?
+                } else {
+                    crate::search_paths::url_action_url(&action.source, query)?
+                };
+                open_url(&url).map_err(|error| format!("Couldn't open {}: {error}", action.name))
+            }
+            ActionKind::Shell => platform::launch_shell_action(&action.source, argument.trim())
+                .map_err(|error| format!("Couldn't start {}: {error}", action.name)),
+            ActionKind::TickTick => create_ticktick_task(argument.trim())
+                .map(|_| ())
+                .map_err(|error| format!("Couldn't create TickTick task: {error}")),
+        }
+    }
+
+    fn pin_item(&mut self, id: &str, weak: &slint::Weak<Launcher>) -> Result<(), String> {
+        if self.config.pinned.contains(&id.to_owned()) {
+            return self.unpin(id, weak);
+        }
+        let Some(item) = self
+            .config
+            .items
+            .iter()
+            .find(|item| item.id() == id)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let mut config = self.config.clone();
+        if !crate::item_drop::place_search_result(&mut config, item, None, true) {
+            return Err("Item cannot be pinned; the Dock may be full".into());
+        }
+        self.commit(config)
+    }
+
+    fn add_widget(
+        &mut self,
+        variant: usize,
+        col: i32,
+        row: i32,
+        auto: bool,
+        weak: &slint::Weak<Launcher>,
+    ) -> Result<(), String> {
+        let (col, row) = if auto { self.add_position } else { (col, row) };
+        if !matches!(variant, 7..=18 | 21) {
+            return Err("Unknown widget type".into());
+        }
+        let id = new_id()?;
+        let mut config = self.config.clone();
+        let (width, height) = crate::spatial::WIDGET_SPANS[variant];
+        let rect = crate::spatial::Rect {
+            col,
+            row,
+            width: crate::spatial::widget_span(width, config.item_size, config.grid_gap),
+            height: crate::spatial::widget_span(height, config.item_size, config.grid_gap),
+        };
+        let occupied = crate::spatial::occupied(&config);
+        let rect = if auto {
+            crate::spatial::nearby(&occupied, rect)?
+        } else {
+            crate::spatial::place(&occupied, &id, rect).ok_or("Widget does not fit here")?;
+            rect
+        };
+        config.positions.insert(id.clone(), rect);
+        config.items.push(Item::Widget {
+            id: id.clone(),
+            name: crate::spatial::WIDGETS[variant].into(),
+            text: crate::spatial::WIDGETS[variant].into(),
+            variant,
+            ticktick_project_id: String::new(),
+            min_number: 1,
+            max_number: 100,
+        });
+        self.commit(config)?;
+        self.reveal(&id, weak);
+        Ok(())
+    }
+
+    fn duplicate_widget(&mut self, id: &str, weak: &slint::Weak<Launcher>) -> Result<(), String> {
+        let Some(Item::Widget {
+            name,
+            text,
+            variant,
+            ticktick_project_id,
+            min_number,
+            max_number,
+            ..
+        }) = self
+            .config
+            .items
+            .iter()
+            .find(|item| item.id() == id)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let mut config = self.config.clone();
+        let rect = config
+            .positions
+            .get(id)
+            .copied()
+            .ok_or("Widget is missing")?;
+        let rect = crate::spatial::nearby(&crate::spatial::occupied(&config), rect)?;
+        let id = new_id()?;
+        config.positions.insert(id.clone(), rect);
+        config.items.push(Item::Widget {
+            id: id.clone(),
+            name,
+            text,
+            variant,
+            ticktick_project_id,
+            min_number,
+            max_number,
+        });
+        self.commit(config)?;
+        self.reveal(&id, weak);
+        Ok(())
+    }
+
+    fn resize_item(&mut self, id: &str, width: usize, height: usize) -> Result<(), String> {
+        let icons = &self.icons;
+        let mut config = self.config.clone();
+        if let Some(rect) = config.positions.get(id).copied() {
+            let item = config.items.iter().find(|item| item.id() == id);
+            let image = is_image(item);
+            let span =
+                |cells| crate::spatial::widget_span(cells, config.item_size, config.grid_gap);
+            let (min_width, min_height, max_width, max_height) = match item {
+                Some(Item::Widget { variant, .. }) => {
+                    let (min_width, min_height) = crate::spatial::WIDGET_MIN_SPANS[*variant];
+                    let (max_width, max_height) = crate::spatial::WIDGET_MAX_SPANS[*variant];
+                    (
+                        span(min_width),
+                        span(min_height),
+                        span(max_width),
+                        span(max_height),
+                    )
+                }
+                Some(Item::Annotation { kind: 3, .. }) => {
+                    let max_span = span(crate::spatial::ANNOTATION_MAX_SPAN);
+                    (span(crate::spatial::IMAGE_MIN_SPAN), 1, max_span, max_span)
+                }
+                Some(Item::Annotation { kind: 2, .. }) => {
+                    let min_span = crate::spatial::text_min_span(config.grid_gap);
+                    let max_span = span(crate::spatial::ANNOTATION_MAX_SPAN);
+                    (min_span, min_span, max_span, max_span)
+                }
+                _ => return Err("Widget is missing".into()),
+            };
+            let height = if image {
+                image_size(icons.get(id), width)
+            } else {
+                height
+            };
+            if width < min_width || height < min_height || width > max_width || height > max_height
+            {
+                return Err(if image {
+                    "This image cannot be resized to that size"
+                } else if matches!(item, Some(Item::Annotation { kind: 2, .. })) {
+                    "This text cannot be resized to that size"
+                } else {
+                    "This widget cannot be resized to that size"
+                }
+                .into());
+            }
+            let rect = crate::spatial::Rect {
+                width,
+                height,
+                ..rect
+            };
+            let positions = crate::spatial::place(&crate::spatial::occupied(&config), id, rect)
+                .ok_or(if image {
+                    "This image does not fit here"
+                } else if matches!(item, Some(Item::Annotation { kind: 2, .. })) {
+                    "Text does not fit here"
+                } else {
+                    "Widget does not fit here"
+                })?;
+            config.positions.extend(positions);
+        }
+        self.save_config(|saved| {
+            *saved = config;
+            Ok(true)
+        })
+    }
+
+    fn save_appearance(&mut self, size: i32, gap: i32, speed: i32) -> Result<(), String> {
+        let mut config = self.config.clone();
+        let old_gap = config.grid_gap.clamp(0, 64) as u64;
+        let new_gap = gap.clamp(0, 64) as u64;
+        let old_pitch = crate::spatial::cell_pitch(config.item_size, config.grid_gap) as u64;
+        let old_size = config.item_size.max(1) as u64;
+        let new_size = size.clamp(80, 176) as u64;
+        let new_pitch = crate::spatial::cell_pitch(size.clamp(80, 176), gap) as u64;
+        if old_pitch != new_pitch {
+            let widgets: HashSet<_> = config
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    Item::Widget { id, .. } => Some(id.as_str()),
+                    _ => None,
+                })
+                .collect();
+            for (id, rect) in &mut config.positions {
+                rect.col = i32::try_from(i64::from(rect.col) * new_pitch as i64 / old_pitch as i64)
+                    .map_err(|_| "Canvas position is too far away for that item size")?;
+                rect.row = i32::try_from(i64::from(rect.row) * new_pitch as i64 / old_pitch as i64)
+                    .map_err(|_| "Canvas position is too far away for that item size")?;
+                if widgets.contains(id.as_str()) {
+                    rect.width = (rect.width.saturating_sub(old_gap as usize) as u64 * new_size
+                        / old_size
+                        + new_gap) as usize;
+                    rect.height = (rect.height.saturating_sub(old_gap as usize) as u64 * new_size
+                        / old_size
+                        + new_gap) as usize;
+                } else {
+                    rect.width = (rect.width as u64 * new_pitch / old_pitch) as usize;
+                    rect.height = (rect.height as u64 * new_pitch / old_pitch) as usize;
+                }
+            }
+        }
+        config.item_size = size.clamp(80, 176);
+        config.grid_gap = gap.clamp(0, 64);
+        config.canvas_speed = speed.clamp(1, 10);
+        self.commit(config)
+    }
+
+    fn change_background(&mut self) -> Result<(), String> {
+        let mut images: Vec<_> = std::fs::read_dir(&self.config.background_folder)
+            .map_err(|error| format!("Couldn't read image folder: {error}"))?
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file()
+                    && path.extension().is_some_and(|ext| {
+                        matches!(
+                            ext.to_string_lossy().to_ascii_lowercase().as_str(),
+                            "png" | "jpg" | "jpeg" | "svg"
+                        )
+                    })
+            })
+            .collect();
+        images.sort();
+        if images.is_empty() {
+            return Err("No supported images in the image folder".into());
+        }
+        let mut pick = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos() as usize
+            % images.len();
+        if images.len() > 1 && images[pick].to_string_lossy() == self.config.background_image {
+            pick = (pick + 1) % images.len();
+        }
+        if read_background_image(&images[pick]).is_none() {
+            return Err("Couldn't read background image".into());
+        }
+        let picked = images[pick].to_string_lossy().into_owned();
+        self.save_config(|config| {
+            config.background_image = picked;
+            config.background_color.clear();
+            Ok(true)
+        })
+    }
+
+    fn choose_background_image(&mut self) -> Result<(), String> {
+        let Some(path) = platform::choose_background_image() else {
+            return Ok(());
+        };
+        let (name, data) = platform::read_chosen_icon(&path.to_string_lossy())?;
+        if read_background_image(&path).is_none() {
+            return Err("Couldn't read background image".into());
+        }
+        let saved_path = platform::icon_path(&name).map_err(|error| error.to_string())?;
+        platform::write_icon(&name, &data).map_err(|error| error.to_string())?;
+        self.save_config(|config| {
+            config.background_image = saved_path.to_string_lossy().into_owned();
+            config.background_color.clear();
+            Ok(true)
+        })
+    }
+
+    fn save_app_search_path(&mut self, path: &str, remove: bool) -> Result<(), String> {
+        let path = PathBuf::from(path.trim());
+        if !remove && !platform::validate_app_search_path(&path) {
+            return Err("Enter an existing absolute directory or executable path".into());
+        }
+        let path = path.to_string_lossy().into_owned();
+        let before = self.config.app_search_paths.clone();
+        self.save_config(|config| {
+            if remove {
+                config.app_search_paths.retain(|saved| saved != &path);
+            } else if !config.app_search_paths.contains(&path) {
+                config.app_search_paths.push(path);
+            }
+            Ok(config.app_search_paths != before)
+        })
+    }
+
+    fn transfer_data(&mut self, import: bool, weak: &slint::Weak<Launcher>) -> Result<(), String> {
+        let mut result = platform::transfer_data(import);
+        if import && matches!(&result, Ok(Some(_))) {
+            self.config = config::load().0;
+            self.edits = Default::default();
+            let canvas = self.config.canvas.clone();
+            let _ = weak.upgrade_in_event_loop(move |ui| crate::canvas::sync(&ui, &canvas, true));
+            self.recent = recent::Recent::load().0;
+            self.inventory = Inventory::load().0;
+            self.open_folder = None;
+            self.query.clear();
+            self.installed_filter.clear();
+            self.search_paths = None;
+            self.icons.clear();
+            if let Err(error) = self.load_icons() {
+                result = Err(error);
+            }
+        }
+        let (status, feedback) = match result {
+            Ok(Some(status)) => (
+                status,
+                Some((
+                    if import {
+                        "Data imported"
+                    } else {
+                        "Data exported"
+                    },
+                    true,
+                )),
+            ),
+            Ok(None) => (String::new(), None),
+            Err(error) => {
+                eprintln!("orbit backup transfer: {error}");
+                (
+                    error,
+                    Some((
+                        if import {
+                            "Couldn't import data"
+                        } else {
+                            "Couldn't export data"
+                        },
+                        false,
+                    )),
+                )
+            }
+        };
+        let _ = weak.upgrade_in_event_loop(move |launcher| {
+            if let Err(error) = platform::restore_after_chooser(&launcher) {
+                eprintln!("orbit: {error}");
+                crate::toast::error(&launcher.as_weak(), "Couldn't return to the Launcher");
+            } else if let Some((message, true)) = feedback {
+                crate::toast::success(&launcher.as_weak(), message);
+            } else if let Some((message, false)) = feedback {
+                crate::toast::error(&launcher.as_weak(), message);
+            }
+            launcher.set_data_status(status.into());
+            launcher.set_data_busy(false);
+        });
+        Ok(())
     }
 
     fn open_item(&mut self, id: &str, _weak: &slint::Weak<Launcher>) -> Result<(), String> {
@@ -2186,7 +2225,7 @@ impl Apps {
         )
         .map_err(|error| format!("Couldn't save installed apps: {error}"))?;
         self.inventory.replace(installed_apps);
-        self.search_paths = Some(index_search_paths(&self.config));
+        self.search_paths = Some(crate::search_paths::index_search_paths(&self.config));
         self.icons.clear();
         let _ = self.load_icons();
         self.load_installed_icons();
@@ -2221,24 +2260,31 @@ impl Apps {
     }
 
     fn edit_file_search_exclusion(&mut self, name: &str, remove: bool) -> Result<(), String> {
-        let mut config = self.config.clone();
-        if !edit_exclusions(&mut config.file_search_exclusions, name, remove) {
-            return Ok(());
-        }
-        config
-            .save()
-            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-        self.config = config;
-        self.search_paths = None;
-        if !self.query.is_empty() {
-            self.load_search_paths();
+        let mut changed = false;
+        self.save_config(|config| {
+            changed = crate::search_paths::edit_exclusions(
+                &mut config.file_search_exclusions,
+                name,
+                remove,
+            );
+            Ok(changed)
+        })?;
+        if changed {
+            self.refresh_search_paths();
         }
         Ok(())
     }
 
     fn load_search_paths(&mut self) {
         if self.search_paths.is_none() {
-            self.search_paths = Some(index_search_paths(&self.config));
+            self.search_paths = Some(crate::search_paths::index_search_paths(&self.config));
+        }
+    }
+
+    fn refresh_search_paths(&mut self) {
+        self.search_paths = None;
+        if !self.query.is_empty() {
+            self.load_search_paths();
         }
     }
 
@@ -2257,54 +2303,52 @@ impl Apps {
             .map_err(|error| format!("Couldn't read path: {error}"))?
             .to_string_lossy()
             .into_owned();
-        let mut config = self.config.clone();
-        let paths = if directory {
-            &mut config.directory_search_paths
-        } else {
-            &mut config.file_search_paths
-        };
-        if index >= 0 {
-            let Some(saved_path) = paths.get_mut(index as usize) else {
-                return Ok(());
+        let mut changed = false;
+        self.save_config(|config| {
+            let paths = if directory {
+                &mut config.directory_search_paths
+            } else {
+                &mut config.file_search_paths
             };
-            if *saved_path == path {
-                return Ok(());
+            if index >= 0 {
+                let Some(saved_path) = paths.get_mut(index as usize) else {
+                    return Ok(false);
+                };
+                if *saved_path == path {
+                    return Ok(false);
+                }
+                *saved_path = path;
+            } else if !paths.contains(&path) {
+                paths.push(path);
+            } else {
+                return Ok(false);
             }
-            *saved_path = path;
-        } else if !paths.contains(&path) {
-            paths.push(path);
-        } else {
-            return Ok(());
-        }
-        config
-            .save()
-            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-        self.config = config;
-        self.search_paths = None;
-        if !self.query.is_empty() {
-            self.load_search_paths();
+            changed = true;
+            Ok(true)
+        })?;
+        if changed {
+            self.refresh_search_paths();
         }
         Ok(())
     }
 
     fn delete_search_path(&mut self, directory: bool, index: usize) -> Result<(), String> {
-        let mut config = self.config.clone();
-        let paths = if directory {
-            &mut config.directory_search_paths
-        } else {
-            &mut config.file_search_paths
-        };
-        if index >= paths.len() {
-            return Ok(());
-        }
-        paths.remove(index);
-        config
-            .save()
-            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
-        self.config = config;
-        self.search_paths = None;
-        if !self.query.is_empty() {
-            self.load_search_paths();
+        let mut changed = false;
+        self.save_config(|config| {
+            let paths = if directory {
+                &mut config.directory_search_paths
+            } else {
+                &mut config.file_search_paths
+            };
+            if index >= paths.len() {
+                return Ok(false);
+            }
+            paths.remove(index);
+            changed = true;
+            Ok(true)
+        })?;
+        if changed {
+            self.refresh_search_paths();
         }
         Ok(())
     }
@@ -2600,6 +2644,21 @@ impl Apps {
         Ok(())
     }
 
+    fn save_config(
+        &mut self,
+        edit: impl FnOnce(&mut Config) -> Result<bool, String>,
+    ) -> Result<(), String> {
+        let mut config = self.config.clone();
+        if !edit(&mut config)? {
+            return Ok(());
+        }
+        config
+            .save()
+            .map_err(|error| format!("Couldn't save config.json: {error}"))?;
+        self.config = config;
+        Ok(())
+    }
+
     fn commit(&mut self, mut config: Config) -> Result<(), String> {
         crate::spatial::reconcile(&mut config)?;
         config
@@ -2828,32 +2887,31 @@ impl Apps {
     }
 
     fn save_shortcut(&mut self, action: i32, existing: String, keys: String) -> Result<(), String> {
-        let mut config = self.config.clone();
-        if config
-            .frames
-            .iter()
-            .any(|frame| !keys.is_empty() && frame.keys == keys)
-        {
-            return Err("Shortcut is already used by a Frame.".into());
-        }
-        let binding = crate::shortcuts::Shortcut { action, keys };
-        if existing.is_empty() {
-            config.shortcuts.push(binding);
-        } else if let Some(current) = config
-            .shortcuts
-            .iter_mut()
-            .find(|entry| entry.action == action && entry.keys == existing)
-        {
-            *current = binding;
-        } else {
-            return Err("The shortcut changed before it could be saved.".into());
-        }
-        if !crate::shortcuts::valid(&config.shortcuts) {
-            return Err("Choose a shortcut that is not already used.".into());
-        }
-        config.save().map_err(|error| error.to_string())?;
-        self.config = config;
-        Ok(())
+        self.save_config(|config| {
+            if config
+                .frames
+                .iter()
+                .any(|frame| !keys.is_empty() && frame.keys == keys)
+            {
+                return Err("Shortcut is already used by a Frame.".into());
+            }
+            let binding = crate::shortcuts::Shortcut { action, keys };
+            if existing.is_empty() {
+                config.shortcuts.push(binding);
+            } else if let Some(current) = config
+                .shortcuts
+                .iter_mut()
+                .find(|entry| entry.action == action && entry.keys == existing)
+            {
+                *current = binding;
+            } else {
+                return Err("The shortcut changed before it could be saved.".into());
+            }
+            if !crate::shortcuts::valid(&config.shortcuts) {
+                return Err("Choose a shortcut that is not already used.".into());
+            }
+            Ok(true)
+        })
     }
 
     fn save_frame(
@@ -3352,42 +3410,57 @@ impl Apps {
             .iter()
             .map(|item| self.tile(item))
             .collect::<Vec<_>>();
-        let size = self.config.item_size;
-        let gap = self.config.grid_gap;
-        let canvas_speed = self.config.canvas_speed;
-        let font_size = self.config.font_size;
-        let smooth_cursor = self.config.smooth_cursor;
-        let layout_locked = self.config.layout_locked;
-        let search_engine_index = self.config.default_search_engine_index() as i32;
-        let app_search_paths = self
+        let frames = self.canvas_frame_views();
+        let ink = self.canvas_ink_views();
+        let dock: Vec<_> = self
             .config
-            .app_search_paths
+            .pinned
             .iter()
-            .map(|path| path.as_str().into())
-            .collect::<Vec<slint::SharedString>>();
-        let file_search_paths = self
-            .config
-            .file_search_paths
+            .filter_map(|id| self.dock_tile(id))
+            .collect();
+        let recent: Vec<_> = self
+            .recent
+            .ids
             .iter()
-            .map(|path| path.as_str().into())
-            .collect::<Vec<slint::SharedString>>();
-        let file_search_exclusions = self
-            .config
-            .file_search_exclusions
-            .iter()
-            .map(|name| name.as_str().into())
-            .collect::<Vec<slint::SharedString>>();
-        let directory_search_paths = self
-            .config
-            .directory_search_paths
-            .iter()
-            .map(|path| path.as_str().into())
-            .collect::<Vec<slint::SharedString>>();
+            .filter_map(|id| self.dock_tile(id))
+            .filter(|tile| !tile.folder)
+            .take(RECENT_DOCK_LIMIT)
+            .collect();
+        let results = self.compute_search_results();
+        let installed_apps = self.installed_app_rows();
+        let installed_status = self.inventory.status().to_string();
+        let installed_apps_loaded = self.inventory.loaded();
+        let installed_apps_match = !installed_apps.is_empty();
+        let folder = self.open_folder_view();
+        let settings = self.settings_snapshot();
         let can_undo = self.edits.target(false).is_some();
         let can_redo = self.edits.target(true).is_some();
         let can_paste = true;
-        let frames = self
-            .config
+        let apply = move |launcher: Launcher| {
+            set_items(&launcher, items);
+            set_tiles(&launcher, dock, recent, results);
+            launcher.set_actions(actions_model());
+            launcher.set_installed_apps(installed_apps_model(installed_apps));
+            launcher.set_installed_status(installed_status.into());
+            launcher.set_installed_apps_loaded(installed_apps_loaded);
+            launcher.set_installed_apps_match(installed_apps_match);
+            launcher.set_frames(std::rc::Rc::new(slint::VecModel::from(frames)).into());
+            launcher.set_can_undo(can_undo);
+            launcher.set_can_redo(can_redo);
+            launcher.set_can_paste(can_paste);
+            launcher.set_ink_strokes(canvas_ink_model(ink));
+            settings.apply(&launcher);
+            apply_folder_view(&launcher, folder);
+        };
+        if let Some(launcher) = weak.upgrade() {
+            apply(launcher);
+        } else {
+            let _ = weak.upgrade_in_event_loop(apply);
+        }
+    }
+
+    fn canvas_frame_views(&self) -> Vec<CanvasFrameView> {
+        self.config
             .frames
             .iter()
             .filter_map(|frame| {
@@ -3417,42 +3490,38 @@ impl Apps {
                     count: frame.items.len() as i32,
                 })
             })
-            .collect::<Vec<_>>();
-        let ink = self
-            .config
+            .collect()
+    }
+
+    fn canvas_ink_views(&self) -> Vec<InkView> {
+        self.config
             .ink
             .iter()
             .map(|stroke| {
                 let ink = crate::ink::styled_view(&stroke.points, &stroke.style);
-                (
-                    stroke.id.clone(),
-                    ink.x,
-                    ink.y,
-                    ink.width,
-                    ink.height,
-                    ink.path,
-                    crate::ink::samples(&stroke.points, &stroke.style),
-                    stroke.style.clone(),
-                )
+                InkView {
+                    id: stroke.id.clone(),
+                    x: ink.x,
+                    y: ink.y,
+                    width: ink.width,
+                    height: ink.height,
+                    path: ink.path,
+                    samples: crate::ink::samples(&stroke.points, &stroke.style),
+                    style: stroke.style.clone(),
+                }
             })
-            .collect::<Vec<_>>();
-        let dock: Vec<_> = self
-            .config
-            .pinned
-            .iter()
-            .filter_map(|id| self.dock_tile(id))
-            .collect();
-        let recent: Vec<_> = self
-            .recent
-            .ids
-            .iter()
-            .filter_map(|id| self.dock_tile(id))
-            .filter(|tile| !tile.folder)
-            .take(RECENT_DOCK_LIMIT)
-            .collect();
-        let results = self.compute_search_results();
-        let installed_apps: Vec<_> = self
-            .inventory
+            .collect()
+    }
+
+    fn installed_app_rows(
+        &self,
+    ) -> Vec<(
+        String,
+        String,
+        String,
+        Option<SharedPixelBuffer<Rgba8Pixel>>,
+    )> {
+        self.inventory
             .apps()
             .iter()
             .filter(|app| {
@@ -3467,11 +3536,96 @@ impl Apps {
                     self.icons.get(&app.id).cloned(),
                 )
             })
-            .collect();
+            .collect()
+    }
+
+    fn open_folder_view(&self) -> Option<(String, String, Vec<Tile>)> {
+        self.open_folder.as_ref().and_then(|id| {
+            let Item::Folder { name, apps, .. } =
+                self.config.items.iter().find(|item| item.id() == id)?
+            else {
+                return None;
+            };
+            Some((
+                id.clone(),
+                name.clone(),
+                apps.iter()
+                    .map(|app| {
+                        let mut tile = Tile::new(
+                            &app.clone().into_item(),
+                            &self.icons,
+                            self.config.item_size,
+                            self.config.grid_gap,
+                        );
+                        tile.folder_id = id.clone();
+                        tile
+                    })
+                    .collect(),
+            ))
+        })
+    }
+
+    fn settings_snapshot(&self) -> SettingsSnapshot {
         let shortcuts = self.config.shortcuts.clone();
-        let scripts = crate::scripts::sorted(&self.config.scripts);
-        let user_actions = self
-            .config
+        let shortcut_hints = (0..14)
+            .map(|action| {
+                shortcuts
+                    .iter()
+                    .find(|binding| binding.action == action)
+                    .map_or_else(slint::SharedString::default, |binding| {
+                        binding.keys.as_str().into()
+                    })
+            })
+            .collect();
+        let shortcut_groups = (0..=9)
+            .chain([12])
+            .chain(14..=24)
+            .map(|action| {
+                (
+                    action,
+                    shortcuts
+                        .iter()
+                        .filter(|binding| binding.action == action)
+                        .map(|binding| binding.keys.clone())
+                        .collect(),
+                )
+            })
+            .collect();
+        SettingsSnapshot {
+            size: self.config.item_size,
+            gap: self.config.grid_gap,
+            canvas_speed: self.config.canvas_speed,
+            font_size: self.config.font_size,
+            smooth_cursor: self.config.smooth_cursor,
+            layout_locked: self.config.layout_locked,
+            search_engine_index: self.config.default_search_engine_index() as i32,
+            google_engine_index: Config::search_engine_index_by_id("google-search").unwrap_or(1)
+                as i32,
+            app_search_paths: shared_strings(&self.config.app_search_paths),
+            file_search_paths: shared_strings(&self.config.file_search_paths),
+            file_search_exclusions: shared_strings(&self.config.file_search_exclusions),
+            directory_search_paths: shared_strings(&self.config.directory_search_paths),
+            shortcuts,
+            scripts: crate::scripts::sorted(&self.config.scripts),
+            user_actions: self.user_action_choices(),
+            action_names: self
+                .config
+                .user_actions
+                .iter()
+                .map(|action| action.name.as_str().into())
+                .collect(),
+            prefixes: self.prefix_choices(),
+            shortcut_hints,
+            shortcut_groups,
+            background_folder: self.config.background_folder.clone(),
+            background_image: read_background_image(
+                PathBuf::from(&self.config.background_image).as_path(),
+            ),
+        }
+    }
+
+    fn user_action_choices(&self) -> Vec<UserActionChoice> {
+        self.config
             .user_actions
             .iter()
             .map(|action| UserActionChoice {
@@ -3500,15 +3654,11 @@ impl Apps {
                     .iter()
                     .any(|prefix| prefix.action_id == action.id),
             })
-            .collect::<Vec<_>>();
-        let action_names = self
-            .config
-            .user_actions
-            .iter()
-            .map(|action| action.name.as_str().into())
-            .collect::<Vec<slint::SharedString>>();
-        let prefixes = self
-            .config
+            .collect()
+    }
+
+    fn prefix_choices(&self) -> Vec<PrefixChoice> {
+        self.config
             .prefixes
             .iter()
             .map(|prefix| PrefixChoice {
@@ -3530,236 +3680,233 @@ impl Apps {
                     .position(|action| action.id == prefix.action_id)
                     .unwrap_or(0) as i32,
             })
-            .collect::<Vec<_>>();
-        let shortcut_hints: Vec<slint::SharedString> = (0..14)
-            .map(|action| {
-                shortcuts
-                    .iter()
-                    .find(|binding| binding.action == action)
-                    .map_or_else(slint::SharedString::default, |binding| {
-                        binding.keys.as_str().into()
-                    })
-            })
-            .collect();
-        let shortcut_groups = (0..=9)
-            .chain([12])
-            .chain(14..=24)
-            .map(|action| {
-                (
-                    action,
-                    shortcuts
-                        .iter()
-                        .filter(|binding| binding.action == action)
-                        .map(|binding| binding.keys.clone())
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let installed_status = self.inventory.status().to_string();
-        let installed_apps_loaded = self.inventory.loaded();
-        let installed_apps_match = !installed_apps.is_empty();
-        let folder = self.open_folder.as_ref().and_then(|id| {
-            let Item::Folder { name, apps, .. } =
-                self.config.items.iter().find(|item| item.id() == id)?
-            else {
-                return None;
-            };
-            Some((
-                id.clone(),
-                name.clone(),
-                apps.iter()
-                    .map(|app| {
-                        let mut tile = Tile::new(
-                            &app.clone().into_item(),
-                            &self.icons,
-                            self.config.item_size,
-                            self.config.grid_gap,
-                        );
-                        tile.folder_id = id.clone();
-                        tile
-                    })
+            .collect()
+    }
+}
+
+struct SettingsSnapshot {
+    size: i32,
+    gap: i32,
+    canvas_speed: i32,
+    font_size: i32,
+    smooth_cursor: bool,
+    layout_locked: bool,
+    search_engine_index: i32,
+    google_engine_index: i32,
+    app_search_paths: Vec<slint::SharedString>,
+    file_search_paths: Vec<slint::SharedString>,
+    file_search_exclusions: Vec<slint::SharedString>,
+    directory_search_paths: Vec<slint::SharedString>,
+    shortcuts: Vec<crate::shortcuts::Shortcut>,
+    scripts: Vec<crate::ScriptChoice>,
+    user_actions: Vec<UserActionChoice>,
+    action_names: Vec<slint::SharedString>,
+    prefixes: Vec<PrefixChoice>,
+    shortcut_hints: Vec<slint::SharedString>,
+    shortcut_groups: Vec<(i32, Vec<String>)>,
+    background_folder: String,
+    background_image: Option<SharedPixelBuffer<Rgba8Pixel>>,
+}
+
+impl SettingsSnapshot {
+    fn apply(self, launcher: &Launcher) {
+        launcher.set_item_size(self.size);
+        launcher.set_grid_gap(self.gap);
+        launcher.set_canvas_speed(self.canvas_speed);
+        launcher.set_font_size(self.font_size);
+        launcher.set_background_folder_input(self.background_folder.into());
+        if let Some(image) = self.background_image {
+            launcher.set_background_image(slint::Image::from_rgba8(image));
+            launcher.set_background_image_active(true);
+        } else {
+            launcher.set_background_image_active(false);
+        }
+        launcher.set_search_engine_names(
+            std::rc::Rc::new(slint::VecModel::from(
+                Config::search_engine_names()
+                    .into_iter()
+                    .map(slint::SharedString::from)
                     .collect::<Vec<_>>(),
             ))
-        });
-        let background_folder = self.config.background_folder.clone();
-        let background_image =
-            read_background_image(PathBuf::from(&self.config.background_image).as_path());
-        let apply = move |launcher: Launcher| {
-            let installed_apps: Vec<_> = installed_apps
+            .into(),
+        );
+        launcher.set_smooth_cursor(self.smooth_cursor);
+        launcher.set_layout_locked(self.layout_locked);
+        launcher.set_google_search_engine_index(self.google_engine_index);
+        launcher.invoke_default_search_engine_saved(self.search_engine_index);
+        launcher.set_shortcuts(crate::shortcuts::model(self.shortcuts));
+        launcher.set_shortcut_hints(
+            std::rc::Rc::new(slint::VecModel::from(self.shortcut_hints)).into(),
+        );
+        launcher.set_scripts(std::rc::Rc::new(slint::VecModel::from(self.scripts)).into());
+        launcher
+            .set_user_actions(std::rc::Rc::new(slint::VecModel::from(self.user_actions)).into());
+        launcher
+            .set_action_names(std::rc::Rc::new(slint::VecModel::from(self.action_names)).into());
+        launcher.set_prefixes(std::rc::Rc::new(slint::VecModel::from(self.prefixes)).into());
+        launcher.set_shortcut_groups(shortcut_groups_model(self.shortcut_groups));
+        launcher.set_app_search_paths(
+            std::rc::Rc::new(slint::VecModel::from(self.app_search_paths)).into(),
+        );
+        launcher.set_file_search_paths(
+            std::rc::Rc::new(slint::VecModel::from(self.file_search_paths)).into(),
+        );
+        launcher.set_file_search_exclusions(
+            std::rc::Rc::new(slint::VecModel::from(self.file_search_exclusions)).into(),
+        );
+        launcher.set_directory_search_paths(
+            std::rc::Rc::new(slint::VecModel::from(self.directory_search_paths)).into(),
+        );
+    }
+}
+
+fn shared_strings(entries: &[String]) -> Vec<slint::SharedString> {
+    entries.iter().map(|entry| entry.as_str().into()).collect()
+}
+
+fn set_tiles(launcher: &Launcher, dock: Vec<Tile>, recent: Vec<Tile>, results: Vec<Tile>) {
+    launcher.set_dock_items(
+        std::rc::Rc::new(slint::VecModel::from(
+            dock.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
+        ))
+        .into(),
+    );
+    launcher.set_recent_items(
+        std::rc::Rc::new(slint::VecModel::from(
+            recent.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
+        ))
+        .into(),
+    );
+    launcher.set_search_results(
+        std::rc::Rc::new(slint::VecModel::from(
+            results
                 .into_iter()
-                .map(|(id, name, command, icon)| {
-                    let icon_present = icon.is_some();
-                    InstalledAppTile {
-                        command: command.into(),
-                        letter: name
-                            .chars()
-                            .next()
-                            .map(|letter| letter.to_string())
-                            .unwrap_or_default()
-                            .into(),
-                        id: id.into(),
-                        name: name.into(),
-                        icon: icon.map(slint::Image::from_rgba8).unwrap_or_default(),
-                        icon_present,
-                    }
-                })
-                .collect();
-            set_items(&launcher, items);
-            launcher.set_dock_items(
-                std::rc::Rc::new(slint::VecModel::from(
-                    dock.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
-                ))
-                .into(),
-            );
-            launcher.set_recent_items(
-                std::rc::Rc::new(slint::VecModel::from(
-                    recent.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
-                ))
-                .into(),
-            );
-            launcher.set_search_results(
-                std::rc::Rc::new(slint::VecModel::from(
-                    results
-                        .into_iter()
-                        .map(Tile::into_slint)
-                        .collect::<Vec<_>>(),
-                ))
-                .into(),
-            );
-            launcher.set_actions(
-                std::rc::Rc::new(slint::VecModel::from(
-                    ACTIONS
-                        .iter()
-                        .map(|(id, name, _)| ActionChoice {
-                            id: (*id).into(),
-                            name: (*name).into(),
-                        })
-                        .collect::<Vec<_>>(),
-                ))
-                .into(),
-            );
-            launcher
-                .set_installed_apps(std::rc::Rc::new(slint::VecModel::from(installed_apps)).into());
-            launcher.set_item_size(size);
-            launcher.set_grid_gap(gap);
-            launcher.set_canvas_speed(canvas_speed);
-            launcher.set_font_size(font_size);
-            launcher.set_background_folder_input(background_folder.into());
-            if let Some(image) = background_image {
-                launcher.set_background_image(slint::Image::from_rgba8(image));
-                launcher.set_background_image_active(true);
-            } else {
-                launcher.set_background_image_active(false);
+                .map(Tile::into_slint)
+                .collect::<Vec<_>>(),
+        ))
+        .into(),
+    );
+}
+
+fn actions_model() -> slint::ModelRc<ActionChoice> {
+    std::rc::Rc::new(slint::VecModel::from(
+        ACTIONS
+            .iter()
+            .map(|(id, name, _)| ActionChoice {
+                id: (*id).into(),
+                name: (*name).into(),
+            })
+            .collect::<Vec<_>>(),
+    ))
+    .into()
+}
+
+fn installed_apps_model(
+    apps: Vec<(
+        String,
+        String,
+        String,
+        Option<SharedPixelBuffer<Rgba8Pixel>>,
+    )>,
+) -> slint::ModelRc<InstalledAppTile> {
+    let tiles: Vec<_> = apps
+        .into_iter()
+        .map(|(id, name, command, icon)| {
+            let icon_present = icon.is_some();
+            InstalledAppTile {
+                command: command.into(),
+                letter: name
+                    .chars()
+                    .next()
+                    .map(|letter| letter.to_string())
+                    .unwrap_or_default()
+                    .into(),
+                id: id.into(),
+                name: name.into(),
+                icon: icon.map(slint::Image::from_rgba8).unwrap_or_default(),
+                icon_present,
             }
-            launcher.set_search_engine_names(
-                std::rc::Rc::new(slint::VecModel::from(
-                    Config::search_engine_names()
-                        .into_iter()
-                        .map(slint::SharedString::from)
-                        .collect::<Vec<_>>(),
-                ))
-                .into(),
-            );
-            launcher.set_smooth_cursor(smooth_cursor);
-            launcher.set_layout_locked(layout_locked);
-            launcher.set_default_search_engine_index(search_engine_index);
-            launcher.invoke_default_search_engine_saved(search_engine_index);
-            launcher.set_shortcuts(crate::shortcuts::model(shortcuts));
-            launcher
-                .set_shortcut_hints(std::rc::Rc::new(slint::VecModel::from(shortcut_hints)).into());
-            launcher.set_scripts(std::rc::Rc::new(slint::VecModel::from(scripts)).into());
-            launcher.set_user_actions(std::rc::Rc::new(slint::VecModel::from(user_actions)).into());
-            launcher.set_action_names(std::rc::Rc::new(slint::VecModel::from(action_names)).into());
-            launcher.set_prefixes(std::rc::Rc::new(slint::VecModel::from(prefixes)).into());
-            launcher.set_shortcut_groups(
-                std::rc::Rc::new(slint::VecModel::from(
-                    shortcut_groups
-                        .into_iter()
-                        .map(|(action, keys)| crate::ShortcutGroup {
+        })
+        .collect();
+    std::rc::Rc::new(slint::VecModel::from(tiles)).into()
+}
+
+fn shortcut_groups_model(groups: Vec<(i32, Vec<String>)>) -> slint::ModelRc<crate::ShortcutGroup> {
+    std::rc::Rc::new(slint::VecModel::from(
+        groups
+            .into_iter()
+            .map(|(action, keys)| crate::ShortcutGroup {
+                action,
+                entries: std::rc::Rc::new(slint::VecModel::from(
+                    keys.into_iter()
+                        .map(|keys| crate::ShortcutEntry {
                             action,
-                            entries: std::rc::Rc::new(slint::VecModel::from(
-                                keys.into_iter()
-                                    .map(|keys| crate::ShortcutEntry {
-                                        action,
-                                        keys: keys.into(),
-                                    })
-                                    .collect::<Vec<_>>(),
-                            ))
-                            .into(),
+                            keys: keys.into(),
                         })
                         .collect::<Vec<_>>(),
                 ))
                 .into(),
-            );
-            launcher.set_installed_status(installed_status.into());
-            launcher.set_installed_apps_loaded(installed_apps_loaded);
-            launcher.set_installed_apps_match(installed_apps_match);
-            launcher.set_app_search_paths(
-                std::rc::Rc::new(slint::VecModel::from(app_search_paths)).into(),
-            );
-            launcher.set_file_search_paths(
-                std::rc::Rc::new(slint::VecModel::from(file_search_paths)).into(),
-            );
-            launcher.set_file_search_exclusions(
-                std::rc::Rc::new(slint::VecModel::from(file_search_exclusions)).into(),
-            );
-            launcher.set_directory_search_paths(
-                std::rc::Rc::new(slint::VecModel::from(directory_search_paths)).into(),
-            );
-            launcher.set_frames(std::rc::Rc::new(slint::VecModel::from(frames)).into());
-            launcher.set_can_undo(can_undo);
-            launcher.set_can_redo(can_redo);
-            launcher.set_can_paste(can_paste);
-            launcher.set_ink_strokes(
-                std::rc::Rc::new(slint::VecModel::from(
-                    ink.into_iter()
-                        .map(
-                            |(id, x, y, width, height, path, samples, style)| crate::CanvasInk {
-                                id: id.into(),
-                                x,
-                                y,
-                                width,
-                                height,
-                                path,
-                                color: parse_color(&style.color),
-                                size: if style.highlighter {
-                                    style.size * 4.0
-                                } else {
-                                    style.size
-                                },
-                                opacity: style.opacity * if style.highlighter { 0.35 } else { 1.0 },
-                                dimmed: false,
-                                samples: std::rc::Rc::new(slint::VecModel::from(
-                                    samples
-                                        .into_iter()
-                                        .map(|point| crate::InkSample {
-                                            x: point.x,
-                                            y: point.y,
-                                        })
-                                        .collect::<Vec<_>>(),
-                                ))
-                                .into(),
-                            },
-                        )
+            })
+            .collect::<Vec<_>>(),
+    ))
+    .into()
+}
+
+struct InkView {
+    id: String,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    path: slint::SharedString,
+    samples: Vec<crate::config::InkPoint>,
+    style: crate::ink::Style,
+}
+
+fn canvas_ink_model(ink: Vec<InkView>) -> slint::ModelRc<crate::CanvasInk> {
+    std::rc::Rc::new(slint::VecModel::from(
+        ink.into_iter()
+            .map(|stroke| crate::CanvasInk {
+                id: stroke.id.into(),
+                x: stroke.x,
+                y: stroke.y,
+                width: stroke.width,
+                height: stroke.height,
+                path: stroke.path,
+                color: parse_color(&stroke.style.color),
+                size: if stroke.style.highlighter {
+                    stroke.style.size * 4.0
+                } else {
+                    stroke.style.size
+                },
+                opacity: stroke.style.opacity * if stroke.style.highlighter { 0.35 } else { 1.0 },
+                dimmed: false,
+                samples: std::rc::Rc::new(slint::VecModel::from(
+                    stroke
+                        .samples
+                        .into_iter()
+                        .map(|point| crate::InkSample {
+                            x: point.x,
+                            y: point.y,
+                        })
                         .collect::<Vec<_>>(),
                 ))
                 .into(),
-            );
-            if let Some((index, name, items)) = folder {
-                launcher.set_folder_id(index.into());
-                launcher.set_folder_name(name.into());
-                let items = items.into_iter().map(Tile::into_slint).collect::<Vec<_>>();
-                launcher.set_folder_items(std::rc::Rc::new(slint::VecModel::from(items)).into());
-                launcher.set_folder_open(true);
-            } else {
-                launcher.set_folder_open(false);
-            }
-        };
-        if let Some(launcher) = weak.upgrade() {
-            apply(launcher);
-        } else {
-            let _ = weak.upgrade_in_event_loop(apply);
-        }
+            })
+            .collect::<Vec<_>>(),
+    ))
+    .into()
+}
+
+fn apply_folder_view(launcher: &Launcher, folder: Option<(String, String, Vec<Tile>)>) {
+    if let Some((index, name, items)) = folder {
+        launcher.set_folder_id(index.into());
+        launcher.set_folder_name(name.into());
+        let items = items.into_iter().map(Tile::into_slint).collect::<Vec<_>>();
+        launcher.set_folder_items(std::rc::Rc::new(slint::VecModel::from(items)).into());
+        launcher.set_folder_open(true);
+    } else {
+        launcher.set_folder_open(false);
     }
 }
 
@@ -3930,64 +4077,6 @@ fn success_message(action: &Action, config: &Config) -> Option<&'static str> {
         Action::ChangeBackground => Some("Background changed"),
         _ => None,
     }
-}
-
-fn url_encode(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            encoded.push(byte as char);
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    encoded
-}
-
-fn url_action_url(template: &str, query: &str) -> Result<String, String> {
-    if !template.contains("%s") {
-        return Err("URL Action template must contain %s".into());
-    }
-    Ok(template.replace("%s", &url_encode(query)))
-}
-
-fn browser_search_url(template: &str, query: &str) -> Result<String, String> {
-    let lower = query.to_ascii_lowercase();
-    if lower.starts_with("https://") || lower.starts_with("http://") {
-        return Ok(query.to_owned());
-    }
-    let host = query.split(['/', '?', '#']).next().unwrap_or("");
-    if !query.is_empty()
-        && !query.chars().any(char::is_whitespace)
-        && host.contains('.')
-        && !host.starts_with('.')
-        && !host.ends_with('.')
-    {
-        return Ok(format!("https://{query}"));
-    }
-    url_action_url(template, query)
-}
-
-fn match_prefix(prefixes: &[Prefix], text: &str) -> Option<PrefixMatch> {
-    if text.starts_with('/') {
-        return None;
-    }
-    let prefix = prefixes.iter().find(|prefix| {
-        text.starts_with(&prefix.token)
-            && (text.len() == prefix.token.len()
-                || text[prefix.token.len()..]
-                    .chars()
-                    .next()
-                    .is_some_and(char::is_whitespace))
-    })?;
-    let query = text[prefix.token.len()..].trim_start();
-    Some(PrefixMatch {
-        action_id: prefix.action_id.clone().into(),
-        name: prefix.name.clone().into(),
-        query: query.into(),
-        query_length: query.len() as i32,
-        badge_width: (prefix.name.chars().count() * 7 + 18) as i32,
-    })
 }
 
 pub(crate) struct TickTickDraft {
@@ -4164,114 +4253,6 @@ fn finish(
             crate::toast::error(&launcher.as_weak(), "Couldn't hide the Launcher");
         }
     });
-}
-
-fn edit_exclusions(entries: &mut Vec<String>, name: &str, remove: bool) -> bool {
-    let name = name.trim();
-    if name.is_empty() {
-        return false;
-    }
-    if remove {
-        let before = entries.len();
-        entries.retain(|entry| entry != name);
-        before != entries.len()
-    } else if entries.iter().any(|entry| entry == name) {
-        false
-    } else {
-        entries.push(name.to_owned());
-        true
-    }
-}
-
-// Only '*' is special; matching a whole name cannot cross a path separator.
-fn exclusion_matches(pattern: &str, name: &str) -> bool {
-    let (pattern, name) = (pattern.as_bytes(), name.as_bytes());
-    let (mut p, mut n) = (0, 0);
-    let mut star = None;
-    let mut retry = 0;
-    while n < name.len() {
-        if p < pattern.len() && pattern[p] != b'*' && pattern[p] == name[n] {
-            p += 1;
-            n += 1;
-        } else if p < pattern.len() && pattern[p] == b'*' {
-            star = Some(p);
-            p += 1;
-            retry = n;
-        } else if let Some(index) = star {
-            retry += 1;
-            n = retry;
-            p = index + 1;
-        } else {
-            return false;
-        }
-    }
-    while p < pattern.len() && pattern[p] == b'*' {
-        p += 1;
-    }
-    p == pattern.len()
-}
-
-fn index_search_paths(config: &Config) -> Vec<SearchPathResult> {
-    let mut results = Vec::new();
-    for root in &config.file_search_paths {
-        let mut folders = vec![PathBuf::from(root)];
-        while let Some(folder) = folders.pop() {
-            let Ok(entries) = std::fs::read_dir(folder) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if config
-                    .file_search_exclusions
-                    .iter()
-                    .any(|pattern| exclusion_matches(pattern, &name))
-                {
-                    continue;
-                }
-                let Ok(kind) = entry.file_type() else {
-                    continue;
-                };
-                if kind.is_dir() {
-                    folders.push(entry.path());
-                } else if kind.is_file() {
-                    results.push(search_path_result(entry.path(), false));
-                }
-            }
-        }
-    }
-    for root in &config.directory_search_paths {
-        let Ok(entries) = std::fs::read_dir(root) else {
-            continue;
-        };
-        results.extend(entries.flatten().filter_map(|entry| {
-            entry
-                .file_type()
-                .ok()
-                .filter(std::fs::FileType::is_dir)
-                .map(|_| search_path_result(entry.path(), true))
-        }));
-    }
-    results.sort_by(|left, right| {
-        left.name
-            .to_lowercase()
-            .cmp(&right.name.to_lowercase())
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    results.dedup_by(|left, right| left.path == right.path);
-    results
-}
-
-fn search_path_result(path: PathBuf, directory: bool) -> SearchPathResult {
-    SearchPathResult {
-        name: path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned(),
-        path: path.to_string_lossy().into_owned(),
-        directory,
-    }
 }
 
 // Pixel buffers can cross threads; Slint images stay on the interface thread.
@@ -4618,7 +4599,7 @@ mod tests {
         assert!(receive.try_recv().is_err());
         assert!(!ui.get_busy());
         assert!(
-            match_prefix(
+            crate::search_paths::match_prefix(
                 &[Prefix {
                     id: "p".into(),
                     name: "old".into(),
@@ -4647,6 +4628,7 @@ mod tests {
             installed_filter: String::new(),
             query: String::new(),
             search_paths: None,
+            search_image: None,
             recent: recent::Recent::default(),
         };
         let before = serde_json::to_value(&apps.config).unwrap();
@@ -4724,6 +4706,7 @@ mod tests {
             installed_filter: String::new(),
             query: String::new(),
             search_paths: None,
+            search_image: None,
             recent: recent::Recent::default(),
         };
         let launcher = Launcher::new().unwrap();
@@ -4782,6 +4765,7 @@ mod tests {
             installed_filter: String::new(),
             query: String::new(),
             search_paths: None,
+            search_image: None,
             recent: recent::Recent::default(),
         };
 
@@ -4843,6 +4827,7 @@ mod tests {
             installed_filter: String::new(),
             query: String::new(),
             search_paths: None,
+            search_image: None,
             recent: recent::Recent::default(),
         };
         let reference = ResultRef {
@@ -4910,6 +4895,7 @@ mod tests {
             installed_filter: String::new(),
             query: String::new(),
             search_paths: None,
+            search_image: None,
             recent: recent::Recent::default(),
         };
         let before = serde_json::to_value(&apps.config).unwrap();
@@ -4989,6 +4975,7 @@ mod tests {
             installed_filter: String::new(),
             query: String::new(),
             search_paths: None,
+            search_image: None,
             recent: recent::Recent::default(),
         };
         // An Image keeps its own proportions when its width changes.
@@ -5035,6 +5022,7 @@ mod tests {
             installed_filter: String::new(),
             query: "first".into(),
             search_paths: None,
+            search_image: None,
             recent: recent::Recent::default(),
         };
         let tile = apps.compute_search_results().remove(0);
@@ -5066,6 +5054,7 @@ mod tests {
             installed_filter: String::new(),
             query: String::new(),
             search_paths: None,
+            search_image: None,
             recent: recent::Recent::default(),
         };
         let requests = RequestSequence::default();
@@ -5089,14 +5078,15 @@ mod tests {
     #[test]
     fn tab_prefix_activation_replaces_token_and_preserves_argument() {
         let config = Config::default();
-        let activated = match_prefix(&config.prefixes, "y funny cats & dogs").unwrap();
+        let activated =
+            crate::search_paths::match_prefix(&config.prefixes, "y funny cats & dogs").unwrap();
         assert_eq!(activated.name.as_str(), "YouTube");
         assert_eq!(activated.action_id.as_str(), "youtube");
         assert_eq!(activated.query.as_str(), "funny cats & dogs");
         assert_eq!(activated.query_length as usize, "funny cats & dogs".len());
         assert!(activated.badge_width > 52);
-        assert!(match_prefix(&config.prefixes, "youtube cats").is_none());
-        assert!(match_prefix(&config.prefixes, "yout cats").is_none());
+        assert!(crate::search_paths::match_prefix(&config.prefixes, "youtube cats").is_none());
+        assert!(crate::search_paths::match_prefix(&config.prefixes, "yout cats").is_none());
     }
 
     #[test]
@@ -5191,6 +5181,7 @@ mod tests {
                 installed_filter: String::new(),
                 query: String::new(),
                 search_paths: None,
+                search_image: None,
                 recent: recent::Recent::default(),
             };
             let requests = RequestSequence::default();
@@ -5259,7 +5250,7 @@ mod tests {
                 .find(|action| action.id == id)
                 .unwrap();
             assert_eq!(
-                url_action_url(&action.source, "Orbit cats & dogs").unwrap(),
+                crate::search_paths::url_action_url(&action.source, "Orbit cats & dogs").unwrap(),
                 url
             );
         }
@@ -5269,13 +5260,16 @@ mod tests {
             .find(|action| action.id == "ticktick")
             .unwrap();
         assert!(ticktick.kind == ActionKind::TickTick);
-        assert!(url_action_url("https://example.test/?q=missing", "query").is_err());
+        assert!(
+            crate::search_paths::url_action_url("https://example.test/?q=missing", "query")
+                .is_err()
+        );
     }
 
     #[test]
     fn url_encoding_preserves_only_unreserved_bytes() {
         assert_eq!(
-            url_encode("'quote' $(echo hi); 雪"),
+            crate::search_paths::url_encode("'quote' $(echo hi); 雪"),
             "%27quote%27%20%24%28echo%20hi%29%3B%20%E9%9B%AA"
         );
     }
@@ -5448,6 +5442,7 @@ mod tests {
             installed_filter: String::new(),
             query: "whatsapp".into(),
             search_paths: None,
+            search_image: None,
             recent: recent::Recent::default(),
         };
 
@@ -5709,82 +5704,61 @@ mod tests {
         ));
         assert_eq!(launcher.get_search_text(), "/deploy");
     }
-}
-
-#[cfg(test)]
-mod file_search_exclusion_tests {
-    use super::*;
 
     #[test]
-    fn patterns_match_whole_names_case_sensitively() {
-        for (pattern, name, expected) in [
-            ("dist", "dist", true),
-            ("dist", "distance", false),
-            ("dist", "Dist", false),
-            (".*", ".git", true),
-            (".*", "file", false),
-            ("a*b*c", "axybzc", true),
-            ("a*b", "ab", true),
-            ("*", "", true),
-            ("a?", "ab", false),
-            ("*.rs", "main.rs", true),
-            ("*é", "café", true),
-            ("*é", "cafe", false),
-        ] {
-            assert_eq!(
-                exclusion_matches(pattern, name),
-                expected,
-                "{pattern}: {name}"
-            );
-        }
-    }
-
-    #[test]
-    fn edits_trim_ignore_duplicates_and_preserve_empty_lists() {
-        let mut entries = Vec::new();
-        assert!(!edit_exclusions(&mut entries, "  ", false));
-        assert!(edit_exclusions(&mut entries, " dist ", false));
-        assert!(!edit_exclusions(&mut entries, "dist", false));
-        assert!(edit_exclusions(&mut entries, "Dist", false));
-        assert!(edit_exclusions(&mut entries, " dist ", true));
-        assert!(edit_exclusions(&mut entries, "Dist", true));
-        assert!(entries.is_empty());
-    }
-
-    #[test]
-    fn file_index_prunes_descendants_but_not_explicit_roots_or_directory_search() {
-        let root = std::env::temp_dir().join(format!("orbit-exclusions-{}", std::process::id()));
-        std::fs::create_dir_all(root.join("target/target")).unwrap();
-        std::fs::create_dir_all(root.join("target/keep")).unwrap();
-        std::fs::write(root.join("target/visible.txt"), "").unwrap();
-        std::fs::write(root.join("target/.hidden"), "").unwrap();
-        std::fs::write(root.join("target/target/skipped.txt"), "").unwrap();
-        std::fs::write(root.join("target/keep/kept.txt"), "").unwrap();
-        let mut config = Config::default();
-        config
-            .file_search_paths
-            .push(root.join("target").to_string_lossy().into_owned());
-        config
-            .directory_search_paths
-            .push(root.to_string_lossy().into_owned());
-        let results = index_search_paths(&config);
-        assert!(
-            results
-                .iter()
-                .any(|entry| entry.name == "target" && entry.directory)
+    fn search_image_switches_engine_to_google_and_resets_to_saved_default() {
+        i_slint_backend_testing::init_no_event_loop();
+        let launcher = Launcher::new().unwrap();
+        launcher.show().unwrap();
+        launcher.set_launcher_visible(true);
+        let default_index = Config::default().default_search_engine_index() as i32;
+        let google_index = Config::search_engine_index_by_id("google-search").unwrap() as i32;
+        assert_ne!(default_index, google_index);
+        launcher.set_search_engine_names(
+            std::rc::Rc::new(slint::VecModel::from(
+                Config::search_engine_names()
+                    .into_iter()
+                    .map(slint::SharedString::from)
+                    .collect::<Vec<_>>(),
+            ))
+            .into(),
         );
-        assert!(results.iter().any(|entry| entry.name == "visible.txt"));
-        assert!(results.iter().any(|entry| entry.name == "kept.txt"));
-        assert!(
-            !results
-                .iter()
-                .any(|entry| entry.name == "skipped.txt" || entry.name == ".hidden")
-        );
-        config.file_search_exclusions.clear();
-        let results = index_search_paths(&config);
-        assert!(results.iter().any(|entry| entry.name == "skipped.txt"));
-        assert!(results.iter().any(|entry| entry.name == ".hidden"));
-        std::fs::remove_dir_all(root).unwrap();
+        launcher.set_google_search_engine_index(google_index);
+        launcher.invoke_default_search_engine_saved(default_index);
+        launcher.invoke_activate_ticktick_prefix();
+
+        let thumb = SharedPixelBuffer::<Rgba8Pixel>::new(2, 2);
+        launcher.invoke_set_search_image(slint::Image::from_rgba8(thumb.clone()));
+        assert!(launcher.get_search_image_present());
+        assert_eq!(launcher.get_activated_prefix_id(), "");
+        assert_eq!(launcher.get_default_search_engine_index(), google_index);
+
+        launcher.set_search_text("/usr/bin/env".into());
+        assert!(!launcher.get_script_active());
+        assert!(!launcher.get_search_results_visible());
+
+        // Opening and closing Settings must not lose the saved fallback engine or Google mode.
+        launcher.set_settings(true);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(launcher.get_default_search_engine_index(), default_index);
+        launcher.set_settings(false);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(launcher.get_default_search_engine_index(), google_index);
+
+        // Escape clears both image and text and restores the saved default engine.
+        launcher.invoke_close_top_layer();
+        assert!(!launcher.get_search_image_present());
+        assert_eq!(launcher.get_search_text(), "");
+        assert_eq!(launcher.get_default_search_engine_index(), default_index);
+
+        // Successful search completion clears the image and text and restores the saved default.
+        launcher.invoke_set_search_image(slint::Image::from_rgba8(thumb));
+        launcher.set_search_text("what is this".into());
+        assert_eq!(launcher.get_default_search_engine_index(), google_index);
+        launcher.invoke_search_image_finished();
+        assert!(!launcher.get_search_image_present());
+        assert_eq!(launcher.get_search_text(), "");
+        assert_eq!(launcher.get_default_search_engine_index(), default_index);
     }
 }
 
@@ -5813,11 +5787,19 @@ fn is_image(item: Option<&Item>) -> bool {
 }
 
 fn canvas_image(data: &[u8], name: &str) -> Result<SharedPixelBuffer<Rgba8Pixel>, String> {
+    decode_bounded_image(data, name, 1600)
+}
+
+fn decode_bounded_image(
+    data: &[u8],
+    name: &str,
+    max_dim: u32,
+) -> Result<SharedPixelBuffer<Rgba8Pixel>, String> {
     if data.len() > 20 * 1024 * 1024 {
         return Err("Choose an image smaller than 20 MB".into());
     }
     let pixels = decode_icon(data, name)?;
-    if pixels.width() <= 1600 && pixels.height() <= 1600 {
+    if pixels.width() <= max_dim && pixels.height() <= max_dim {
         return Ok(pixels);
     }
     let source = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
@@ -5826,7 +5808,7 @@ fn canvas_image(data: &[u8], name: &str) -> Result<SharedPixelBuffer<Rgba8Pixel>
         pixels.as_bytes(),
     )
     .ok_or("Couldn't read image")?;
-    let resized = image::imageops::thumbnail(&source, 1600, 1600);
+    let resized = image::imageops::thumbnail(&source, max_dim, max_dim);
     Ok(SharedPixelBuffer::clone_from_slice(
         resized.as_raw(),
         resized.width(),
