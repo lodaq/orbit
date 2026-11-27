@@ -102,7 +102,7 @@ pub fn validate_frame_keys(
 }
 
 pub fn model(bindings: Vec<Shortcut>) -> slint::ModelRc<ShortcutEntry> {
-    std::rc::Rc::new(slint::VecModel::from(
+    crate::model(
         bindings
             .into_iter()
             .map(|binding| ShortcutEntry {
@@ -110,8 +110,7 @@ pub fn model(bindings: Vec<Shortcut>) -> slint::ModelRc<ShortcutEntry> {
                 keys: binding.keys.into(),
             })
             .collect::<Vec<_>>(),
-    ))
-    .into()
+    )
 }
 
 fn chord(key: &Key, modifiers: ModifiersState) -> Option<String> {

@@ -446,38 +446,43 @@ fn default_search_engine() -> String {
     "perplexity".into()
 }
 
-const SEARCH_ENGINES: [(&str, &str); 8] = [
-    ("brave-search", "Brave"),
-    ("google-search", "Google"),
-    ("duckduckgo-search", "DuckDuckGo"),
-    ("qwant-search", "Qwant"),
-    ("bing-search", "Bing"),
-    ("startpage-search", "Startpage"),
-    ("ecosia-search", "Ecosia"),
-    ("perplexity", "Perplexity"),
-];
-
-const SEARCH_ENGINE_TEMPLATES: [(&str, &str); 8] = [
+const SEARCH_ENGINES: [(&str, &str, &str); 8] = [
     (
         "brave-search",
+        "Brave",
         "https://search.brave.com/search?q=%s&source=desktop",
     ),
-    ("google-search", "https://www.google.com/search?q=%s"),
-    ("duckduckgo-search", "https://duckduckgo.com/?q=%s&t=brave"),
+    (
+        "google-search",
+        "Google",
+        "https://www.google.com/search?q=%s",
+    ),
+    (
+        "duckduckgo-search",
+        "DuckDuckGo",
+        "https://duckduckgo.com/?q=%s&t=brave",
+    ),
     (
         "qwant-search",
+        "Qwant",
         "https://www.qwant.com/?q=%s&client=brz-brave",
     ),
-    ("bing-search", "https://www.bing.com/search?q=%s"),
+    ("bing-search", "Bing", "https://www.bing.com/search?q=%s"),
     (
         "startpage-search",
+        "Startpage",
         "https://www.startpage.com/do/search?q=%s&segment=startpage.brave",
     ),
     (
         "ecosia-search",
+        "Ecosia",
         "https://www.ecosia.org/search?tt=e8eb07a6&q=%s&addon=brave",
     ),
-    ("perplexity", "https://www.perplexity.ai/search?q=%s"),
+    (
+        "perplexity",
+        "Perplexity",
+        "https://www.perplexity.ai/search?q=%s",
+    ),
 ];
 
 fn default_widget_min() -> i32 {
@@ -641,63 +646,35 @@ fn builtin_actions() -> Vec<UserAction> {
 fn default_actions() -> Vec<UserAction> {
     let mut actions = builtin_actions();
     actions.extend(
-        [
-            (
-                "brave-search",
-                "Brave",
-                "https://search.brave.com/search?q=%s&source=desktop",
-            ),
-            (
-                "google-search",
-                "Google",
-                "https://www.google.com/search?q=%s",
-            ),
-            (
-                "duckduckgo-search",
-                "DuckDuckGo",
-                "https://duckduckgo.com/?q=%s&t=brave",
-            ),
-            (
-                "qwant-search",
-                "Qwant",
-                "https://www.qwant.com/?q=%s&client=brz-brave",
-            ),
-            ("bing-search", "Bing", "https://www.bing.com/search?q=%s"),
-            (
-                "startpage-search",
-                "Startpage",
-                "https://www.startpage.com/do/search?q=%s&segment=startpage.brave",
-            ),
-            (
-                "ecosia-search",
-                "Ecosia",
-                "https://www.ecosia.org/search?tt=e8eb07a6&q=%s&addon=brave",
-            ),
-            ("github-search", "GitHub", "https://github.com/search?q=%s"),
-            (
-                "google-maps-search",
-                "Google Maps",
-                "https://www.google.com/maps/search/%s",
-            ),
-            (
-                "translate-ar-en-search",
-                "Translate (ar -> en)",
-                "https://translate.google.com/?sl=ar&tl=en&text=%s",
-            ),
-            (
-                "translate-en-ar-search",
-                "Translate (en -> ar)",
-                "https://translate.google.com/?sl=en&tl=ar&text=%s",
-            ),
-        ]
-        .into_iter()
-        .map(|(id, name, source)| UserAction {
-            id: id.into(),
-            name: name.into(),
-            kind: ActionKind::Url,
-            source: source.into(),
-            description: format!("Search {name} for your query."),
-        }),
+        SEARCH_ENGINES
+            .iter()
+            .copied()
+            .filter(|(id, _, _)| *id != "perplexity")
+            .chain([
+                ("github-search", "GitHub", "https://github.com/search?q=%s"),
+                (
+                    "google-maps-search",
+                    "Google Maps",
+                    "https://www.google.com/maps/search/%s",
+                ),
+                (
+                    "translate-ar-en-search",
+                    "Translate (ar -> en)",
+                    "https://translate.google.com/?sl=ar&tl=en&text=%s",
+                ),
+                (
+                    "translate-en-ar-search",
+                    "Translate (en -> ar)",
+                    "https://translate.google.com/?sl=en&tl=ar&text=%s",
+                ),
+            ])
+            .map(|(id, name, source)| UserAction {
+                id: id.into(),
+                name: name.into(),
+                kind: ActionKind::Url,
+                source: source.into(),
+                description: format!("Search {name} for your query."),
+            }),
     );
     actions
 }
@@ -801,22 +778,19 @@ impl Config {
     }
 
     pub fn search_engine_names() -> Vec<&'static str> {
-        SEARCH_ENGINES.iter().map(|(_, name)| *name).collect()
+        SEARCH_ENGINES.iter().map(|(_, name, _)| *name).collect()
     }
 
     pub fn search_engine_id(index: usize) -> Option<&'static str> {
-        SEARCH_ENGINES.get(index).map(|(id, _)| *id)
+        SEARCH_ENGINES.get(index).map(|(id, _, _)| *id)
     }
 
     pub fn search_engine_index_by_id(id: &str) -> Option<usize> {
-        SEARCH_ENGINES.iter().position(|(item, _)| *item == id)
+        SEARCH_ENGINES.iter().position(|(item, _, _)| *item == id)
     }
 
     pub fn default_search_engine_index(&self) -> usize {
-        SEARCH_ENGINES
-            .iter()
-            .position(|(id, _)| *id == self.default_search_engine)
-            .unwrap_or(0)
+        Self::search_engine_index_by_id(&self.default_search_engine).unwrap_or(0)
     }
 
     pub fn search_engine_template(&self, engine: &str) -> &str {
@@ -831,18 +805,29 @@ impl Config {
             .map(|action| action.source.as_str())
             .filter(|template| template.contains("%s"))
             .or_else(|| {
-                SEARCH_ENGINE_TEMPLATES
+                SEARCH_ENGINES
                     .iter()
-                    .find(|(id, _)| *id == engine)
-                    .map(|(_, template)| *template)
+                    .find(|(id, _, _)| *id == engine)
+                    .map(|(_, _, template)| *template)
             })
-            .unwrap_or(SEARCH_ENGINE_TEMPLATES[0].1)
+            .unwrap_or(SEARCH_ENGINES[0].2)
+    }
+
+    fn add_missing_prefix(&mut self, prefix: Prefix) -> bool {
+        if self
+            .prefixes
+            .iter()
+            .any(|item| item.id == prefix.id || item.token.eq_ignore_ascii_case(&prefix.token))
+        {
+            return false;
+        }
+        self.prefixes.push(prefix);
+        true
     }
 
     fn add_default_search_prefixes(&mut self) -> bool {
-        let defaults = Config::default();
         let mut changed = false;
-        for action in defaults.user_actions {
+        for action in default_actions() {
             if let Some(existing) = self
                 .user_actions
                 .iter_mut()
@@ -857,26 +842,16 @@ impl Config {
                 changed = true;
             }
         }
-        for prefix in defaults.prefixes {
-            let token_exists = self
-                .prefixes
-                .iter()
-                .any(|item| item.token.eq_ignore_ascii_case(&prefix.token));
-            let id_exists = self.prefixes.iter().any(|item| item.id == prefix.id);
-            if !token_exists && !id_exists {
-                self.prefixes.push(prefix);
-                changed = true;
-            }
+        for prefix in default_prefixes() {
+            changed |= self.add_missing_prefix(prefix);
         }
         changed
     }
 
     fn add_account_search_prefixes(&mut self) -> bool {
-        let defaults = Config::default();
         let ids = ["browser-search", "github-repo-search"];
         let mut changed = false;
-        for action in defaults
-            .user_actions
+        for action in builtin_actions()
             .into_iter()
             .filter(|action| ids.contains(&action.id.as_str()))
         {
@@ -885,8 +860,7 @@ impl Config {
                 changed = true;
             }
         }
-        for prefix in defaults
-            .prefixes
+        for prefix in default_prefixes()
             .into_iter()
             .filter(|prefix| ids.contains(&prefix.id.as_str()))
         {
@@ -897,21 +871,16 @@ impl Config {
             }) {
                 continue;
             }
-            let token_exists = self
-                .prefixes
-                .iter()
-                .any(|item| item.token.eq_ignore_ascii_case(&prefix.token));
-            let id_exists = self.prefixes.iter().any(|item| item.id == prefix.id);
-            if !token_exists && !id_exists {
-                self.prefixes.push(prefix);
-                changed = true;
-            }
+            changed |= self.add_missing_prefix(prefix);
         }
         changed
     }
 
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
-        platform::write_config(&self.saved_bytes(&crate::storage::config_path()?)?)?;
+        platform::write_json(
+            "config.json",
+            &self.saved_bytes(&crate::storage::config_path()?)?,
+        )?;
         Ok(())
     }
 
@@ -1135,9 +1104,7 @@ impl Config {
             && (80..=240).contains(&self.item_size)
             && (0..=64).contains(&self.grid_gap)
             && (1..=10).contains(&self.canvas_speed)
-            && SEARCH_ENGINES
-                .iter()
-                .any(|(id, _)| *id == self.default_search_engine)
+            && Self::search_engine_index_by_id(&self.default_search_engine).is_some()
     }
 }
 
@@ -1427,25 +1394,18 @@ fn migration_backup(
 }
 
 fn read() -> Result<(Config, String), Box<dyn std::error::Error>> {
-    let Some(text) = platform::read_config()? else {
+    let Some(text) = platform::read_json("config.json")? else {
         let config = Config::default();
         config.save()?;
         return Ok((config, String::new()));
     };
-    let Ok(mut config) = parse(&text) else {
-        platform::backup_config()?;
+    let Some(mut config) = parse(&text).ok().filter(Config::valid) else {
+        platform::backup_json("config.json")?;
         return Ok((
             Config::default(),
             "Couldn't read config.json. Saved as config.json.bad; Orbit starts empty.".into(),
         ));
     };
-    if !config.valid() {
-        platform::backup_config()?;
-        return Ok((
-            Config::default(),
-            "Couldn't read config.json. Saved as config.json.bad; Orbit starts empty.".into(),
-        ));
-    }
     let original = config.clone();
     let path = crate::storage::config_path()?;
     let legacy = config.version < 5 || !config.legacy_pages.is_empty();

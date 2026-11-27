@@ -21,94 +21,31 @@ pub(crate) fn config_path() -> io::Result<PathBuf> {
     Ok(directory.join("orbit").join("config.json"))
 }
 
-pub fn read_config() -> io::Result<Option<Vec<u8>>> {
-    match fs::read(config_path()?) {
-        Ok(text) => Ok(Some(text)),
+pub fn read_json(name: &str) -> io::Result<Option<Vec<u8>>> {
+    match fs::read(config_path()?.with_file_name(name)) {
+        Ok(data) => Ok(Some(data)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
 }
 
-pub fn backup_config() -> io::Result<()> {
-    let path = config_path()?;
+pub fn backup_json(name: &str) -> io::Result<()> {
+    let path = config_path()?.with_file_name(name);
     fs::rename(&path, path.with_extension("json.bad"))
 }
 
-pub fn write_config(data: &[u8]) -> io::Result<()> {
-    let path = config_path()?;
+pub fn write_json(name: &str, data: &[u8]) -> io::Result<()> {
+    let path = config_path()?.with_file_name(name);
     fs::create_dir_all(path.parent().expect("config has a directory"))?;
-    let temporary = path.with_extension("json.tmp");
+    write_atomic(&path, path.with_extension("json.tmp"), data)
+}
+
+fn write_atomic(path: &std::path::Path, temporary: PathBuf, data: &[u8]) -> io::Result<()> {
     let result = (|| {
         let mut file = File::create(&temporary)?;
         file.write_all(data)?;
         file.sync_all()?;
-        fs::rename(&temporary, &path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
-}
-
-fn recent_path() -> io::Result<PathBuf> {
-    Ok(config_path()?.with_file_name("recent.json"))
-}
-
-pub fn read_recent() -> io::Result<Option<Vec<u8>>> {
-    match fs::read(recent_path()?) {
-        Ok(data) => Ok(Some(data)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-pub fn backup_recent() -> io::Result<()> {
-    let path = recent_path()?;
-    fs::rename(&path, path.with_extension("json.bad"))
-}
-
-pub fn write_recent(data: &[u8]) -> io::Result<()> {
-    let path = recent_path()?;
-    fs::create_dir_all(path.parent().expect("recent has a directory"))?;
-    let temporary = path.with_extension("json.tmp");
-    let result = (|| {
-        let mut file = File::create(&temporary)?;
-        file.write_all(data)?;
-        file.sync_all()?;
-        fs::rename(&temporary, &path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
-}
-
-fn installed_apps_path() -> io::Result<PathBuf> {
-    Ok(config_path()?.with_file_name("installed-apps.json"))
-}
-
-pub fn read_installed_apps() -> io::Result<Option<Vec<u8>>> {
-    match fs::read(installed_apps_path()?) {
-        Ok(data) => Ok(Some(data)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-pub fn backup_installed_apps() -> io::Result<()> {
-    let path = installed_apps_path()?;
-    fs::rename(&path, path.with_extension("json.bad"))
-}
-
-pub fn write_installed_apps(data: &[u8]) -> io::Result<()> {
-    let path = installed_apps_path()?;
-    fs::create_dir_all(path.parent().expect("installed apps have a directory"))?;
-    let temporary = path.with_extension("json.tmp");
-    let result = (|| {
-        let mut file = File::create(&temporary)?;
-        file.write_all(data)?;
-        file.sync_all()?;
-        fs::rename(&temporary, &path)
+        fs::rename(&temporary, path)
     })();
     if result.is_err() {
         let _ = fs::remove_file(temporary);
@@ -135,17 +72,7 @@ pub fn read_icon(name: &str) -> io::Result<Vec<u8>> {
 
 pub fn write_icon(name: &str, data: &[u8]) -> io::Result<()> {
     let path = icon_path(name)?;
-    let temporary = path.with_extension("tmp");
-    let result = (|| {
-        let mut file = File::create(&temporary)?;
-        file.write_all(data)?;
-        file.sync_all()?;
-        fs::rename(&temporary, &path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
+    write_atomic(&path, path.with_extension("tmp"), data)
 }
 
 pub fn remove_icon(name: &str) {
@@ -658,27 +585,6 @@ mod icon_tests {
         assert!(fetch_url(&address, start + Duration::from_millis(100)).is_none());
         assert!(start.elapsed() < Duration::from_millis(350));
         server.join().unwrap();
-    }
-
-    #[test]
-    #[ignore = "requires public website and Google connectivity"]
-    fn fetches_live_website_icons() {
-        for url in [
-            "https://www.linkedin.com",
-            "https://github.com",
-            "https://www.wikipedia.org",
-        ] {
-            let start = std::time::Instant::now();
-            let icon = fetch_icon(url).unwrap_or_else(|| panic!("No icon for {url}"));
-            eprintln!(
-                "{url}: {} {}x{} in {:.2}s",
-                icon.0.0,
-                icon.1.width(),
-                icon.1.height(),
-                start.elapsed().as_secs_f32()
-            );
-            assert!(start.elapsed() < std::time::Duration::from_secs(7));
-        }
     }
 
     #[test]

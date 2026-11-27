@@ -1,3 +1,5 @@
 /target/
 
 GATES.md
+
+__pycache__/

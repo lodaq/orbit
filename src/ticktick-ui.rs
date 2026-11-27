@@ -1,8 +1,8 @@
+use crate::model;
 use crate::text_direction::text_is_rtl;
 use crate::{Launcher, TickTickProject, TickTickTask, TickTickView, ticktick};
 use chrono::{Datelike, Local, NaiveDate};
-use slint::{ComponentHandle, Model, ModelRc, VecModel};
-use std::rc::Rc;
+use slint::{ComponentHandle, Model, ModelRc};
 
 #[derive(Clone)]
 enum Request {
@@ -32,10 +32,6 @@ enum Response {
     Moved(String, ticktick::Task),
     Done,
     Disconnected,
-}
-
-fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
-    Rc::new(VecModel::from(items)).into()
 }
 
 pub fn connect(ui: &Launcher) {

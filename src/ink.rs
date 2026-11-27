@@ -208,7 +208,7 @@ pub fn connect(launcher: &crate::Launcher) {
                 targets.push(item.id);
             }
         }
-        std::rc::Rc::new(slint::VecModel::from(targets)).into()
+        crate::model(targets)
     });
     launcher.on_preview_erase(|strokes, x1, y1, x2, y2| {
         use slint::Model;
@@ -236,7 +236,7 @@ pub fn connect(launcher: &crate::Launcher) {
                 stroke
             })
             .collect::<Vec<_>>();
-        std::rc::Rc::new(slint::VecModel::from(visible)).into()
+        crate::model(visible)
     });
 }
 

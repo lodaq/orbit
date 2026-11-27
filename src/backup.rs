@@ -49,10 +49,14 @@ pub fn transfer_data(import: bool) -> Result<Option<String>, String> {
 }
 
 fn export_data(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    let config = crate::config::decode(&super::read_config()?.ok_or("Missing config.json")?)?;
-    let recent = serde_json::from_slice(&super::read_recent()?.unwrap_or_else(|| b"[]".to_vec()))?;
-    let installed_apps =
-        serde_json::from_slice(&super::read_installed_apps()?.unwrap_or_else(|| b"[]".to_vec()))?;
+    let config =
+        crate::config::decode(&super::read_json("config.json")?.ok_or("Missing config.json")?)?;
+    let recent = serde_json::from_slice(
+        &super::read_json("recent.json")?.unwrap_or_else(|| b"[]".to_vec()),
+    )?;
+    let installed_apps = serde_json::from_slice(
+        &super::read_json("installed-apps.json")?.unwrap_or_else(|| b"[]".to_vec()),
+    )?;
     let mut backup = Backup {
         version: 5,
         config,

@@ -319,30 +319,7 @@ pub const WIDGET_MIN_SPANS: [(usize, usize); 22] = [
     (3, 2),
     (3, 2),
 ];
-pub const WIDGET_MAX_SPANS: [(usize, usize); 22] = [
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-    (128, 128),
-];
+pub const WIDGET_MAX_SPANS: [(usize, usize); 22] = [(128, 128); WIDGET_SPANS.len()];
 
 pub fn connect(launcher: &crate::Launcher) {
     use slint::Model;
@@ -444,13 +421,12 @@ pub fn connect(launcher: &crate::Launcher) {
             .map(|selected| selected.to_string())
             .collect::<Vec<_>>();
         selection_toggle(&mut selection, &id);
-        std::rc::Rc::new(slint::VecModel::from(
+        crate::model(
             selection
                 .into_iter()
                 .map(slint::SharedString::from)
                 .collect::<Vec<_>>(),
-        ))
-        .into()
+        )
     });
     launcher.on_marquee_select(|items, ink, x1, y1, x2, y2, selection, additive| {
         use slint::Model;
@@ -469,13 +445,12 @@ pub fn connect(launcher: &crate::Launcher) {
                 selected.push(stroke.id.to_string());
             }
         }
-        std::rc::Rc::new(slint::VecModel::from(
+        crate::model(
             selected
                 .into_iter()
                 .map(slint::SharedString::from)
                 .collect::<Vec<_>>(),
-        ))
-        .into()
+        )
     });
     launcher.on_frame_index(|frames, id| {
         use slint::Model;

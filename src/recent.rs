@@ -11,10 +11,10 @@ pub struct Recent {
 
 impl Recent {
     pub fn load() -> (Self, String) {
-        match platform::read_recent() {
+        match platform::read_json("recent.json") {
             Ok(Some(data)) => match serde_json::from_slice::<Self>(&data) {
                 Ok(recent) => (recent, String::new()),
-                Err(_) => match platform::backup_recent() {
+                Err(_) => match platform::backup_json("recent.json") {
                     Ok(()) => (
                         Self::default(),
                         "Couldn't read recent.json. Saved as recent.json.bad; Recent starts empty."
@@ -51,7 +51,8 @@ impl Recent {
     }
 
     pub fn save(&self) -> Result<(), String> {
-        platform::write_recent(
+        platform::write_json(
+            "recent.json",
             &serde_json::to_vec_pretty(self)
                 .map_err(|error| format!("Couldn't save recent.json: {error}"))?,
         )

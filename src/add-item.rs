@@ -10,7 +10,7 @@ pub struct Inventory {
 
 impl Inventory {
     pub fn load() -> (Self, String) {
-        match platform::read_installed_apps() {
+        match platform::read_json("installed-apps.json") {
             Ok(Some(data)) => match serde_json::from_slice::<Vec<InstalledApp>>(&data) {
                 Ok(apps) => {
                     let status = format!("{} apps · Cached inventory", apps.len());
@@ -23,7 +23,7 @@ impl Inventory {
                         String::new(),
                     )
                 }
-                Err(_) => match platform::backup_installed_apps() {
+                Err(_) => match platform::backup_json("installed-apps.json") {
                     Ok(()) => (
                         Self::default(),
                         "Couldn't read installed-apps.json. Saved as installed-apps.json.bad; Installed apps starts empty.".into(),

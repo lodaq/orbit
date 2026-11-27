@@ -1,3 +1,4 @@
+use crate::model;
 use crate::{
     AppTile, AzanSettings, CompletedReference, Launcher, LocalWidgets, WidgetDataEntry, WidgetView,
     widget_data as data, widget_views as widgets,
@@ -239,9 +240,6 @@ pub fn connect(ui: &Launcher) -> slint::Timer {
     timer
 }
 
-fn model<T: Clone + 'static>(entries: Vec<T>) -> slint::ModelRc<T> {
-    std::rc::Rc::new(slint::VecModel::from(entries)).into()
-}
 fn entry_model(entry: data::Entry, done: bool) -> WidgetDataEntry {
     WidgetDataEntry {
         preview: preview(&entry.content).into(),

@@ -1,7 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-const API: &str = "https://api.ticktick.com/open/v1";
+#[cfg(test)]
+thread_local! {
+    static TEST_API: std::cell::OnceCell<String> = const { std::cell::OnceCell::new() };
+}
+
+fn api_url(path: &str) -> String {
+    #[cfg(test)]
+    if let Some(url) = TEST_API.with(|api| api.get().map(|base| format!("{base}{path}"))) {
+        return url;
+    }
+    format!("https://api.ticktick.com/open/v1{path}")
+}
 const KEYRING_SERVICE: &str = "Orbit";
 const KEYRING_USER: &str = "ticktick-api-token";
 
@@ -167,7 +178,7 @@ fn get<T: for<'de> Deserialize<'de>>(
     path: &str,
 ) -> Result<T, String> {
     let response = client
-        .get(format!("{API}{path}"))
+        .get(api_url(path))
         .header("Authorization", format!("Bearer {token}"))
         .call()
         .map_err(request_error)?;
@@ -181,7 +192,7 @@ fn post<B: Serialize>(
     body: &B,
 ) -> Result<(), String> {
     match client
-        .post(format!("{API}{path}"))
+        .post(api_url(path))
         .header("Authorization", format!("Bearer {token}"))
         .send_json(body)
     {
@@ -200,7 +211,7 @@ fn post_json<T: for<'de> Deserialize<'de>, B: Serialize>(
     body: &B,
 ) -> Result<T, String> {
     let response = client
-        .post(format!("{API}{path}"))
+        .post(api_url(path))
         .header("Authorization", format!("Bearer {token}"))
         .send_json(body)
         .map_err(request_error)?;
@@ -332,7 +343,7 @@ fn completed_tasks_with(
         .map(|project| &project.id)
         .collect::<Vec<_>>();
     let response = client
-        .post(format!("{API}/task/completed"))
+        .post(api_url("/task/completed"))
         .header("Authorization", format!("Bearer {token}"))
         .send_json(serde_json::json!({ "projectIds": project_ids }))
         .map_err(request_error)?;
@@ -379,7 +390,7 @@ pub fn create_task_with_details(
         is_all_day: due_date.map(|_| true),
     };
     client
-        .post(format!("{API}/task"))
+        .post(api_url("/task"))
         .header("Authorization", format!("Bearer {token}"))
         .send_json(&body)
         .map_err(request_error)?
@@ -467,7 +478,7 @@ pub fn move_task(
 
 pub fn delete_task(token: &str, project_id: &str, id: &str) -> Result<(), String> {
     agent()
-        .delete(format!("{API}/project/{project_id}/task/{id}"))
+        .delete(api_url(&format!("/project/{project_id}/task/{id}")))
         .header("Authorization", format!("Bearer {token}"))
         .call()
         .map(|_| ())
@@ -476,7 +487,9 @@ pub fn delete_task(token: &str, project_id: &str, id: &str) -> Result<(), String
 
 pub fn complete_task(token: &str, project_id: &str, id: &str) -> Result<(), String> {
     agent()
-        .post(format!("{API}/project/{project_id}/task/{id}/complete"))
+        .post(api_url(&format!(
+            "/project/{project_id}/task/{id}/complete"
+        )))
         .header("Authorization", format!("Bearer {token}"))
         .send_empty()
         .map(|_| ())
@@ -579,187 +592,165 @@ pub(crate) fn activate_secret_service() -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod move_tests {
+pub(crate) mod tests {
     use super::*;
+    use serde_json::{Value, json};
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
 
-    #[test]
-    #[ignore = "uses the configured TickTick account"]
-    fn fetch_all_tasks() {
-        let start = std::time::Instant::now();
-        let token = load_token().unwrap().expect("TickTick must be connected");
-        let (projects, tasks) = all_tasks(&token).unwrap();
-        println!(
-            "Fetched {} projects and {} tasks in {:?}",
-            projects.len(),
-            tasks.len(),
-            start.elapsed()
-        );
-    }
+    pub(crate) struct Exchange(pub &'static str, pub Option<Value>, pub Value);
 
-    #[test]
-    #[ignore = "uses the configured TickTick account"]
-    fn create_delete_test_task() {
-        let token = load_token().unwrap().expect("TickTick must be connected");
-        let inbox = inbox_project(&token).unwrap();
-        let due = chrono::Local::now()
-            .format("%Y-%m-%dT00:00:00+0000")
-            .to_string();
-        let created = create_task_with_details(
-            &token,
-            &inbox.id,
-            "Orbit delete test",
-            "",
-            0,
-            &[],
-            Some(&due),
-        )
-        .unwrap();
-        println!(
-            "CREATED '{}' id={} project={} due={}",
-            created.title, created.id, created.project_id, created.due_date
-        );
-    }
-
-    #[test]
-    #[ignore = "uses the configured TickTick account"]
-    fn report_task_lists() {
-        let token = load_token().unwrap().expect("TickTick must be connected");
-        let client = agent();
-        let mut projects = projects(&token).unwrap();
-        projects.push(inbox_project(&token).unwrap());
-        for project in &projects {
-            let Ok(data) = client
-                .get(format!("{API}/project/{}/data", project.id))
-                .header("Authorization", format!("Bearer {token}"))
-                .call()
-            else {
-                continue;
-            };
-            let value = data.into_body().read_json::<serde_json::Value>().unwrap();
-            let Some(tasks) = value.get("tasks").and_then(|t| t.as_array()) else {
-                continue;
-            };
-            for task in tasks {
-                let title = task["title"].as_str().unwrap_or("");
-                if title == "tracky" {
-                    println!(
-                        "'tracky' is in list '{}' (id {}) priority={} due={:?} id={}",
-                        project.name, project.id, task["priority"], task["dueDate"], task["id"]
-                    );
+    pub(crate) fn serve(exchanges: Vec<Exchange>) -> std::thread::JoinHandle<()> {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        TEST_API.with(|api| {
+            api.set(format!("http://{}", listener.local_addr().unwrap()))
+                .unwrap()
+        });
+        std::thread::spawn(move || {
+            for Exchange(request, expected, response) in exchanges {
+                let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(std::time::Instant::now() < deadline, "missing {request}");
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("accepting {request}: {error}"),
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut reader = BufReader::new(&stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                assert_eq!(line.trim_end().strip_suffix(" HTTP/1.1"), Some(request));
+                let mut content_length = 0;
+                let mut authorized = false;
+                loop {
+                    line.clear();
+                    assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    let (name, value) = line.split_once(':').unwrap();
+                    if name.eq_ignore_ascii_case("content-length") {
+                        content_length = value.trim().parse().unwrap();
+                    }
+                    if name.eq_ignore_ascii_case("authorization") {
+                        authorized = value.trim() == "Bearer test-token";
+                    }
                 }
+                assert!(authorized);
+                let mut body = vec![0; content_length];
+                reader.read_exact(&mut body).unwrap();
+                let body =
+                    (!body.is_empty()).then(|| serde_json::from_slice::<Value>(&body).unwrap());
+                assert_eq!(body, expected);
+
+                let response = response.to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{response}",
+                    response.len()
+                )
+                .unwrap();
             }
-        }
+        })
     }
 
     #[test]
-    #[ignore = "uses the configured TickTick account"]
-    fn clean_up_probe_tasks() {
-        let token = load_token().unwrap().expect("TickTick must be connected");
-        let client = agent();
-        let mut projects = projects(&token).unwrap();
-        projects.push(inbox_project(&token).unwrap());
-        for project in &projects {
-            let Ok(data) = client
-                .get(format!("{API}/project/{}/data", project.id))
-                .header("Authorization", format!("Bearer {token}"))
-                .call()
-            else {
-                continue;
+    fn all_tasks_merges_projects_inbox_scheduled_and_completed() {
+        let open = json!({"id": "open", "projectId": "work"});
+        let inbox = json!({"id": "inbox-task", "projectId": "inbox"});
+        let scheduled = json!({"id": "scheduled", "projectId": "work"});
+        let completed = json!({"id": "completed", "projectId": "work", "status": 2});
+        let mut exchanges = vec![
+            Exchange(
+                "GET /project?limit=200&offset=0",
+                None,
+                json!([{"id": "work"}]),
+            ),
+            Exchange("GET /project/work/data", None, json!({"tasks": [open]})),
+            Exchange("GET /project/inbox/data", None, json!({"tasks": [inbox]})),
+        ];
+        for priority in [5, 3, 1, 0] {
+            let response = if priority == 5 {
+                json!([open, scheduled])
+            } else {
+                json!([])
             };
-            let value = data.into_body().read_json::<serde_json::Value>().unwrap();
-            let Some(tasks) = value.get("tasks").and_then(|t| t.as_array()) else {
-                continue;
-            };
-            for task in tasks {
-                let title = task["title"].as_str().unwrap_or("");
-                if title.starts_with("Orbit move") || title.starts_with("Orbit probe") {
-                    let id = task["id"].as_str().unwrap();
-                    let result = client
-                        .delete(format!("{API}/project/{}/task/{}", project.id, id))
-                        .header("Authorization", format!("Bearer {token}"))
-                        .call();
-                    println!(
-                        "DELETE '{title}' from {}: {:?}",
-                        project.name,
-                        result.map(|r| r.status()).map_err(|e| e.to_string())
-                    );
-                }
-            }
+            exchanges.push(Exchange(
+                "POST /task/filter",
+                Some(json!({"status": [0], "priority": [priority]})),
+                response,
+            ));
         }
+        exchanges.push(Exchange(
+            "POST /task/completed",
+            Some(json!({"projectIds": ["work", "inbox"]})),
+            json!([completed]),
+        ));
+        let server = serve(exchanges);
+        let (projects, tasks) = all_tasks("test-token").unwrap();
+        assert_eq!(
+            projects
+                .iter()
+                .map(|project| project.id.as_str())
+                .collect::<Vec<_>>(),
+            ["work", "inbox"]
+        );
+        assert!(projects[1].inbox);
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<Vec<_>>(),
+            ["open", "inbox-task", "scheduled", "completed"]
+        );
+        server.join().unwrap();
     }
 
     #[test]
-    #[ignore = "uses the configured TickTick account"]
-    fn move_task_keeps_every_field_and_removes_the_original() {
-        let token = load_token().unwrap().expect("TickTick must be connected");
-        let projects = projects(&token).unwrap();
-        let inbox = inbox_project(&token).unwrap();
-        let other = projects
-            .iter()
-            .find(|p| p.id != inbox.id)
-            .expect("a second list");
-
-        let created = create_task_with_details(
-            &token,
-            &inbox.id,
-            "Orbit move test",
-            "notes here",
-            5,
-            &["movetag".into()],
-            Some("2026-10-21T00:00:00+0000"),
-        )
-        .unwrap();
-        let id = created.id.clone();
-
+    fn move_task_copies_fields_before_deleting_original() {
+        let due = "2026-11-30T00:00:00+0000";
+        let start = "2026-11-29T00:00:00+0000";
+        let server = serve(vec![
+            Exchange(
+                "GET /project/inbox/task/old",
+                None,
+                json!({"id": "old", "projectId": "inbox", "startDate": start}),
+            ),
+            Exchange(
+                "POST /task",
+                Some(json!({
+                    "projectId": "work", "title": "Renamed", "content": "Notes", "desc": "Details",
+                    "priority": 5, "tags": ["tag"], "isAllDay": true, "dueDate": due, "startDate": start
+                })),
+                json!({"id": "new", "projectId": "work"}),
+            ),
+            Exchange("DELETE /project/inbox/task/old", None, Value::Null),
+        ]);
         let moved = move_task(
-            &token,
-            &id,
-            &inbox.id,
-            &other.id,
+            "test-token",
+            "old",
+            "inbox",
+            "work",
             TaskChanges {
-                title: "Orbit move test renamed",
-                content: "notes changed",
-                desc: "",
-                priority: created.priority,
-                tags: &created.tags,
-                due_date: Some(&created.due_date),
+                title: "Renamed",
+                content: "Notes",
+                desc: "Details",
+                priority: 5,
+                tags: &["tag".into()],
+                due_date: Some(due),
             },
         )
         .unwrap();
-
-        assert_eq!(moved.project_id, other.id);
-        assert_eq!(moved.title, "Orbit move test renamed");
-        assert_eq!(moved.content, "notes changed");
-        assert_eq!(moved.priority, 5, "priority must survive the move");
-        assert_eq!(moved.tags, ["movetag"], "tags must survive the move");
-        assert!(
-            !moved.due_date.is_empty(),
-            "the due date must survive the move"
-        );
-        assert_ne!(moved.id, id, "the move makes a new task");
-
-        // The original must be gone from the list it was in. The per-task GET
-        // endpoint does not check the list, so the list contents are the truth.
-        let old_list = project_tasks(&token, &inbox.id).unwrap();
-        assert!(
-            !old_list.iter().any(|task| task.id == id),
-            "the original task must leave the old list"
-        );
-        let new_list = project_tasks(&token, &other.id).unwrap();
-        assert!(
-            new_list.iter().any(|task| task.id == moved.id),
-            "the moved task must be in the new list"
-        );
-
-        // The copy is in the new list.
-        let new = get::<Task>(
-            &agent(),
-            &token,
-            &format!("/project/{}/task/{}", other.id, moved.id),
-        )
-        .unwrap();
-        assert_eq!(new.project_id, other.id);
-
-        delete_task(&token, &other.id, &moved.id).unwrap();
+        assert_eq!(moved.id, "new");
+        assert_eq!(moved.project_id, "work");
+        server.join().unwrap();
     }
 }

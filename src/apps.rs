@@ -216,20 +216,7 @@ pub fn connect(launcher: &Launcher) {
         let (config, banner) = config::load();
         let (recent, recent_banner) = recent::Recent::load();
         let (inventory, inventory_banner) = Inventory::load();
-        let mut apps = Apps {
-            edits: Default::default(),
-            add_position: (0, 0),
-            config,
-            icons: HashMap::new(),
-            open_folder: None,
-            pending_reveal: None,
-            inventory,
-            installed_filter: String::new(),
-            query: String::new(),
-            search_paths: None,
-            search_image: None,
-            recent,
-        };
+        let mut apps = Apps::new(config, inventory, recent);
         let banner = apps.load_icons().err().unwrap_or(banner);
         let banner = if banner.is_empty() {
             recent_banner
@@ -520,6 +507,15 @@ pub fn connect(launcher: &Launcher) {
 }
 
 fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSequence>) {
+    // Each callback owns a sender because Slint keeps it after this function returns.
+    macro_rules! forward {
+        ($callback:ident($($arg:ident),*) => $action:expr) => {{
+            let sender = send.clone();
+            launcher.$callback(move |$($arg),*| {
+                let _ = sender.send($action);
+            });
+        }};
+    }
     let sender = send.clone();
     launcher.on_edit_canvas(move |command, selection, x, y| {
         use slint::Model;
@@ -568,23 +564,10 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             })
             .unwrap_or(0) as i32
     });
-    let sender = send.clone();
-    launcher.on_save_appearance(move |size, gap, speed| {
-        let _ = sender.send(Action::SaveAppearance(size, gap, speed));
-    });
-    let sender = send.clone();
-    launcher.on_save_background_folder(move |path| {
-        let _ = sender.send(Action::SaveBackgroundFolder(path.into()));
-    });
-    let sender = send.clone();
-    launcher.on_change_background_image(move || {
-        let _ = sender.send(Action::ChangeBackground);
-    });
-    let sender = send.clone();
-    launcher.on_choose_background_image(move || {
-        let _ = sender.send(Action::ChooseBackgroundImage);
-    });
-    let sender = send.clone();
+    forward!(on_save_appearance(size, gap, speed) => Action::SaveAppearance(size, gap, speed));
+    forward!(on_save_background_folder(path) => Action::SaveBackgroundFolder(path.into()));
+    forward!(on_change_background_image() => Action::ChangeBackground);
+    forward!(on_choose_background_image() => Action::ChooseBackgroundImage);
     let cursor_ui = launcher.as_weak();
     launcher.on_sync_native_search_cursor(move |hidden| {
         if let Some(ui) = cursor_ui.upgrade() {
@@ -595,28 +578,18 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     launcher.on_save_layout_locked(move |locked| {
         let _ = lock_sender.send(Action::SaveLayoutLocked(locked));
     });
-    launcher.on_save_smooth_cursor(move |enabled| {
-        let _ = sender.send(Action::SaveSmoothCursor(enabled));
-    });
-    let sender = send.clone();
-    launcher.on_save_default_search_engine(move |index| {
-        let _ = sender.send(Action::SaveDefaultSearchEngine(index));
-    });
-    let sender = send.clone();
-    launcher.on_transfer_data(move |import| {
-        let _ = sender.send(Action::TransferData(import));
-    });
-    let sender = send.clone();
+    forward!(on_save_smooth_cursor(enabled) => Action::SaveSmoothCursor(enabled));
+    forward!(on_save_default_search_engine(index) => Action::SaveDefaultSearchEngine(index));
+    forward!(on_transfer_data(import) => Action::TransferData(import));
     launcher
         .global::<crate::TextDirection>()
         .on_is_rtl(|text| crate::text_direction::text_is_rtl(&text));
     launcher.global::<crate::TextDirection>().on_lines(|text| {
-        std::rc::Rc::new(slint::VecModel::from(
+        crate::model(
             text.split('\n')
                 .map(slint::SharedString::from)
                 .collect::<Vec<_>>(),
-        ))
-        .into()
+        )
     });
     launcher.on_text_is_rtl(|text| crate::text_direction::text_is_rtl(&text));
     launcher.on_first_letter(|name| crate::icons::first_letter(&name).into());
@@ -656,35 +629,13 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             .iter()
             .filter(|script| script.name.to_lowercase().contains(filter.as_str()))
             .collect::<Vec<_>>();
-        std::rc::Rc::new(slint::VecModel::from(matches)).into()
+        crate::model(matches)
     });
-    launcher.on_save_script({
-        let sender = send.clone();
-        move |id, name, path| {
-            let _ = sender.send(Action::SaveScript(id.into(), name.into(), path.into()));
-        }
-    });
-    launcher.on_delete_script({
-        let sender = send.clone();
-        move |id| {
-            let _ = sender.send(Action::DeleteScript(id.into()));
-        }
-    });
-    launcher.on_choose_script({
-        let sender = send.clone();
-        move || {
-            let _ = sender.send(Action::ChooseScript);
-        }
-    });
-    launcher.on_run_script({
-        let sender = send.clone();
-        move |id, text| {
-            let _ = sender.send(Action::RunScript(id.into(), text.into()));
-        }
-    });
-    launcher.on_search(move |query| {
-        let _ = sender.send(Action::Search(query.into()));
-    });
+    forward!(on_save_script(id, name, path) => Action::SaveScript(id.into(), name.into(), path.into()));
+    forward!(on_delete_script(id) => Action::DeleteScript(id.into()));
+    forward!(on_choose_script() => Action::ChooseScript);
+    forward!(on_run_script(id, text) => Action::RunScript(id.into(), text.into()));
+    forward!(on_search(query) => Action::Search(query.into()));
     let sender = send.clone();
     let prefix_ui = launcher.as_weak();
     launcher.on_run_prefix(move |action, argument| {
@@ -700,22 +651,10 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         }
         let _ = sender.send(Action::RunPrefix(action.into(), argument.into()));
     });
-    let sender = send.clone();
-    launcher.on_search_web(move |query, engine| {
-        let _ = sender.send(Action::SearchWeb(query.into(), engine.into()));
-    });
-    let sender = send.clone();
-    launcher.on_paste_search(move || {
-        let _ = sender.send(Action::PasteSearch);
-    });
-    let sender = send.clone();
-    launcher.on_clear_search_image(move || {
-        let _ = sender.send(Action::ClearSearchImage);
-    });
-    let sender = send.clone();
-    launcher.on_search_image_query(move |query| {
-        let _ = sender.send(Action::SearchImage(query.into()));
-    });
+    forward!(on_search_web(query, engine) => Action::SearchWeb(query.into(), engine.into()));
+    forward!(on_paste_search() => Action::PasteSearch);
+    forward!(on_clear_search_image() => Action::ClearSearchImage);
+    forward!(on_search_image_query(query) => Action::SearchImage(query.into()));
     let sender = send.clone();
     launcher.on_save_user_action(move |id, name, kind, source, description, tokens| {
         let _ = sender.send(Action::SaveNamedCommand(
@@ -727,43 +666,14 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             tokens.into(),
         ));
     });
-    let sender = send.clone();
-    launcher.on_delete_user_action(move |id| {
-        let _ = sender.send(Action::DeleteNamedCommand(id.into()));
-    });
-    let sender = send.clone();
-    launcher.on_save_prefix(move |id, name, token, action| {
-        let _ = sender.send(Action::SavePrefix(
-            id.into(),
-            name.into(),
-            token.into(),
-            action.into(),
-        ));
-    });
-    let sender = send.clone();
-    launcher.on_delete_prefix(move |id| {
-        let _ = sender.send(Action::DeletePrefix(id.into()));
-    });
-    let sender = send.clone();
-    launcher.on_open_result(move |item| {
-        let _ = sender.send(Action::OpenResult(item.into()));
-    });
-    let sender = send.clone();
-    launcher.on_open_dock_item(move |item| {
-        let _ = sender.send(Action::OpenDock(item.into()));
-    });
-    let sender = send.clone();
-    launcher.on_pin_item(move |id| {
-        let _ = sender.send(Action::Pin(id.into()));
-    });
-    let sender = send.clone();
-    launcher.on_unpin_dock_item(move |id| {
-        let _ = sender.send(Action::Unpin(id.into()));
-    });
-    let sender = send.clone();
-    launcher.on_remove_recent_item(move |id| {
-        let _ = sender.send(Action::RemoveRecent(id.into()));
-    });
+    forward!(on_delete_user_action(id) => Action::DeleteNamedCommand(id.into()));
+    forward!(on_save_prefix(id, name, token, action) => Action::SavePrefix(id.into(), name.into(), token.into(), action.into()));
+    forward!(on_delete_prefix(id) => Action::DeletePrefix(id.into()));
+    forward!(on_open_result(item) => Action::OpenResult(item.into()));
+    forward!(on_open_dock_item(item) => Action::OpenDock(item.into()));
+    forward!(on_pin_item(id) => Action::Pin(id.into()));
+    forward!(on_unpin_dock_item(id) => Action::Unpin(id.into()));
+    forward!(on_remove_recent_item(id) => Action::RemoveRecent(id.into()));
     let sender = send.clone();
     let requests_for_save = requests.clone();
     launcher.on_save_app(move |index, name, command, svg| {
@@ -794,30 +704,12 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         let request = requests_for_refresh.issue();
         let _ = sender.send(Action::RefreshInstalledApps(request));
     });
-    let sender = send.clone();
-    launcher.on_save_app_search_path(move |path, remove| {
-        let _ = sender.send(Action::SaveAppSearchPath(path.into(), remove));
-    });
-    let sender = send.clone();
-    launcher.on_save_search_path(move |directory, index, path| {
-        let _ = sender.send(Action::SaveSearchPath(directory, index, path.into()));
-    });
-    let sender = send.clone();
-    launcher.on_add_file_search_exclusion(move |name| {
-        let _ = sender.send(Action::AddFileSearchExclusion(name.into()));
-    });
-    let sender = send.clone();
-    launcher.on_remove_file_search_exclusion(move |name| {
-        let _ = sender.send(Action::RemoveFileSearchExclusion(name.into()));
-    });
-    let sender = send.clone();
-    launcher.on_delete_search_path(move |directory, index| {
-        let _ = sender.send(Action::DeleteSearchPath(directory, index as usize));
-    });
-    let sender = send.clone();
-    launcher.on_filter_installed_apps(move |filter| {
-        let _ = sender.send(Action::FilterInstalled(filter.to_lowercase()));
-    });
+    forward!(on_save_app_search_path(path, remove) => Action::SaveAppSearchPath(path.into(), remove));
+    forward!(on_save_search_path(directory, index, path) => Action::SaveSearchPath(directory, index, path.into()));
+    forward!(on_add_file_search_exclusion(name) => Action::AddFileSearchExclusion(name.into()));
+    forward!(on_remove_file_search_exclusion(name) => Action::RemoveFileSearchExclusion(name.into()));
+    forward!(on_delete_search_path(directory, index) => Action::DeleteSearchPath(directory, index as usize));
+    forward!(on_filter_installed_apps(filter) => Action::FilterInstalled(filter.to_lowercase()));
     let sender = send.clone();
     let requests_for_website = requests.clone();
     let website_icons = crate::website_icons::connect(launcher);
@@ -857,22 +749,10 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
     });
     let requests_for_cancel = requests;
     launcher.on_cancel_add(move || requests_for_cancel.cancel());
-    let sender = send.clone();
-    launcher.on_delete_item(move |index| {
-        let _ = sender.send(Action::Delete(index.into()));
-    });
-    let sender = send.clone();
-    launcher.on_open_item(move |index| {
-        let _ = sender.send(Action::Open(index.into()));
-    });
-    let sender = send.clone();
-    launcher.on_save_shortcut(move |action, existing, keys| {
-        let _ = sender.send(Action::SaveShortcut(action, existing.into(), keys.into()));
-    });
-    let sender = send.clone();
-    launcher.on_delete_shortcut(move |action, keys| {
-        let _ = sender.send(Action::DeleteShortcut(action, keys.into()));
-    });
+    forward!(on_delete_item(index) => Action::Delete(index.into()));
+    forward!(on_open_item(index) => Action::Open(index.into()));
+    forward!(on_save_shortcut(action, existing, keys) => Action::SaveShortcut(action, existing.into(), keys.into()));
+    forward!(on_delete_shortcut(action, keys) => Action::DeleteShortcut(action, keys.into()));
     let sender = send.clone();
     launcher.on_save_frame(move |id, name, keys, items| {
         use slint::Model;
@@ -887,14 +767,8 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             items,
         ));
     });
-    let sender = send.clone();
-    launcher.on_delete_frame(move |id| {
-        let _ = sender.send(Action::DeleteFrame(id.into()));
-    });
-    let sender = send.clone();
-    launcher.on_fit_frame_action(move |id, width, height| {
-        let _ = sender.send(Action::FitFrame(id.into(), width, height));
-    });
+    forward!(on_delete_frame(id) => Action::DeleteFrame(id.into()));
+    forward!(on_fit_frame_action(id, width, height) => Action::FitFrame(id.into(), width, height));
     let sender = send.clone();
     launcher.on_add_ink(move |points, color, size, opacity, mode| {
         use slint::Model;
@@ -915,10 +789,7 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             },
         ));
     });
-    let sender = send.clone();
-    launcher.on_save_font_size(move |size| {
-        let _ = sender.send(Action::SaveFontSize(size));
-    });
+    forward!(on_save_font_size(size) => Action::SaveFontSize(size));
     let sender = send.clone();
     launcher.on_style_selection({
         let sender = send.clone();
@@ -964,30 +835,11 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
                 .collect(),
         ));
     });
-    let sender = send.clone();
-    launcher.on_set_add_position(move |x, y| {
-        let _ = sender.send(Action::AddPosition(x.round() as i32, y.round() as i32));
-    });
-    let sender = send.clone();
-    launcher.on_show_all_items(move |width, height| {
-        let _ = sender.send(Action::ShowAll(width, height));
-    });
-    let sender = send.clone();
-    launcher.on_add_widget(move |variant, col, row, auto| {
-        let _ = sender.send(Action::Widget(variant as usize, col, row, auto));
-    });
-    let sender = send.clone();
-    launcher.on_resize_item(move |id, width, height| {
-        let _ = sender.send(Action::ResizeItem(
-            id.into(),
-            width as usize,
-            height as usize,
-        ));
-    });
-    let sender = send.clone();
-    launcher.on_duplicate_widget(move |id| {
-        let _ = sender.send(Action::DuplicateWidget(id.into()));
-    });
+    forward!(on_set_add_position(x, y) => Action::AddPosition(x.round() as i32, y.round() as i32));
+    forward!(on_show_all_items(width, height) => Action::ShowAll(width, height));
+    forward!(on_add_widget(variant, col, row, auto) => Action::Widget(variant as usize, col, row, auto));
+    forward!(on_resize_item(id, width, height) => Action::ResizeItem(id.into(), width as usize, height as usize));
+    forward!(on_duplicate_widget(id) => Action::DuplicateWidget(id.into()));
     let widget_ui = launcher.as_weak();
     launcher.on_ticktick_selected_project(move |id| {
         widget_ui
@@ -1001,14 +853,8 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             })
             .unwrap_or_default()
     });
-    let sender = send.clone();
-    launcher.on_select_ticktick_list(move |widget, project| {
-        let _ = sender.send(Action::SelectTickTickList(widget.into(), project.into()));
-    });
-    let sender = send.clone();
-    launcher.on_save_search_result(move |item, col, row, pin| {
-        let _ = sender.send(Action::SaveSearchResult(item.into(), col, row, pin));
-    });
+    forward!(on_select_ticktick_list(widget, project) => Action::SelectTickTickList(widget.into(), project.into()));
+    forward!(on_save_search_result(item, col, row, pin) => Action::SaveSearchResult(item.into(), col, row, pin));
     let sender = send.clone();
     launcher.on_move_selection(move |ids, dx, dy| {
         use slint::Model;
@@ -1018,25 +864,30 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
             dy,
         ));
     });
-    let sender = send.clone();
-    launcher.on_drop_item(move |id, col, row, into| {
-        let _ = sender.send(Action::Drop(id.into(), col, row, into.into()));
-    });
-    let sender = send.clone();
-    launcher.on_open_folder(move |index| {
-        let _ = sender.send(Action::OpenFolder(index.into()));
-    });
-    let sender = send.clone();
-    launcher.on_close_folder(move || {
-        let _ = sender.send(Action::CloseFolder);
-    });
-    let sender = send.clone();
-    launcher.on_launch_folder_app(move |folder, app| {
-        let _ = sender.send(Action::LaunchFolder(folder.into(), app.into()));
-    });
+    forward!(on_drop_item(id, col, row, into) => Action::Drop(id.into(), col, row, into.into()));
+    forward!(on_open_folder(index) => Action::OpenFolder(index.into()));
+    forward!(on_close_folder() => Action::CloseFolder);
+    forward!(on_launch_folder_app(folder, app) => Action::LaunchFolder(folder.into(), app.into()));
 }
 
 impl Apps {
+    fn new(config: Config, inventory: Inventory, recent: recent::Recent) -> Self {
+        Self {
+            edits: Default::default(),
+            add_position: (0, 0),
+            config,
+            icons: HashMap::new(),
+            open_folder: None,
+            pending_reveal: None,
+            inventory,
+            installed_filter: String::new(),
+            query: String::new(),
+            search_paths: None,
+            search_image: None,
+            recent,
+        }
+    }
+
     fn recent_id(&self, action: &Action) -> Option<String> {
         let id = match action {
             Action::Open(id) | Action::LaunchFolder(_, id) => id,
@@ -2252,7 +2103,8 @@ impl Apps {
         if !requests.is_current(request) {
             return Ok(());
         }
-        platform::write_installed_apps(
+        platform::write_json(
+            "installed-apps.json",
             &serde_json::to_vec_pretty(&installed_apps)
                 .map_err(|error| format!("Couldn't save installed apps: {error}"))?,
         )
@@ -2387,46 +2239,10 @@ impl Apps {
     }
 
     fn update_installed_apps(&self, weak: &slint::Weak<Launcher>) {
-        let installed_apps: Vec<_> = self
-            .inventory
-            .apps()
-            .iter()
-            .filter(|app| {
-                self.installed_filter.is_empty()
-                    || app.name.to_lowercase().starts_with(&self.installed_filter)
-            })
-            .map(|app| {
-                (
-                    app.id.clone(),
-                    app.name.clone(),
-                    app.command.clone(),
-                    self.icons.get(&app.id).cloned(),
-                )
-            })
-            .collect();
+        let installed_apps = self.installed_app_rows();
         let has_match = !installed_apps.is_empty();
         let _ = weak.upgrade_in_event_loop(move |launcher| {
-            let installed_apps = installed_apps
-                .into_iter()
-                .map(|(id, name, command, icon)| {
-                    let icon_present = icon.is_some();
-                    InstalledAppTile {
-                        command: command.into(),
-                        letter: name
-                            .chars()
-                            .next()
-                            .map(|letter| letter.to_string())
-                            .unwrap_or_default()
-                            .into(),
-                        id: id.into(),
-                        name: name.into(),
-                        icon: icon.map(slint::Image::from_rgba8).unwrap_or_default(),
-                        icon_present,
-                    }
-                })
-                .collect::<Vec<_>>();
-            launcher
-                .set_installed_apps(std::rc::Rc::new(slint::VecModel::from(installed_apps)).into());
+            launcher.set_installed_apps(installed_apps_model(installed_apps));
             launcher.set_installed_apps_match(has_match);
         });
     }
@@ -2526,15 +2342,7 @@ impl Apps {
     fn update_search_results(&self, weak: &slint::Weak<Launcher>) {
         let results = self.compute_search_results();
         let apply = move |launcher: Launcher| {
-            launcher.set_search_results(
-                std::rc::Rc::new(slint::VecModel::from(
-                    results
-                        .into_iter()
-                        .map(Tile::into_slint)
-                        .collect::<Vec<_>>(),
-                ))
-                .into(),
-            );
+            launcher.set_search_results(tile_model(results));
         };
         if let Some(launcher) = weak.upgrade() {
             apply(launcher);
@@ -2664,15 +2472,12 @@ impl Apps {
             self.reveal(id, weak);
         }
         let _ = weak.upgrade_in_event_loop(move |ui| {
-            ui.set_selected_ids(
-                std::rc::Rc::new(slint::VecModel::from(
-                    selected
-                        .into_iter()
-                        .map(slint::SharedString::from)
-                        .collect::<Vec<_>>(),
-                ))
-                .into(),
-            );
+            ui.set_selected_ids(crate::model(
+                selected
+                    .into_iter()
+                    .map(slint::SharedString::from)
+                    .collect::<Vec<_>>(),
+            ));
         });
         Ok(())
     }
@@ -3068,9 +2873,7 @@ impl Apps {
         self.reveal(&id, weak);
         let canvas = self.config.canvas.clone();
         weak.upgrade_in_event_loop(move |ui| {
-            ui.set_selected_ids(
-                std::rc::Rc::new(slint::VecModel::from(vec![slint::SharedString::from(id)])).into(),
-            );
+            ui.set_selected_ids(crate::model(vec![slint::SharedString::from(id)]));
             crate::canvas::sync(&ui, &canvas, true);
         })
         .map_err(|error| error.to_string())
@@ -3470,19 +3273,16 @@ impl Apps {
         let can_redo = self.edits.target(true).is_some();
         let can_paste = true;
         let apply = move |launcher: Launcher| {
-            set_items(&launcher, items);
+            launcher.set_items(tile_model(items));
             set_tiles(&launcher, dock, recent, results);
             launcher.set_actions(actions_model());
             launcher.set_installed_apps(installed_apps_model(installed_apps));
             launcher.set_installed_status(installed_status.into());
             launcher.set_installed_apps_loaded(installed_apps_loaded);
             launcher.set_installed_apps_match(installed_apps_match);
-            launcher.set_frames(
-                std::rc::Rc::new(slint::VecModel::from(
-                    frames.into_iter().map(|view| view()).collect::<Vec<_>>(),
-                ))
-                .into(),
-            );
+            launcher.set_frames(crate::model(
+                frames.into_iter().map(|view| view()).collect::<Vec<_>>(),
+            ));
             launcher.set_can_undo(can_undo);
             launcher.set_can_redo(can_redo);
             launcher.set_can_paste(can_paste);
@@ -3768,42 +3568,27 @@ impl SettingsSnapshot {
         } else {
             launcher.set_background_image_active(false);
         }
-        launcher.set_search_engine_names(
-            std::rc::Rc::new(slint::VecModel::from(
-                Config::search_engine_names()
-                    .into_iter()
-                    .map(slint::SharedString::from)
-                    .collect::<Vec<_>>(),
-            ))
-            .into(),
-        );
+        launcher.set_search_engine_names(crate::model(
+            Config::search_engine_names()
+                .into_iter()
+                .map(slint::SharedString::from)
+                .collect::<Vec<_>>(),
+        ));
         launcher.set_smooth_cursor(self.smooth_cursor);
         launcher.set_layout_locked(self.layout_locked);
         launcher.set_google_search_engine_index(self.google_engine_index);
         launcher.invoke_default_search_engine_saved(self.search_engine_index);
         launcher.set_shortcuts(crate::shortcuts::model(self.shortcuts));
-        launcher.set_shortcut_hints(
-            std::rc::Rc::new(slint::VecModel::from(self.shortcut_hints)).into(),
-        );
-        launcher.set_scripts(std::rc::Rc::new(slint::VecModel::from(self.scripts)).into());
-        launcher
-            .set_user_actions(std::rc::Rc::new(slint::VecModel::from(self.user_actions)).into());
-        launcher
-            .set_action_names(std::rc::Rc::new(slint::VecModel::from(self.action_names)).into());
-        launcher.set_prefixes(std::rc::Rc::new(slint::VecModel::from(self.prefixes)).into());
+        launcher.set_shortcut_hints(crate::model(self.shortcut_hints));
+        launcher.set_scripts(crate::model(self.scripts));
+        launcher.set_user_actions(crate::model(self.user_actions));
+        launcher.set_action_names(crate::model(self.action_names));
+        launcher.set_prefixes(crate::model(self.prefixes));
         launcher.set_shortcut_groups(shortcut_groups_model(self.shortcut_groups));
-        launcher.set_app_search_paths(
-            std::rc::Rc::new(slint::VecModel::from(self.app_search_paths)).into(),
-        );
-        launcher.set_file_search_paths(
-            std::rc::Rc::new(slint::VecModel::from(self.file_search_paths)).into(),
-        );
-        launcher.set_file_search_exclusions(
-            std::rc::Rc::new(slint::VecModel::from(self.file_search_exclusions)).into(),
-        );
-        launcher.set_directory_search_paths(
-            std::rc::Rc::new(slint::VecModel::from(self.directory_search_paths)).into(),
-        );
+        launcher.set_app_search_paths(crate::model(self.app_search_paths));
+        launcher.set_file_search_paths(crate::model(self.file_search_paths));
+        launcher.set_file_search_exclusions(crate::model(self.file_search_exclusions));
+        launcher.set_directory_search_paths(crate::model(self.directory_search_paths));
     }
 }
 
@@ -3812,31 +3597,13 @@ fn shared_strings(entries: &[String]) -> Vec<slint::SharedString> {
 }
 
 fn set_tiles(launcher: &Launcher, dock: Vec<Tile>, recent: Vec<Tile>, results: Vec<Tile>) {
-    launcher.set_dock_items(
-        std::rc::Rc::new(slint::VecModel::from(
-            dock.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
-        ))
-        .into(),
-    );
-    launcher.set_recent_items(
-        std::rc::Rc::new(slint::VecModel::from(
-            recent.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
-        ))
-        .into(),
-    );
-    launcher.set_search_results(
-        std::rc::Rc::new(slint::VecModel::from(
-            results
-                .into_iter()
-                .map(Tile::into_slint)
-                .collect::<Vec<_>>(),
-        ))
-        .into(),
-    );
+    launcher.set_dock_items(tile_model(dock));
+    launcher.set_recent_items(tile_model(recent));
+    launcher.set_search_results(tile_model(results));
 }
 
 fn actions_model() -> slint::ModelRc<ActionChoice> {
-    std::rc::Rc::new(slint::VecModel::from(
+    crate::model(
         ACTIONS
             .iter()
             .map(|(id, name, _)| ActionChoice {
@@ -3844,8 +3611,7 @@ fn actions_model() -> slint::ModelRc<ActionChoice> {
                 name: (*name).into(),
             })
             .collect::<Vec<_>>(),
-    ))
-    .into()
+    )
 }
 
 fn installed_apps_model(
@@ -3875,28 +3641,26 @@ fn installed_apps_model(
             }
         })
         .collect();
-    std::rc::Rc::new(slint::VecModel::from(tiles)).into()
+    crate::model(tiles)
 }
 
 fn shortcut_groups_model(groups: Vec<(i32, Vec<String>)>) -> slint::ModelRc<crate::ShortcutGroup> {
-    std::rc::Rc::new(slint::VecModel::from(
+    crate::model(
         groups
             .into_iter()
             .map(|(action, keys)| crate::ShortcutGroup {
                 action,
-                entries: std::rc::Rc::new(slint::VecModel::from(
+                entries: crate::model(
                     keys.into_iter()
                         .map(|keys| crate::ShortcutEntry {
                             action,
                             keys: keys.into(),
                         })
                         .collect::<Vec<_>>(),
-                ))
-                .into(),
+                ),
             })
             .collect::<Vec<_>>(),
-    ))
-    .into()
+    )
 }
 
 struct InkView {
@@ -3911,7 +3675,7 @@ struct InkView {
 }
 
 fn canvas_ink_model(ink: Vec<InkView>) -> slint::ModelRc<crate::CanvasInk> {
-    std::rc::Rc::new(slint::VecModel::from(
+    crate::model(
         ink.into_iter()
             .map(|stroke| crate::CanvasInk {
                 id: stroke.id.into(),
@@ -3928,7 +3692,7 @@ fn canvas_ink_model(ink: Vec<InkView>) -> slint::ModelRc<crate::CanvasInk> {
                 },
                 opacity: stroke.style.opacity * if stroke.style.highlighter { 0.35 } else { 1.0 },
                 dimmed: false,
-                samples: std::rc::Rc::new(slint::VecModel::from(
+                samples: crate::model(
                     stroke
                         .samples
                         .into_iter()
@@ -3937,33 +3701,25 @@ fn canvas_ink_model(ink: Vec<InkView>) -> slint::ModelRc<crate::CanvasInk> {
                             y: point.y,
                         })
                         .collect::<Vec<_>>(),
-                ))
-                .into(),
+                ),
             })
             .collect::<Vec<_>>(),
-    ))
-    .into()
+    )
 }
 
 fn apply_folder_view(launcher: &Launcher, folder: Option<(String, String, Vec<Tile>)>) {
     if let Some((index, name, items)) = folder {
         launcher.set_folder_id(index.into());
         launcher.set_folder_name(name.into());
-        let items = items.into_iter().map(Tile::into_slint).collect::<Vec<_>>();
-        launcher.set_folder_items(std::rc::Rc::new(slint::VecModel::from(items)).into());
+        launcher.set_folder_items(tile_model(items));
         launcher.set_folder_open(true);
     } else {
         launcher.set_folder_open(false);
     }
 }
 
-fn set_items(launcher: &Launcher, items: Vec<Tile>) {
-    launcher.set_items(
-        std::rc::Rc::new(slint::VecModel::from(
-            items.into_iter().map(Tile::into_slint).collect::<Vec<_>>(),
-        ))
-        .into(),
-    );
+fn tile_model(items: Vec<Tile>) -> slint::ModelRc<AppTile> {
+    crate::model(items.into_iter().map(Tile::into_slint).collect())
 }
 
 fn prepare_app(
@@ -4573,7 +4329,7 @@ impl Tile {
             file: self.file,
             directory: self.directory,
             folder: self.folder,
-            preview_icons: std::rc::Rc::new(slint::VecModel::from(
+            preview_icons: crate::model(
                 self.preview_icons
                     .into_iter()
                     .map(|icon| FolderPreview {
@@ -4582,8 +4338,7 @@ impl Tile {
                         letter: icon.letter.into(),
                     })
                     .collect::<Vec<_>>(),
-            ))
-            .into(),
+            ),
         }
     }
 }
@@ -4603,21 +4358,18 @@ mod tests {
         let ui = Launcher::new().unwrap();
         let (send, receive) = mpsc::channel();
         callbacks(&ui, send, Arc::new(RequestSequence::default()));
-        ui.set_scripts(
-            std::rc::Rc::new(slint::VecModel::from(crate::scripts::sorted(&[
-                config::Script {
-                    id: "b".into(),
-                    name: "beta".into(),
-                    path: "/beta".into(),
-                },
-                config::Script {
-                    id: "a".into(),
-                    name: "Alpha".into(),
-                    path: "/alpha".into(),
-                },
-            ])))
-            .into(),
-        );
+        ui.set_scripts(crate::model(crate::scripts::sorted(&[
+            config::Script {
+                id: "b".into(),
+                name: "beta".into(),
+                path: "/beta".into(),
+            },
+            config::Script {
+                id: "a".into(),
+                name: "Alpha".into(),
+                path: "/alpha".into(),
+            },
+        ])));
         assert!(ui.invoke_script_needs_completion("/al".into(), "Alpha".into()));
         assert!(!ui.invoke_script_needs_completion("/Alpha".into(), "Alpha".into()));
         assert!(!ui.invoke_script_needs_completion("/al argument".into(), "Alpha".into()));
@@ -4664,20 +4416,7 @@ mod tests {
         let weak = slint::Weak::default();
         let mut config = Config::default();
         config.layout_locked = true;
-        let mut apps = Apps {
-            edits: Default::default(),
-            config,
-            add_position: (0, 0),
-            icons: HashMap::new(),
-            open_folder: None,
-            pending_reveal: None,
-            inventory: Inventory::default(),
-            installed_filter: String::new(),
-            query: String::new(),
-            search_paths: None,
-            search_image: None,
-            recent: recent::Recent::default(),
-        };
+        let mut apps = Apps::new(config, Inventory::default(), recent::Recent::default());
         let before = serde_json::to_value(&apps.config).unwrap();
         let requests = RequestSequence::default();
         for action in [
@@ -4742,20 +4481,7 @@ mod tests {
         init_ui_for_test();
         let mut config = Config::default();
         config.default_search_engine = "google-search".into();
-        let mut apps = Apps {
-            edits: Default::default(),
-            config,
-            add_position: (0, 0),
-            icons: HashMap::new(),
-            open_folder: None,
-            pending_reveal: None,
-            inventory: Inventory::default(),
-            installed_filter: String::new(),
-            query: String::new(),
-            search_paths: None,
-            search_image: None,
-            recent: recent::Recent::default(),
-        };
+        let mut apps = Apps::new(config, Inventory::default(), recent::Recent::default());
         let launcher = Launcher::new().unwrap();
         let opened = std::cell::RefCell::new(Vec::new());
         apps.apply_with_url_opener(
@@ -4801,20 +4527,7 @@ mod tests {
             }],
         });
         config.pinned.push("nested".into());
-        let mut apps = Apps {
-            edits: Default::default(),
-            config,
-            add_position: (0, 0),
-            icons: HashMap::new(),
-            open_folder: None,
-            pending_reveal: None,
-            inventory: Inventory::default(),
-            installed_filter: String::new(),
-            query: String::new(),
-            search_paths: None,
-            search_image: None,
-            recent: recent::Recent::default(),
-        };
+        let mut apps = Apps::new(config, Inventory::default(), recent::Recent::default());
 
         assert_eq!(apps.recent_id(&Action::Open("folder".into())), None);
         assert_eq!(
@@ -4863,20 +4576,8 @@ mod tests {
         };
         let mut config = Config::default();
         config.items = vec![item("first"), item("second")];
-        let mut apps = Apps {
-            edits: Default::default(),
-            config,
-            add_position: (-1200, 5000),
-            icons: HashMap::new(),
-            open_folder: None,
-            pending_reveal: None,
-            inventory: Inventory::default(),
-            installed_filter: String::new(),
-            query: String::new(),
-            search_paths: None,
-            search_image: None,
-            recent: recent::Recent::default(),
-        };
+        let mut apps = Apps::new(config, Inventory::default(), recent::Recent::default());
+        apps.add_position = (-1200, 5000);
         let reference = ResultRef {
             id: "first".into(),
             ..Default::default()
@@ -4931,20 +4632,7 @@ mod tests {
                 height: span,
             },
         );
-        let mut apps = Apps {
-            edits: Default::default(),
-            config,
-            add_position: (0, 0),
-            icons: HashMap::new(),
-            open_folder: None,
-            pending_reveal: None,
-            inventory: Inventory::default(),
-            installed_filter: String::new(),
-            query: String::new(),
-            search_paths: None,
-            search_image: None,
-            recent: recent::Recent::default(),
-        };
+        let mut apps = Apps::new(config, Inventory::default(), recent::Recent::default());
         let before = serde_json::to_value(&apps.config).unwrap();
         let weak = slint::Weak::default();
         let requests = RequestSequence::default();
@@ -5011,20 +4699,8 @@ mod tests {
                 height: 136,
             },
         );
-        let mut apps = Apps {
-            edits: Default::default(),
-            config,
-            add_position: (0, 0),
-            icons: HashMap::from([("image".to_string(), picture.clone())]),
-            open_folder: None,
-            pending_reveal: None,
-            inventory: Inventory::default(),
-            installed_filter: String::new(),
-            query: String::new(),
-            search_paths: None,
-            search_image: None,
-            recent: recent::Recent::default(),
-        };
+        let mut apps = Apps::new(config, Inventory::default(), recent::Recent::default());
+        apps.icons = HashMap::from([("image".to_string(), picture.clone())]);
         // An Image keeps its own proportions when its width changes.
         assert_eq!(image_size(Some(&picture), 200), 113);
         assert_eq!(image_size(None, 200), 200);
@@ -5058,20 +4734,8 @@ mod tests {
         };
         let mut inventory = Inventory::default();
         inventory.replace(vec![installed("first"), installed("second")]);
-        let mut apps = Apps {
-            edits: Default::default(),
-            config: Config::default(),
-            add_position: (0, 0),
-            icons: HashMap::new(),
-            open_folder: None,
-            pending_reveal: None,
-            inventory,
-            installed_filter: String::new(),
-            query: "first".into(),
-            search_paths: None,
-            search_image: None,
-            recent: recent::Recent::default(),
-        };
+        let mut apps = Apps::new(Config::default(), inventory, recent::Recent::default());
+        apps.query = "first".into();
         let tile = apps.compute_search_results().remove(0);
         assert_eq!(tile.source, -2);
         let reference = ResultRef {
@@ -5090,20 +4754,12 @@ mod tests {
 
     #[test]
     fn cancelled_adds_leave_items_and_canvas_positions_unchanged() {
-        let mut apps = Apps {
-            edits: Default::default(),
-            config: Config::default(),
-            add_position: (-1200, 5000),
-            icons: HashMap::new(),
-            open_folder: None,
-            pending_reveal: None,
-            inventory: Inventory::default(),
-            installed_filter: String::new(),
-            query: String::new(),
-            search_paths: None,
-            search_image: None,
-            recent: recent::Recent::default(),
-        };
+        let mut apps = Apps::new(
+            Config::default(),
+            Inventory::default(),
+            recent::Recent::default(),
+        );
+        apps.add_position = (-1200, 5000);
         let requests = RequestSequence::default();
         let request = requests.issue();
         requests.cancel();
@@ -5157,7 +4813,7 @@ mod tests {
                 .collect::<Vec<_>>();
             let launcher = Launcher::new().unwrap();
             launcher.set_shortcuts(crate::shortcuts::model(crate::shortcuts::defaults()));
-            launcher.set_prefixes(std::rc::Rc::new(slint::VecModel::from(prefixes)).into());
+            launcher.set_prefixes(crate::model(prefixes));
             let (sender, receiver) = mpsc::channel();
             callbacks(&launcher, sender, Arc::new(RequestSequence::default()));
             launcher.set_search_text(token.into());
@@ -5217,20 +4873,7 @@ mod tests {
 
             let (action_id, query) = &actions[0];
             assert_eq!(query, argument);
-            let mut apps = Apps {
-                edits: Default::default(),
-                config,
-                add_position: (0, 0),
-                icons: HashMap::new(),
-                open_folder: None,
-                pending_reveal: None,
-                inventory: Inventory::default(),
-                installed_filter: String::new(),
-                query: String::new(),
-                search_paths: None,
-                search_image: None,
-                recent: recent::Recent::default(),
-            };
+            let mut apps = Apps::new(config, Inventory::default(), recent::Recent::default());
             let requests = RequestSequence::default();
             let opened = std::cell::RefCell::new(Vec::new());
             apps.apply_with_url_opener(
@@ -5403,22 +5046,33 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "uses the configured TickTick account to create and delete one temporary task"]
-    fn live_ticktick_prefix_creates_and_deletes_its_test_task() {
-        let token = crate::ticktick::load_token()
-            .unwrap()
-            .expect("TickTick must be connected for this integration check");
-        let projects = crate::ticktick::projects(&token).unwrap();
-        let inbox = crate::ticktick::inbox_project(&token).unwrap();
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let title = format!("Orbit Prefix Integration Test {nonce}");
-        let task = parse_ticktick_query(&format!("{title} !low ^Inbox")).unwrap();
+    fn ticktick_prefix_sends_resolved_list_and_metadata() {
+        use crate::ticktick::tests::{Exchange, serve};
+        use serde_json::json;
+
+        let server = serve(vec![
+            Exchange("GET /project?limit=200&offset=0", None, json!([])),
+            Exchange(
+                "GET /project/inbox/data",
+                None,
+                json!({"project": {"id": "real-inbox", "name": "Inbox", "inbox": true}}),
+            ),
+            Exchange(
+                "POST /task",
+                Some(json!({
+                    "projectId": "real-inbox", "title": "Buy milk", "content": "",
+                    "priority": 1, "tags": ["errands"]
+                })),
+                json!({"id": "new", "projectId": "real-inbox", "title": "Buy milk"}),
+            ),
+        ]);
+        let token = "test-token";
+        let projects = crate::ticktick::projects(token).unwrap();
+        let inbox = crate::ticktick::inbox_project(token).unwrap();
+        let task = parse_ticktick_query("Buy milk !low #errands ^Inbox").unwrap();
         let project = resolve_ticktick_project(task.list.as_deref(), &projects, &inbox).unwrap();
         let created = crate::ticktick::create_task_with_metadata(
-            &token,
+            token,
             &project.id,
             &task.title,
             "",
@@ -5426,13 +5080,8 @@ mod tests {
             &task.tags,
         )
         .unwrap();
-        let cleanup = crate::ticktick::delete_task(&token, &created.project_id, &created.id);
-        assert!(
-            cleanup.is_ok(),
-            "could not remove test task '{title}': {cleanup:?}"
-        );
-        assert_eq!(created.title, title);
-        assert_eq!(created.project_id, inbox.id);
+        assert_eq!(created.id, "new");
+        server.join().unwrap();
     }
 
     #[test]
@@ -5478,20 +5127,8 @@ mod tests {
             },
         ]);
 
-        let mut apps = Apps {
-            edits: Default::default(),
-            config,
-            add_position: (0, 0),
-            icons: HashMap::new(),
-            open_folder: None,
-            pending_reveal: None,
-            inventory,
-            installed_filter: String::new(),
-            query: "whatsapp".into(),
-            search_paths: None,
-            search_image: None,
-            recent: recent::Recent::default(),
-        };
+        let mut apps = Apps::new(config, inventory, recent::Recent::default());
+        apps.query = "whatsapp".into();
 
         apps.update(&launcher.as_weak());
         let results = launcher.get_search_results();
@@ -5544,7 +5181,7 @@ mod tests {
                 action_index: 0,
             })
             .collect::<Vec<_>>();
-        launcher.set_prefixes(std::rc::Rc::new(slint::VecModel::from(prefixes)).into());
+        launcher.set_prefixes(crate::model(prefixes));
         let (sender, receiver) = mpsc::channel();
         callbacks(&launcher, sender, Arc::new(RequestSequence::default()));
         launcher.show().unwrap();
@@ -5761,15 +5398,12 @@ mod tests {
         let default_index = Config::default().default_search_engine_index() as i32;
         let google_index = Config::search_engine_index_by_id("google-search").unwrap() as i32;
         assert_ne!(default_index, google_index);
-        launcher.set_search_engine_names(
-            std::rc::Rc::new(slint::VecModel::from(
-                Config::search_engine_names()
-                    .into_iter()
-                    .map(slint::SharedString::from)
-                    .collect::<Vec<_>>(),
-            ))
-            .into(),
-        );
+        launcher.set_search_engine_names(crate::model(
+            Config::search_engine_names()
+                .into_iter()
+                .map(slint::SharedString::from)
+                .collect::<Vec<_>>(),
+        ));
         launcher.set_google_search_engine_index(google_index);
         launcher.invoke_default_search_engine_saved(default_index);
         launcher.invoke_activate_ticktick_prefix();

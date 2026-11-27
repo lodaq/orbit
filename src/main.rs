@@ -52,6 +52,10 @@ mod widget_views;
 
 slint::include_modules!();
 
+fn model<T: Clone + 'static>(rows: Vec<T>) -> slint::ModelRc<T> {
+    slint::ModelRc::new(slint::VecModel::from(rows))
+}
+
 fn main() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let result = match args.as_slice() {
