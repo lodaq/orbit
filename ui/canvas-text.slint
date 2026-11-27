@@ -64,6 +64,15 @@ export component CanvasTextEditor inherits Rectangle {
     private property <string> link-url;
     private property <bool> dragging;
     private property <int> handle;
+    private property <bool> translated;
+    out property <bool> moving: root.dragging && root.translated && root.handle == 0
+        && CanvasText.active && !CanvasText.editing && !root.locked;
+    out property <length> pointer-x;
+    out property <length> pointer-y;
+    public function follow-pan() {
+        CanvasText.drag(0,1,(root.pointer-x / 1px - CanvasState.pan-x) / root.zoom,
+            (root.pointer-y / 1px - CanvasState.pan-y) / root.zoom,root.shift);
+    }
     private property <float> shape-width: CanvasText.text-width * CanvasText.scale;
     private property <float> shape-height: CanvasText.text-height * CanvasText.scale;
     private property <float> sine: sin(CanvasText.rotation * 1deg);
@@ -91,10 +100,16 @@ export component CanvasTextEditor inherits Rectangle {
         if root.locked { return; }
         let wx = root.pointer-world-x(x,y); let wy = root.pointer-world-y(x,y);
         if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-            root.dragging = true; root.handle = handle;
+            root.dragging = true; root.handle = handle; root.translated = false;
             CanvasText.drag(handle,0,wx,wy,root.shift);
         }
-        if root.dragging && event.kind == PointerEventKind.move { CanvasText.drag(root.handle,1,wx,wy,root.shift); }
+        if root.dragging && event.kind == PointerEventKind.move {
+            root.pointer-x = (CanvasState.pan-x + wx * root.zoom) * 1px;
+            root.pointer-y = (CanvasState.pan-y + wy * root.zoom) * 1px;
+            let previous-x = CanvasText.x; let previous-y = CanvasText.y;
+            CanvasText.drag(root.handle,1,wx,wy,root.shift);
+            if CanvasText.x != previous-x || CanvasText.y != previous-y { root.translated = true; }
+        }
         if root.dragging && event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
             CanvasText.drag(root.handle,2,wx,wy,root.shift); root.dragging = false;
         }

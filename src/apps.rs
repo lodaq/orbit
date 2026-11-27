@@ -121,6 +121,7 @@ enum Action {
     OpenFolder(String),
     CloseFolder,
     LaunchFolder(String, String),
+    MoveSelection(Vec<String>, i32, i32),
     Drop(String, i32, i32, String),
     AddPredefined(String, u64),
     AddInstalledApp(String, u64),
@@ -159,6 +160,7 @@ impl Action {
             | Self::Unpin(..)
             | Self::Delete(..)
             | Self::SaveSearchResult(..)
+            | Self::MoveSelection(..)
             | Self::Drop(..)
             | Self::SaveFrame(..)
             | Self::DeleteFrame(..)
@@ -295,7 +297,7 @@ pub fn connect(launcher: &Launcher) {
                     | Action::DeleteFrame(..)
             );
             let save_search_result = matches!(action, Action::SaveSearchResult(..));
-            let drag_drop = matches!(action, Action::Drop(..) | Action::SaveSearchResult(..));
+            let drag_drop = matches!(action, Action::MoveSelection(..) | Action::Drop(..) | Action::SaveSearchResult(..));
             let save_shortcut = matches!(action, Action::SaveShortcut(..));
             let save_frame = matches!(action, Action::SaveFrame(..));
             let ink_action = matches!(action, Action::AddInk(..) | Action::EraseInk(..));
@@ -1005,6 +1007,11 @@ fn callbacks(launcher: &Launcher, send: Sender<Action>, requests: Arc<RequestSeq
         let _ = sender.send(Action::SaveSearchResult(item.into(), col, row, pin));
     });
     let sender = send.clone();
+    launcher.on_move_selection(move |ids, dx, dy| {
+        use slint::Model;
+        let _ = sender.send(Action::MoveSelection(ids.iter().map(|id| id.to_string()).collect(), dx, dy));
+    });
+    let sender = send.clone();
     launcher.on_drop_item(move |id, col, row, into| {
         let _ = sender.send(Action::Drop(id.into(), col, row, into.into()));
     });
@@ -1422,6 +1429,23 @@ impl Apps {
                 };
                 config.shortcuts.remove(index);
                 Ok(true)
+            }),
+            Action::MoveSelection(ids, dx, dy) => self.save_config(|config| {
+                let selected = ids.into_iter().collect();
+                let moved = crate::spatial::translated(&config.positions, &selected, dx, dy)
+                    .ok_or("Space is occupied")?;
+                let strokes = config.ink.iter_mut().filter(|s| selected.contains(&s.id));
+                let mut count = moved.len();
+                for stroke in strokes {
+                    count += 1;
+                    for point in &mut stroke.points {
+                        point.x += dx as f32;
+                        point.y += dy as f32;
+                    }
+                }
+                if count != selected.len() { return Err("Selection changed".into()); }
+                config.positions.extend(moved);
+                Ok(dx != 0 || dy != 0)
             }),
             Action::Drop(id, col, row, into) => self.drop_item(&id, col, row, &into, weak),
             Action::AddPredefined(action, request) => {
@@ -3444,7 +3468,7 @@ impl Apps {
             launcher.set_installed_status(installed_status.into());
             launcher.set_installed_apps_loaded(installed_apps_loaded);
             launcher.set_installed_apps_match(installed_apps_match);
-            launcher.set_frames(std::rc::Rc::new(slint::VecModel::from(frames)).into());
+            launcher.set_frames(std::rc::Rc::new(slint::VecModel::from(frames.into_iter().map(|view| view()).collect::<Vec<_>>())).into());
             launcher.set_can_undo(can_undo);
             launcher.set_can_redo(can_redo);
             launcher.set_can_paste(can_paste);
@@ -3459,7 +3483,7 @@ impl Apps {
         }
     }
 
-    fn canvas_frame_views(&self) -> Vec<CanvasFrameView> {
+    fn canvas_frame_views(&self) -> Vec<impl FnOnce() -> CanvasFrameView + Send + use<>> {
         self.config
             .frames
             .iter()
@@ -3479,7 +3503,8 @@ impl Apps {
                     });
                 }
                 let (x, y, right, bottom) = bounds?;
-                Some(CanvasFrameView {
+                let frame = frame.clone();
+                Some(move || CanvasFrameView {
                     id: frame.id.as_str().into(),
                     name: frame.name.as_str().into(),
                     keys: frame.keys.as_str().into(),
@@ -3488,6 +3513,7 @@ impl Apps {
                     width: right - x,
                     height: bottom - y,
                     count: frame.items.len() as i32,
+                    members: slint::ModelRc::from(frame.items.into_iter().map(slint::SharedString::from).collect::<Vec<_>>().as_slice()),
                 })
             })
             .collect()

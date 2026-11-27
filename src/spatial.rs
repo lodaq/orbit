@@ -48,6 +48,17 @@ pub fn place(
     result.insert(id.into(), target);
     Some(result)
 }
+pub fn translated(
+    positions: &BTreeMap<String, Rect>, selected: &HashSet<String>, dx: i32, dy: i32,
+) -> Option<BTreeMap<String, Rect>> {
+    positions.iter().filter(|(id, _)| selected.contains(*id)).map(|(id, rect)| {
+        let target = Rect { col: rect.col.checked_add(dx)?, row: rect.row.checked_add(dy)?, ..*rect };
+        if positions.iter().any(|(other, rect)| !selected.contains(other) && rect.overlaps(target)) {
+            return None;
+        }
+        Some((id.clone(), target))
+    }).collect()
+}
 pub fn occupied(config: &Config) -> BTreeMap<String, Rect> {
     config
         .items
@@ -396,6 +407,9 @@ pub fn connect(launcher: &crate::Launcher) {
             },
         )
         .is_some()
+    });
+    launcher.on_selection_valid(|items, ids, dx, dy| {
+        translated(&tile_positions(&items), &ids.iter().map(|id| id.to_string()).collect(), dx, dy).is_some()
     });
     launcher.on_selection_has(|selection, id| selection.iter().any(|selected| selected == id));
     launcher.on_selection_toggle(|selection, id| {

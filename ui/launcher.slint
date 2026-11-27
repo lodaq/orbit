@@ -1267,6 +1267,26 @@ export component Launcher inherits Window {
         }
     }
 
+    pure function edge-step(position: length, extent: length) -> float {
+        return (clamp(48px - position, 0px, 48px) - clamp(position - extent + 48px, 0px, 48px)) / 3px;
+    }
+    private property <length> edge-pointer-x: canvas-text-editor.moving ? canvas-text-editor.pointer-x : root.drag-x;
+    private property <length> edge-pointer-y: canvas-text-editor.moving ? canvas-text-editor.pointer-y : root.drag-y;
+    private property <float> edge-x: root.edge-step(root.edge-pointer-x,root.width);
+    private property <float> edge-y: root.edge-step(root.edge-pointer-y,root.height);
+    Timer {
+        interval: 16ms;
+        running: (canvas-text-editor.moving || (root.drag-on-canvas && !root.drop-pending && !root.on-dock))
+            && (root.edge-x != 0 || root.edge-y != 0);
+        triggered => {
+            CanvasState.pan-x += root.edge-x;
+            CanvasState.pan-y += root.edge-y;
+            if canvas-text-editor.moving { canvas-text-editor.follow-pan(); }
+            else { root.update-drop(); }
+            root.view-dirty = true;
+            canvas-save-timer.start(); canvas-save-timer.restart();
+        }
+    }
     drag-scroll-timer := Timer {
         interval: 32ms;
         running: root.dragging && root.drag-from-folder && !root.drag-outside-folder;

@@ -2,7 +2,7 @@ import { Theme } from "theme.slint";
 import { OrbitText, TextDirection } from "controls.slint";
 
 export struct CompletedReference { id: string, date: string, title: string, done: bool }
-export struct CanvasFrameView { id: string, name: string, keys: string, x: float, y: float, width: float, height: float, count: int }
+export struct CanvasFrameView { members: [string], id: string, name: string, keys: string, x: float, y: float, width: float, height: float, count: int }
 export struct InkSample { x: float, y: float }
 export struct CanvasInk { id: string, x: float, y: float, width: float, height: float, path: string, samples: [InkSample], color: color, size: float, opacity: float, dimmed: bool }
 

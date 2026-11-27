@@ -182,5 +182,18 @@ try:
     d.wait(lambda: all(s['format']['font'] == 1 for s in text_item(d)['rich_text']['spans']), 'Font control was not saved')
     d.shot('serif.png')
     print('PASS Link, rich clipboard and mouse font control', flush=True)
+    select(d)
+    x, y, w, h = bounds(d)
+    view = d.data()['canvas']['view']
+    d.drag((x + w/2, y + h/2), (1900, 1060), release=False)
+    time.sleep(.4)
+    d.move(1400, 700)
+    d.wait(lambda: d.data()['canvas']['view']['x'] < view['x'] - 100
+           and d.data()['canvas']['view']['y'] < view['y'] - 100,
+           'Holding Text near the corner did not pan both axes')
+    d.button(1, False)
+    d.wait(lambda: abs(bounds(d)[0] + w/2 - 1400) < 3
+           and abs(bounds(d)[1] + h/2 - 700) < 3, 'Text did not land under the pointer')
+    print('PASS Text edge scrolling and drop', flush=True)
 finally:
     d.close()
