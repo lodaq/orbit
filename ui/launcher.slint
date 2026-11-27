@@ -49,6 +49,9 @@ export component Launcher inherits Window {
     pure callback folder-target([AppTile],AppTile,int,int,int,int) -> int;
     pure callback hit-cell([AppTile],int,int) -> int;
     pure callback preview-valid([AppTile],string,int,int,int,int) -> bool;
+    callback move-selection([string], int, int);
+    pure callback selection-valid([AppTile], [string], int, int) -> bool;
+    pure callback selection-includes([string], [string]) -> bool;
     pure callback selection-has([string], string) -> bool;
     pure callback selection-toggle([string], string) -> [string];
     pure callback marquee-select([AppTile],[CanvasInk],float,float,float,float,[string],bool) -> [string];
@@ -131,7 +134,7 @@ export component Launcher inherits Window {
 
     private property <int> dock-source-index: -1;
     out property <bool> grid-navigation: !root.search-context && (canvas-focus.has-focus || root.canvas-text-ready) && !root.canvas-context && !root.settings && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.frame-editor && !root.annotation-editor;
-    out property <bool> frame-shortcuts: !root.canvas-context && root.context-index < 0 && root.frame-context-id == "" && !root.tool-active && !root.marquee-active && !root.panning && !root.dragging && root.home-visible && !root.busy && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.frame-editor && !root.annotation-editor && !root.search-context;
+    out property <bool> frame-shortcuts: !root.canvas-context && root.context-index < 0 && root.frame-context-id == "" && !root.tool-active && !root.marquee-active && !root.panning && !root.dragging && !root.selection-pressed && root.home-visible && !root.busy && !root.sheet && !root.folder-open && !root.alert && !root.picker && !root.ticktick-open && !root.frame-editor && !root.annotation-editor && !root.search-context;
     out property <bool> canvas-shortcuts: root.frame-shortcuts && (canvas-focus.has-focus || root.canvas-text-ready);
     in-out property <bool> can-undo;
     in-out property <bool> can-redo;
@@ -326,7 +329,7 @@ export component Launcher inherits Window {
         return true;
     }
     function wheel-canvas(x: length, y: length, dx: length, dy: length) {
-        if root.dragging || root.panning || root.tool-active { return; }
+        if root.selection-pressed || root.dragging || root.panning || root.tool-active { return; }
         if root.ctrl-held {
             CanvasState.zoom-at(x / 1px, y / 1px, pow(1.0015, dy / 1px * root.canvas-speed));
         } else if root.shift-held {
@@ -344,6 +347,7 @@ export component Launcher inherits Window {
         canvas-save-timer.start(); canvas-save-timer.restart();
     }
     function cancel-canvas() {
+        root.selection-pressed = false; root.moving-selection = false;
         root.canvas-scrolling = false;
         root.canvas-scroll-gesture = false;
         canvas-scroll-timer.stop();
@@ -494,7 +498,40 @@ export component Launcher inherits Window {
             root.cancel-canvas();
         }
     }
+    private property <bool> selection-pressed;
+    private property <bool> moving-selection;
+    private property <length> selection-start-x;
+    private property <length> selection-start-y;
+    private property <int> selection-dx: root.moving-selection ? round((root.world-x(root.drag-x) - root.selection-start-x) / 1px) : 0;
+    private property <int> selection-dy: root.moving-selection ? round((root.world-y(root.drag-y) - root.selection-start-y) / 1px) : 0;
+    private property <bool> selection-placement-valid: !root.moving-selection || root.selection-valid(root.items,root.selected-ids,root.selection-dx,root.selection-dy);
+    function begin-selection-move(x: length, y: length) {
+        root.selection-pressed = true;
+        root.selection-start-x = root.world-x(x); root.selection-start-y = root.world-y(y);
+        root.drag-start-x = x; root.drag-start-y = y;
+        root.drag-x = x; root.drag-y = y;
+        canvas-focus.focus();
+    }
+    function selection-pointer(event: PointerEvent, x: length, y: length, frame: string) {
+        if !root.selection-pressed { return; }
+        root.drag-x = x; root.drag-y = y;
+        if event.kind == PointerEventKind.move && (abs(x - root.drag-start-x) >= 6px || abs(y - root.drag-start-y) >= 6px) {
+            root.moving-selection = true;
+        }
+        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+            root.selection-pressed = false;
+            if root.moving-selection && root.selection-placement-valid && (root.selection-dx != 0 || root.selection-dy != 0) {
+                root.busy = true; root.drop-pending = true;
+                root.move-selection(root.selected-ids,root.selection-dx,root.selection-dy);
+            } else {
+                if !root.moving-selection && frame != "" { root.fit-frame-view(frame); }
+                root.moving-selection = false;
+            }
+        }
+        if event.kind == PointerEventKind.cancel { root.cancel-drag(); }
+    }
     function canvas-pointer(event: PointerEvent, x: length, y: length) {
+        if root.selection-pressed { root.selection-pointer(event,x,y,""); return; }
         if CanvasText.active {
             if event.kind == PointerEventKind.down { CanvasText.finish(false); }
             return;
@@ -515,6 +552,16 @@ export component Launcher inherits Window {
                 return;
             }
             if event.button != PointerEventButton.left { return; }
+            if !root.layout-locked && root.tool-mode == 0 && !root.ctrl-held && !root.shift-held {
+                if index >= 0 && root.selected-ids.length > 1 && root.selection-has(root.selected-ids,root.items[index].id) {
+                    root.begin-selection-move(x,y); return;
+                }
+                if index < 0 && root.selected-ids.length > 0 {
+                    let hits = root.marquee-select([],root.ink-strokes,root.world-x(x)/1px,root.world-y(y)/1px,
+                        root.world-x(x)/1px,root.world-y(y)/1px,[],false);
+                    if hits.length > 0 && root.selection-has(root.selected-ids,hits[0]) { root.begin-selection-move(x,y); return; }
+                }
+            }
             if index >= 0 && root.items[index].annotation == 2 && root.tool-mode == 0 && !root.ctrl-held && !root.shift-held {
                 root.select-canvas-text(index,false);return;
             }
@@ -1276,7 +1323,7 @@ export component Launcher inherits Window {
     private property <float> edge-y: root.edge-step(root.edge-pointer-y,root.height);
     Timer {
         interval: 16ms;
-        running: (canvas-text-editor.moving || (root.drag-on-canvas && !root.drop-pending && !root.on-dock))
+        running: ((root.moving-selection && root.selection-pressed) || canvas-text-editor.moving || (root.drag-on-canvas && !root.drop-pending && !root.on-dock))
             && (root.edge-x != 0 || root.edge-y != 0);
         triggered => {
             CanvasState.pan-x += root.edge-x;
@@ -1318,6 +1365,7 @@ export component Launcher inherits Window {
         merge-timer.stop();
     }
     function cancel-drag() {
+        root.selection-pressed = false; root.moving-selection = false;
         if root.dragging && !root.drop-pending && !root.resizing {
             root.snapping = true; root.drag-x = root.drag-start-x; root.drag-y = root.drag-start-y; snap-timer.start();
         }
@@ -1649,6 +1697,7 @@ export component Launcher inherits Window {
         search-input.focus();
     }
     close-top-layer => {
+        if root.selection-pressed { root.cancel-drag(); return; }
         if root.panning { root.cancel-canvas(); return; }
         if root.tool-active || root.marquee-active { root.set-tool(root.selected-tool); return; }
         if AzanSettings.widget-id != "" { AzanSettings.close(); return; }
@@ -1866,7 +1915,7 @@ export component Launcher inherits Window {
             enabled: !root.busy && !root.folder-open && !root.sheet && !root.alert && !root.picker && !root.settings && !root.ticktick-open && !root.frame-editor && !root.annotation-editor && root.ticktick-popup-widget-id == "";
             mouse-cursor: root.panning ? grabbing : root.tool-mode == 1 ? grab : default;
             scroll-event(event) => {
-                if root.dragging || root.panning { return accept; }
+                if root.selection-pressed || root.dragging || root.panning { return accept; }
                 if root.scroll-ticktick(self.mouse-x,self.mouse-y,event.delta-y / CanvasState.zoom) { return accept; }
                 let index = root.canvas-item-at(self.mouse-x,self.mouse-y);
                 if index >= 0 && root.items[index].widget { return accept; }
@@ -1884,8 +1933,8 @@ export component Launcher inherits Window {
             for index in canvas-world.display-items.length: ItemTile {
                 property <bool> source-here: root.dragging && index < canvas-world.display-items.length && canvas-world.display-items[index].id == root.drag-item.id;
                 visible: !canvas-world.display-items[index].pinned && !(CanvasText.active && CanvasText.id == canvas-world.display-items[index].id);
-                x: canvas-world.display-items[index].col * 1px + root.grid-gap * 0.5px;
-                y: canvas-world.display-items[index].row * 1px + root.grid-gap * 0.5px;
+                x: (canvas-world.display-items[index].col + (self.selected ? root.selection-dx : 0)) * 1px + root.grid-gap * 0.5px;
+                y: (canvas-world.display-items[index].row + (self.selected ? root.selection-dy : 0)) * 1px + root.grid-gap * 0.5px;
                 width: index < canvas-world.display-items.length ? canvas-world.display-items[index].span-x * 1px - root.grid-gap * 1px : root.item-size * 1px;
                 height: index < canvas-world.display-items.length ? canvas-world.display-items[index].span-y * 1px - root.grid-gap * 1px : root.item-size * 1px;
                 opacity: self.source-here || root.selection-has(root.erase-item-targets,canvas-world.display-items[index].id) ? 0.2 : 1;
@@ -1927,8 +1976,9 @@ export component Launcher inherits Window {
             for item in canvas-world.display-items: AddOption {
                 visible: item.widget && item.widget-kind == 16 && !item.pinned && root.placing-widget < 0;
                 enabled: !(root.dragging && item.id == root.drag-item.id) && !root.sheet && !root.alert && !root.settings && !root.folder-open;
-                x: (item.col + item.span-x) * 1px - root.grid-gap * 0.5px - 56px;
-                y: item.row * 1px + root.grid-gap * 0.5px + Theme.space-2;
+                property <bool> moving: root.moving-selection && root.selection-has(root.selected-ids,item.id);
+                x: (item.col + item.span-x + (self.moving ? root.selection-dx : 0)) * 1px - root.grid-gap * 0.5px - 56px;
+                y: (item.row + (self.moving ? root.selection-dy : 0)) * 1px + root.grid-gap * 0.5px + Theme.space-2;
                 option-width: Theme.control-height; height: Theme.widget-action-height;
                 icon: @image-url("assets/settings.svg"); icon-present: true;
                 accessible-label: "Azan settings"; border-width: 0px; background: transparent;
@@ -1942,14 +1992,17 @@ export component Launcher inherits Window {
                 visible: item.widget && !item.ticktick && !item.pinned && root.placing-widget < 0;
                 opacity: root.dragging && item.id == root.drag-item.id ? 0.2 : 1;
                 enabled: !(root.dragging && item.id == root.drag-item.id) && !root.sheet && !root.alert && !root.settings && !root.folder-open;
-                x: item.col * 1px + root.grid-gap * 0.5px + 16px;
-                y: item.row * 1px + root.grid-gap * 0.5px + 48px;
+                property <bool> moving: root.moving-selection && root.selection-has(root.selected-ids,item.id);
+                x: (item.col + (self.moving ? root.selection-dx : 0)) * 1px + root.grid-gap * 0.5px + 16px;
+                y: (item.row + (self.moving ? root.selection-dy : 0)) * 1px + root.grid-gap * 0.5px + 48px;
                 width: max(0px,item.span-x * 1px - root.grid-gap * 1px - 32px);
                 height: max(0px,item.span-y * 1px - root.grid-gap * 1px - (item.widget-kind == 18 || item.widget-kind == 19 ? 60px : 84px));
             }
 
             for stroke in (root.erase-preview-active ? root.erase-preview : root.ink-strokes): Path {
-                x: stroke.x * 1px; y: stroke.y * 1px; fit: preserve;
+                property <bool> moving: root.moving-selection && root.selection-has(root.selected-ids,stroke.id);
+                x: (stroke.x + (self.moving ? root.selection-dx : 0)) * 1px;
+                y: (stroke.y + (self.moving ? root.selection-dy : 0)) * 1px; fit: preserve;
                 width: stroke.width * 1px; height: stroke.height * 1px;
                 commands: stroke.path;
                 fill: transparent; stroke-width: stroke.size * 1px;
@@ -1984,6 +2037,21 @@ export component Launcher inherits Window {
                 background: self.border-color.with-alpha(0.188);
             }
         }
+        for item in root.items: Rectangle {
+            visible: root.tool-mode == 0 && !root.layout-locked && root.selected-ids.length > 1 && root.selection-has(root.selected-ids,item.id);
+            x: (CanvasState.pan-x + (item.col + root.selection-dx) * CanvasState.zoom) * 1px;
+            y: (CanvasState.pan-y + (item.row + root.selection-dy) * CanvasState.zoom) * 1px;
+            width: item.span-x * CanvasState.zoom * 1px; height: item.span-y * CanvasState.zoom * 1px;
+            background: transparent;
+            border-width: root.moving-selection && !root.selection-placement-valid ? 2px : 0px;
+            border-color: Theme.placement-invalid;
+            TouchArea {
+                mouse-cursor: root.moving-selection ? grabbing : grab;
+                pointer-event(event) => {
+                    root.canvas-pointer(event,self.absolute-position.x + self.mouse-x,self.absolute-position.y + self.mouse-y);
+                }
+            }
+        }
         canvas-text-editor := CanvasTextEditor {
             width: parent.width; height: parent.height;
             gap: root.grid-gap; locked: root.layout-locked; control: root.ctrl-held; shift: root.shift-held;
@@ -1997,8 +2065,9 @@ export component Launcher inherits Window {
             border-width: 1px; border-color: Theme.selection-border; border-radius: 4px;
         }
         for frame in root.frames: Rectangle {
-            x: (CanvasState.pan-x + frame.x * CanvasState.zoom) * 1px;
-            y: (CanvasState.pan-y + frame.y * CanvasState.zoom) * 1px;
+            property <bool> moving: root.moving-selection && root.selection-includes(root.selected-ids,frame.members);
+            x: (CanvasState.pan-x + (frame.x + (self.moving ? root.selection-dx : 0)) * CanvasState.zoom) * 1px;
+            y: (CanvasState.pan-y + (frame.y + (self.moving ? root.selection-dy : 0)) * CanvasState.zoom) * 1px;
             width: frame.width * CanvasState.zoom * 1px;
             height: frame.height * CanvasState.zoom * 1px;
             background: transparent;
@@ -2025,8 +2094,9 @@ export component Launcher inherits Window {
             }
         }
         for frame in root.frames: Rectangle {
-            x: (CanvasState.pan-x + frame.x * CanvasState.zoom) * 1px;
-            y: (CanvasState.pan-y + frame.y * CanvasState.zoom) * 1px - 34px;
+            property <bool> moving: root.moving-selection && root.selection-includes(root.selected-ids,frame.members);
+            x: (CanvasState.pan-x + (frame.x + (self.moving ? root.selection-dx : 0)) * CanvasState.zoom) * 1px;
+            y: (CanvasState.pan-y + (frame.y + (self.moving ? root.selection-dy : 0)) * CanvasState.zoom) * 1px - 34px;
             width: min(280px,max(72px,(frame.name.character-count + (frame.keys == "" ? 0 : frame.keys.character-count + 2)) * 8px + 28px));
             height: 28px;
             background: Theme.frame-chip;
@@ -2039,8 +2109,17 @@ export component Launcher inherits Window {
             }
             frame-label-touch := TouchArea {
                 mouse-cursor: pointer;
-                clicked => { root.fit-frame-view(frame.id); }
                 pointer-event(event) => {
+                    let x = self.absolute-position.x + self.mouse-x;
+                    let y = self.absolute-position.y + self.mouse-y;
+                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.left && !root.busy {
+                        if root.layout-locked || root.tool-mode != 0 { root.fit-frame-view(frame.id); }
+                        else {
+                            if CanvasText.active { CanvasText.finish(false); }
+                            root.selected-ids = frame.members;
+                            root.begin-selection-move(x,y);
+                        }
+                    } else if root.selection-pressed { root.selection-pointer(event,x,y,frame.id); }
                     if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
                         root.context-x = self.absolute-position.x + self.mouse-x;
                         root.context-y = self.absolute-position.y + self.mouse-y;

@@ -18,6 +18,18 @@ try:
     d.click(722, 372)
     d.click(722, 372)
     d.key('Control', False)
+    initial = d.data()['positions']
+    d.drag((465, 365), (585, 465))
+    d.wait(lambda: d.data()['positions']['Beta']['col'] == 770, 'selection did not move together')
+    moved = d.data()['positions']
+    assert moved['Alpha']['row'] == moved['Beta']['row'] == 400
+    assert moved['Alpha']['col'] == 520 and moved['Far'] == initial['Far']
+    d.drag((585, 465), (800, 700), release=False)
+    d.key('Escape'); d.button(1, False)
+    assert d.data()['positions'] == moved, 'Escape saved a partial move'
+    d.key('Control', True); d.key('z'); d.key('Control', False)
+    d.wait(lambda: d.data()['positions'] == initial, 'Undo did not restore the entire selection')
+    d.drag((360, 260), (850, 500))
     d.shot('selected.png')
     d.click(900, 600, 3)
     d.shot('menu.png')
@@ -34,6 +46,21 @@ try:
     frame = d.data()['frames'][0]
     assert frame['name'] == 'Work' and frame['keys'] == 'Ctrl+G' and (set(frame['items']) == {'Alpha', 'Beta'}), frame
     d.shot('frame-saved.png')
+    d.drag((431, 280), (1900, 280), release=False)
+    time.sleep(.5)
+    d.move(1300, 600)
+    d.wait(lambda: d.data()['canvas']['view']['x'] < -100, 'Frame did not scroll at the edge')
+    d.button(1, False)
+    d.wait(lambda: d.data()['positions']['Alpha']['row'] == 620, 'Frame drop was not saved')
+    moved = d.data()['positions']
+    assert moved['Beta']['col'] - moved['Alpha']['col'] == 250
+    assert moved['Beta']['row'] == 620 and moved['Far'] == initial['Far']
+    assert d.data()['frames'][0] == frame
+    view = d.data()['canvas']['view']
+    assert abs(view['x'] + moved['Alpha']['col'] + 31 - 1300) < 3
+    d.shot('frame-moved.png')
+    d.key('Control', True); d.key('z'); d.key('Control', False)
+    d.wait(lambda: d.data()['positions'] == initial, 'Frame move did not undo in one step')
     before = d.data()['canvas']['view']
     d.key('Control', True)
     d.key('g')
